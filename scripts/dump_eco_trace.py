@@ -87,6 +87,11 @@ def report(buf, calls, steps=1, label=''):
                wait_total_ns=s.get(27, 0),
                wait_per_call_us=(s.get(27, 0) / calls / 1e3) if calls else -1,
                warm=bool(s.get(30)), rounds=s.get(31),
+               # [ECO-MEAS] auction internals: accumulated us + round count
+               auc_step0=s.get(32, 0), auc_step1=s.get(33, 0),
+               auc_step2=s.get(34, 0), auc_step3=s.get(35, 0),
+               auc_step4=s.get(36, 0), auc_step5=s.get(37, 0),
+               auc_rounds=s.get(38, 0),
                calls=calls, steps=steps)
 
     print(f'[trace] {label}  warm={out["warm"]} rounds={out["rounds"]}', flush=True)
@@ -101,6 +106,13 @@ def report(buf, calls, steps=1, label=''):
           f'first-poll {us(out["role2"]["counts_seen"])} first-block {us(out["role2"]["block_first"])} '
           f'last-work {us(out["role2"]["block_last"])} teardown {us(out["role2"]["teardown"])}', flush=True)
     print(f'   role3(combine) : {us(out["role3"]["end"])} us', flush=True)
+    rr = max(1, int(out['auc_rounds']))
+    _p = [out['auc_step0'], out['auc_step1'], out['auc_step2'],
+          out['auc_step3'], out['auc_step4'], out['auc_step5']]
+    print(f'   auction (us/round): T={_p[0]/rr:.1f} find={_p[1]/rr:.1f} '
+          f'offer={_p[2]/rr:.1f} group={_p[3]/rr:.1f} accept={_p[4]/rr:.1f} '
+          f'apply={_p[5]/rr:.1f} | SUM={sum(_p)/rr:.1f} '
+          f'rounds={out["auc_rounds"]}', flush=True)
     print(f'   replica-wait   : {out["wait_per_call_us"]:.1f} us/call '
           f'({out["wait_total_ns"]/1e6:.3f} ms / {calls} calls)', flush=True)
     return out

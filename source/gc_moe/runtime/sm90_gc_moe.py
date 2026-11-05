@@ -204,7 +204,13 @@ class _ChildGraph:
         # [ECO-SM90] role 5 = ECO plan (one CTA, runs beside dispatch/compute).
         if tuple(x.role for x in binaries) not in (
                 (1, 2, 3), (1, 2, 4, 3), (1, 4, 2, 3),
-                (1, 2, 5, 3), (1, 2, 4, 5, 3), (1, 5, 2, 3), (1, 5, 2, 4, 3)):
+                (1, 2, 5, 3), (1, 2, 4, 5, 3), (1, 5, 2, 3), (1, 5, 2, 4, 3),
+                # `_role_specs` builds `base_roles[:-1] + (5,) + base_roles[-1:]`,
+                # so with shared experts the order is (1, 4, 2, 5, 3) -- which
+                # was missing here. That made EVERY ECO run with shared experts
+                # (i.e. every vLLM run) raise before launch; the CPU/GPU smoke
+                # tests all used shared_experts=0 and never saw it.
+                (1, 4, 2, 5, 3)):
             raise ValueError('expected dispatch, routed, optional shared, '
                              'optional ECO plan, finalize cubins')
         if len(arguments) != len(binaries):

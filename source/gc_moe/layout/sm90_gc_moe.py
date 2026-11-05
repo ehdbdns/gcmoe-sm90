@@ -89,6 +89,25 @@ class SM90GCBufferLayout:
             reserve('eco_quota', (physical,), 'int32', 4)
             reserve('eco_quota_start', (physical,), 'int32', 4)
             reserve('eco_counts', (ranks * physical,), 'int32', 4)
+            # [ECO-TRACE] Per-step, per-rank RAW timeline. Deliberately NOT
+            # reduced: every call writes its own row of ECO_TL_SLOTS int32
+            # values (microseconds since boot), every rank keeps its own copy,
+            # and the host dumps all rows so the analysis can average over
+            # steps afterwards. 256 steps x 16 slots x 4 B = 16 KB per rank.
+            # Microseconds, not nanoseconds: a raw ns value overflows int32
+            # after ~2.1 s of uptime.
+            reserve('eco_tl', (256 * 18,), 'int32', 4)
+            # [ECO-TRACE] first/last-writer counters for the timeline (one word
+            # each, cleared per call). Kept out of `header` on purpose: that
+            # array's numbering is already dense and sharing a slot with the
+            # task queue / cleanup counters caused a deadlock once.
+            reserve('eco_tl_ctr', (16,), 'int32', 4)
+            # [ECO-TRACE] The authoritative row index for this call, written by
+            # dispatch BEFORE it wakes the plan. The plan must not derive the
+            # row from its own `epoch` read: once the wake moves in front of the
+            # push, the plan may read `header[0]` before this call bumped it and
+            # land on the previous row.
+            reserve('eco_tl_step', (1,), 'int32', 4)
             reserve('eco_meta', (16 + experts * 16 + physical + ranks,), 'int32', 4)
             reserve('eco_state', (2 * physical,), 'int32', 4)
             # [ECO-MEAS] ECO timeline trace: 32 slots x 8B of globaltimer ns.
@@ -98,7 +117,7 @@ class SM90GCBufferLayout:
             #   [30]    warm (1) / cold (0) this call
             #   [31]    auction rounds this call
             # Only reserved when ECO is on, so the plain path is byte-identical.
-            reserve('eco_trace', (32,), 'int64', 8)
+            reserve('eco_trace', (40,), 'int64', 8)
 
         reserve('x', (capacity, hidden), 'float8_e4m3fn', 1)
         reserve('x_sf', (capacity, hidden // 128), 'float32', 4)

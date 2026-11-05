@@ -17,7 +17,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _TRACE_OUT = []
 sys.path.insert(0, os.environ['GC_SHIM'])
 sys.path.insert(0, os.path.join(_HERE, '..', 'integration'))
-sys.path.insert(0, _HERE)   # [ECO-MEAS] dump_eco_trace lives here
+sys.path.insert(0, _HERE)   # [ECO-MEAS] dump_eco_trace / dump_eco_tl live here
 import torch, torch.distributed as dist
 import gc_ptxas_override  # noqa: F401
 import gc_moe
@@ -250,6 +250,22 @@ def main():
         with open(outp, 'w') as fh:
             json.dump(_TRACE_OUT, fh, indent=1)
         print(f'[eco-trace] wrote {outp}', flush=True)
+    # [ECO-TRACE] dump this rank's raw per-step timeline to CSV
+    if os.environ.get('GC_MOE_ECO_TRACE') == '1':
+        try:
+            from dump_eco_tl import dump as _tl_dump, SLOTS as _TL_SLOTS
+            _p = os.environ.get('ECO_TL_CSV', '/tmp/eco_tl.csv')
+            if rank == 0:
+                # main writes the header once; every rank then appends its rows
+                with open(_p, 'w', newline='') as _fh:
+                    import csv as _csv
+                    _csv.writer(_fh).writerow(['rank', 'step'] + _TL_SLOTS)
+            dist.barrier()
+            _tl_dump(buf2, _p, rank, header=False)
+            if rank == 0:
+                print(f'[eco-tl] wrote {_p}', flush=True)
+        except Exception as _e:  # noqa: BLE001
+            print(f'[eco-tl] rank{rank} failed: {_e}', flush=True)
     bad = 0 if ok else 1
     bad_t = torch.tensor([bad], device=dev)
     dist.all_reduce(bad_t, group=group)

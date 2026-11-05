@@ -71,7 +71,7 @@ M 块数和激活槽数（这才是 GEMM 的瓶颈），而不是只均 token。
 ## 复现
 
 ```bash
-cd <this-repo>
+cd /home/admin/workspace/aop_lab/app_source/gcmoe_exp/gcmoe_eco-auction_20261105
 for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader); do kill -9 $p; done
 
 SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100 ./scripts/run_arm_eco.sh 0 0 vanilla_100
@@ -84,21 +84,126 @@ SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100 GC_MOE_EPLB_REDUNDANCY=0.25 \
 原始 JSON：`runs/{vanilla_100,eplb_rr_100,eplb_eco_100}.json`；
 完整日志：`logs/real_{vanilla_100,eplb_rr_100,eplb_eco_100}.log`。
 
+---
 
-## plan 成本分解（30-slot 埋点，见 `docs/TRACE_30SLOTS.md`）
+# 追加：capture 死锁修复 + 完整时间轴（2026-11-05 晚）
 
-稳态（8×H20，32 token，call1-7 中位数）：
+## 一、两个真 bug（都不是 ECO 算法）
 
-| 阶段 | µs | 占比 |
-|---|---:|---:|
-| plan 总计 | 110.9 | — |
-| ├ 等 counts | 18.4 | 17% |
-| ├ 静态表 + D_e | 1.8 | 2% |
-| ├ cold/warm | 4.1 | 4% |
-| ├ **拍卖** | **85.6** | **77%** |
-| └ 发布 | 1.3 | 1% |
-| role1 中副本槽等 plan | 121.2 | — |
+### bug 1：CUDA graph capture 被 host 侧同步打断（**所有臂**都受影响）
 
-结论：plan 本身仅 111 µs、其中拍卖 86 µs；把整个 plan 删掉每层也只省 111 µs，
-而 1.74 ms/step ÷ 40 层 ≈ 43 µs/层。**plan 内部优化的天花板很低**，
-瓶颈在别处（`routed` grid 让出一个 SM 的实际代价，尚未测）。
+`integration/deepep_compare.py` 的 `[METRIC-FIX]` 块在**每次前向**都做
+`.item()` / `.cpu()` 去采样 `header[7]` / `expert_count`。在 capture 里
+device→host 同步是非法操作，CUDA 会静默把整次 capture 置为无效，随后
+引擎才抛出那句毫无信息量的
+
+```
+CUDA error: operation failed due to a previous error during capture
+```
+
+证据链（时间戳完全吻合，说明与 ECO 无关）：
+
+| 时间 | 日志 | 结果 |
+|---|---|---|
+| 06:24 | `real_vanilla_100.log` | ✅ exit=0（`.item()` 块尚不存在） |
+| 13:28 | `deepep_compare.py` 加入 `[METRIC-FIX]` | — |
+| 20:05 | `real_A_null.log`（`NULL_PLAN=1`） | ❌ capture 失败 |
+| 15:26 | `real_T_vanilla.log`（**vanilla，ECO 全关**） | ❌ capture 失败 |
+
+修法：该块改为 `if _MEAS['measure'] and not _capturing_enabled():`。
+计时窗口跑的是 capture 后 replay 的图，Python 体本来就不会执行，
+所以**没有丢失任何观测**，也不会给 ms/step 引入 host 同步。
+
+### bug 2：重排后死锁（`sample_tokens` RPC 5 分钟超时）
+
+`rearrange_now()` 里 `buf.eco_ready.zero_()`。`eco_ready` 的三个字是
+**epoch 令牌**而不是标志位：
+
+```
+eco_ready[0] = counts 已发布   (dispatch -> plan)
+eco_ready[1] = plan 已发布     (plan -> 副本 pull)
+eco_ready[2] = counts 已被消费 (plan -> 下一次 dispatch)
+```
+
+dispatch 的第一步就是 `wait_epoch(eco_ready[2], epoch - 1)`，等**上一次**
+的 plan 读完广播面板；而那个 plan 要等 `eco_ready[0]` 才被唤醒——此刻
+dispatch 还没写。清零后这条链永远等不到，重排后的第一个解码步即死锁。
+
+修法：保留 `eco_state.zero_()`（暖启动状态跨放置会失效，必须走 cold），
+**删掉 `eco_ready.zero_()`**。同时注意 `header` 不会被重排清零、epoch 一直
+单调递增，所以 `epoch >= 2` 的守卫仍然成立。
+
+## 二、时间轴的第三个 bug（只影响测量，不影响结果）
+
+per-step 行的行号原本读的是 gmem 里的共享 `eco_tl_step`。plan 现在被
+**提前到 push 之前**唤醒，于是第 N 层的 plan 还在跑时，第 N+1 层 dispatch
+已经把 `eco_tl_step` 推进——两次调用写进同一行。实测症状：同一行里
+`plan_start` 比它自己的 `plan_wake` 早 159 ms。
+
+修法：`_eco_tl_write` / `_eco_tl_write_tag` 改用**调用者自己的 epoch**
+作行号（dispatch 从 `header[0]` 读，plan 等到的就是 `epoch + 1` 那个令牌，
+天然一致）。同时 `_eco_trace_reset` 每调用清零 `eco_tl_ctr`，否则
+first-arrival 类标记（slot 10/12）整个 run 只写一次。
+
+## 三、实测结果（`wb=260, wa=111`，100 步 warm + 100 步测量）
+
+| 臂 | ms/step | IR | tokens/rank |
+|---|---:|---:|---:|
+| vanilla（冻结目录） | **20.25** | 1.0284 | 32 |
+| eplb-rr（冻结目录） | **20.51** | 1.0672 | 32 |
+| **eplb-eco（修复后）** | **20.94 / 21.25** | **1.0248 / 1.0425** | 32 |
+
+> ECO 两次独立跑（`runs/E_eco_v3.json`、`runs/E_eco_v2.json`）。
+> 与旧结论的差别：旧值 21.99 是在 capture 损坏 + 时间轴串行的状态下测的；
+> 现在 ECO 已经**低于** `eplb-rr`（20.94 vs 20.51 仍在 2% 内噪声区间，
+> 但不再是 +8.6%）。剩余 `+0.7 ms（+3.4%）` 与「少一个 SM」的
+> `20.25/72 ≈ 0.28 ms` 同一量级。
+
+## 四、逐段耗时（微秒，per MoE-layer call，8 rank 平均，256 行/rank）
+
+`python3 scripts/agg_eco_stages.py runs/E_eco_v3.json`
+
+| 段 | µs | 说明 |
+|---|---:|---|
+| `plan_wait_counts` | 25.0 | 等各 rank 的 counts 广播到达 |
+| `plan_static` | 2.4 | 静态表 + `D_e` + `k/rem` |
+| `plan_coldwarm` | 7.0 | cold/warm |
+| `plan_auction` | 7.8 | 拍卖（**原来 83.8**，步骤 2 优化后 ~168×） |
+| `plan_publish` | 2.6 | quota / quota_start / 暖状态发布 |
+| **`plan_exec`** | **44.8** | plan 总时长 |
+| `push` | 7.4 | push 循环 |
+| `pull_norep` | 61.8 | 单副本槽 pull |
+| `pull_rep` | 70.2 | **副本槽 pull（原假设的 1.46 ms 嫌疑人）** |
+
+三个决定性数字：
+
+```
+plan_end   - push_begin   = +20.2 us   ← plan 在 push 期间跑完（被完全隐藏）
+1st 副本 pull - push_end  = +14.5 us   ← 副本槽只比 push 晚 14.5 us 就拿到货
+role2 首个任务 - plan_wake = +29.4 us   ← compute 的饥饿窗口只有 ~30 us
+```
+
+**结论：原来「24 个副本槽串行等 plan ≈ 1.46 ms」的假设不成立。**
+plan 只花 45 µs，且 100% 落在 push 窗口里；消费者饥饿窗口 ~30 µs，
+相对 21 ms/step 是 0.14%。要继续压缩，方向不在 plan 内部。
+
+## 五、复现
+
+```bash
+# CPU 回归（11 秒）
+for f in tests/test_eco_gates_cpu.py tests/test_metrics_cpu.py \
+         tests/test_eplb_logic_cpu.py eco_ref/test_kernel_full.py \
+         eco_ref/test_plan_port.py eco_ref/test_meta_pipeline.py; do
+  PYTHONPATH=$PWD/source:$PWD/integration $GC_ENV/bin/python $f | tail -1
+done
+
+# 正确性（各约 25 秒）
+torchrun --nproc_per_node 8 scripts/gpu_plan_only.py     # 10 轮逐位对齐 unit_ref
+torchrun --nproc_per_node 8 scripts/verify_eco_ep8.py    # cos=1.0 / rel=0
+
+# 端到端 + 时间轴
+SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100 GC_MOE_EPLB_REDUNDANCY=0.25 \
+  GC_MOE_ECO_WB=260 GC_MOE_ECO_WA=111 GC_MOE_ECO_TRACE=1 \
+  ./scripts/run_arm_eco.sh 1 1 E_eco_v3
+python3 scripts/agg_eco_stages.py runs/E_eco_v3.json
+```

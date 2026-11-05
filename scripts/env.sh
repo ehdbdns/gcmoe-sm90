@@ -6,10 +6,10 @@
 # much later (inside profile_run). The working configuration lets vLLM fall
 # back to its vendored `vllm.third_party.deep_gemm` (log line: "deep_gemm not
 # found in site-packages, trying vendored ...").
-W=<env>
+W=/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031
 export GC_ENV=$W/env3
 export GC_SHIM=$W/shim
-TOOLCHAIN=/PATH/aop_lab/app_source/deep_ep25_ar_probe_20261025/toolchain
+TOOLCHAIN=/home/admin/workspace/aop_lab/app_source/deep_ep25_ar_probe_20261025/toolchain
 export TOOLCHAIN
 export NCCL_ROOT=$GC_ENV/lib/python3.10/site-packages/nvidia/nccl
 export NVSHMEM_ROOT=$GC_ENV/lib/python3.10/site-packages/nvidia/nvshmem

@@ -33,7 +33,7 @@ import deepep_compare  # noqa: E402,F401  (registers the gc_moe backend)
 
 DATASET = os.environ.get(
     'DATASET',
-    '/DATA/datasets/MoE-Bench-Experiments/datasets/'
+    '$DATASET_DIR/'
     'dsv4-flash_online_input_ids_26-10-08_1.jsonl')
 
 
@@ -258,6 +258,16 @@ def main():
     if collect_meas:
         outs = engine.collective_rpc('_gc_moe_meas_end')
         load = next((x for x in outs if isinstance(x, dict) and x.get('ok')), {})
+    # [ECO-TRACE] One dump at the end of the window (never per step): the raw
+    # 30-slot timeline plus the per-step x per-rank rows. Averaging happens
+    # here, in Python, so the kernel never reduces away "which rank was slow".
+    eco_trace = {}
+    if os.environ.get('GC_MOE_ECO') == '1' and os.environ.get('GC_MOE_ECO_TRACE') == '1':
+        try:
+            trs = engine.collective_rpc('_gc_moe_eco_trace_dump')
+            eco_trace = {'ranks': [x for x in trs if isinstance(x, dict) and x.get('ok')]}
+        except Exception as exc:  # noqa: BLE001 - never fail a run over telemetry
+            eco_trace = {'error': str(exc)}
 
     def _stat(xs):
         return (min(xs), max(xs), statistics.median(xs)) if xs else (-1, -1, -1)
@@ -304,6 +314,7 @@ def main():
                   ir=ir.get('ir', -1.0),
                   ir_detail=ir,
                   load_detail=load,
+                  eco_trace=eco_trace,
                   gen_tokens_total=sum(len(v) for v in got.values()),
                   tokens={k: v for k, v in sorted(got.items())})
 

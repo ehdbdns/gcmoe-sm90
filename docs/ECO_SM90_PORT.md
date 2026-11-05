@@ -90,7 +90,7 @@ SM100 的 `ECO_TIME_WEIGHTS` 是 B300 拟合值，不能用于 H20。本轮默�
 ```bash
 # CPU（秒级）
 for f in eco_ref/test_*.py tests/test_eplb_logic_cpu.py; do \
-  <env>/bin/python $f; done
+  /home/admin/.../env3/bin/python $f; done
 
 # GPU：只跑 plan（~20s，无模型）
 source scripts/env.sh

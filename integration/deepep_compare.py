@@ -586,7 +586,17 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         # [METRIC-FIX] Snapshot the per-call occupancy of the call that just
         # finished. role 3 zeroes header[7] and the next call overwrites
         # expert_count, so a single read after the window would see zeros.
-        if _MEAS['measure']:
+        #
+        # [CAPTURE-FIX] This must NOT run while a CUDA graph is being
+        # captured: `.item()` and `.cpu()` are device->host synchronisations,
+        # which CUDA refuses inside a capture (cudaErrorStreamCaptureUnsupported).
+        # That does not raise here -- it silently invalidates the capture, and
+        # the engine only finds out later with the opaque
+        # "operation failed due to a previous error during capture".
+        # Timed decode runs replay a captured graph, so the Python body below
+        # never executes there anyway: no observation is lost, and no host sync
+        # can inflate the measured ms/step.
+        if _MEAS['measure'] and not _capturing_enabled():
             try:
                 hdr = int(buf.header[7].item())
                 _ACTIVE_HDR['last'] = hdr
@@ -1014,8 +1024,26 @@ def rearrange_now() -> bool:
             install_into_buffer as _install_eco_meta)
         _install_eco_meta(buf, [int(x) for x in target], ranks, experts)
         with torch.inference_mode():
+            # The warm start must not survive a placement change: the quotas
+            # are indexed by physical slot and would describe a different
+            # expert map. Zeroing `eco_state` makes the next plan call fall
+            # back to the cold path (correct, just slower for one call).
             buf.eco_state.zero_()
-            buf.eco_ready.zero_()
+            # [ECO-SM90] NEVER clear `eco_ready`: the three words are epoch
+            # TOKENS, not flags.
+            #   eco_ready[0] = counts published (dispatch -> plan)
+            #   eco_ready[1] = plan published   (plan -> replica pull)
+            #   eco_ready[2] = counts consumed  (plan -> next dispatch)
+            # Dispatch's very first act is `wait_epoch(eco_ready[2],
+            # epoch - 1)`, i.e. it waits for the PREVIOUS call's plan to
+            # finish reading the broadcast panel. Only that plan can write the
+            # token, and it is woken by `eco_ready[0]` -- which dispatch has
+            # not written yet at that point. Clearing the three words
+            # therefore deadlocks the first call after any rearrangement
+            # (measured: 5 s of decode, then "RPC call to sample_tokens timed
+            # out"). Leaving them alone keeps all three epoch chains intact;
+            # the stale values are one epoch behind and can never be mistaken
+            # for the new epoch.
         if buf.rank_idx == 0:
             print('[eco] meta re-installed after rearrangement', flush=True)
     for mod in live:
@@ -1397,6 +1425,38 @@ def _install_worker_rpc() -> None:
             return ir_end()
 
         Worker._gc_moe_ir_end = gc_moe_ir_end
+
+    if getattr(Worker, '_gc_moe_eco_trace_dump', None) is None:
+
+        def gc_moe_eco_trace_dump(self) -> dict:
+            """# [ECO-TRACE] Raw 30-slot timeline + per-step rows of THIS rank.
+
+            Read once at the end of the measured window (never per step, which
+            would cost a host sync per forward and inflate ms/step). The
+            driver averages over steps afterwards.
+            """
+            import torch
+            from gc_moe.layout import sm90_gc_moe as _lay  # noqa: F401
+
+            allm = [m for m in _EXPERT_REGISTRY
+                    if getattr(m, '_buffer', None) is not None]
+            if not allm:
+                return {'ok': False, 'reason': 'no buffer'}
+            buf = allm[0]._get_buffer()
+            out = {'ok': True, 'rank': int(buf.rank_idx)}
+            tr = getattr(buf, 'eco_trace', None)
+            if tr is not None:
+                torch.cuda.synchronize()
+                out['slots'] = [int(v) for v in tr.cpu().tolist()]
+            tl = getattr(buf, 'eco_tl', None)
+            if tl is not None:
+                rows = tl.view(256, 18).cpu().tolist()
+                steps = getattr(buf, 'eco_tl_step', None)
+                out['tl_rows'] = rows
+                out['tl_step'] = int(steps.cpu().item()) if steps is not None else -1
+            return out
+
+        Worker._gc_moe_eco_trace_dump = gc_moe_eco_trace_dump
 
     if getattr(Worker, '_gc_moe_sync', None) is None:
 

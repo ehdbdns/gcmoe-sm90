@@ -5,17 +5,17 @@
 ```bash
 # NAS（重启后失效）
 sudo mount -t nfs -o vers=4,minorversion=0,noresvport \
-  YOUR-NAS-HOST:/ /DATA/
-ls /DATA/models/DeepSeek-V4.1-Flash
+  954af48778-koo23.cn-zhangjiakou.nas.aliyuncs.com:/ $DATA_DIR
+ls $MODEL_DIR
 
-cd <this-repo>
+cd /home/admin/workspace/aop_lab/app_source/gcmoe_exp/gcmoe_eco-auction_20261105
 source scripts/env.sh
 ```
 
 ## 1. CPU 对拍（秒级，不占 GPU）
 
 ```bash
-P=<env>/env3/bin/python
+P=/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/bin/python
 for f in eco_ref/test_v4_plan.py eco_ref/test_plan_port.py \
          eco_ref/test_kernel_logic.py eco_ref/test_meta_pipeline.py \
          eco_ref/test_kernel_full.py tests/test_eplb_logic_cpu.py; do
