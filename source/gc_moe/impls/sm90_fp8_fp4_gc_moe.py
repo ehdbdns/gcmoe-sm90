@@ -1,0 +1,2350 @@
+"""SM90 CuTe dispatch, register-A WGMMA compute and combine roles."""
+from __future__ import annotations
+
+import cutlass
+import cutlass.cute as cute
+from cutlass import Boolean, Float32, Int32, Int64, Uint8, Uint32, Uint64
+
+from ..common.math import (
+    abs_f32, bits_float, f32x2_to_e4m3x2_bits, round_bf16_f32,
+    ue8m0_fp8_inv, ue8m0_fp8_scale_exp,
+)
+from ..mma.sm90 import (
+    canonical_offset, decode_fragment, smem_descriptor,
+    wgmma_rs_issue, wgmma_rs_k128, wgmma_rs_k32_pair, wgmma_rs_wait,
+)
+from ..ptx.ld_st import (
+    atom_acq_rel_add_u32, atom_add_u32, atom_release_gpu_add_u32,
+    atom_shared_add_u32, copy_global_16, ld_acquire_gpu_u32,
+    ld_acquire_sys_u32_sm90 as ld_acquire_sys_u32, ld_shared_u32x4_sm90 as load_shared_u32x4, load_bf16_8, load_scale_pair,
+    load_shared_4, load_shared_8, st_release_u32, store_bf16_8,
+)
+from ..ptx.tma import (
+    bulk_g2s_1d, copy_arrive, copy_async_4, copy_async_16,
+    copy_commit, copy_wait, tma_store_fence,
+)
+from ..ptx.utils import (
+    fence_gpu, fence_sys, sync_loader, sync_math, sync_tile,
+    sync_activation, sync_weight,
+)
+from ..scheduler.sm90_gc_moe import claim_sm90_task
+from ..layout.sm90_gc_moe import get_role_shared_layout
+
+
+@cute.jit
+def cell(base: Uint64, offset: Uint64, dtype: cutlass.Constexpr):
+    return cute.make_tensor(cute.make_ptr(dtype, base + offset, cute.AddressSpace.gmem,
+                                         assumed_align=1), cute.make_layout((1,)))
+
+
+@cute.jit
+def shared_cell(slab: cute.Pointer, offset: Uint32, dtype: cutlass.Constexpr):
+    return cute.make_tensor(cute.recast_ptr(slab + offset, dtype=dtype), cute.make_layout((1,)))
+
+
+@cute.jit
+def wait_epoch(ptr: cute.Pointer, target: Uint32, system: cutlass.Constexpr):
+    # Same-order all-rank calls and the tail rendezvous prevent skipping a
+    # still-needed epoch. Equality also remains valid at uint32 wraparound.
+    if cutlass.const_expr(system):
+        value = ld_acquire_sys_u32(ptr)
+    else:
+        value = ld_acquire_gpu_u32(ptr)
+    while value != target:
+        if cutlass.const_expr(system):
+            value = ld_acquire_sys_u32(ptr)
+        else:
+            value = ld_acquire_gpu_u32(ptr)
+
+
+@cute.jit
+def wait_count(ptr: cute.Pointer, target: Uint32):
+    value = ld_acquire_gpu_u32(ptr)
+    while value < target:
+        value = ld_acquire_gpu_u32(ptr)
+
+
+class SM90GCMoERoleKernel:
+    def __init__(self, config, layout, role, schedule, has_stats, routed_n_factor=1):
+        self.role = role
+        self.direct_route_scan = 0 < config.bound <= 2
+        self.ranks = config.ranks
+        # Logical experts per rank (for stats / weight layout) vs physical slots
+        # per rank (what the dispatch loop walks). They are equal unless EPLB
+        # added replica slots.
+        self.logical_local = config.experts // config.ranks
+        self.physical = int(getattr(config, 'physical', 0) or config.experts)
+        self.local = self.physical // config.ranks
+        self.replicated = self.physical > config.experts
+        self.capacity, self.topk = config.capacity, config.topk
+        self.hidden, self.intermediate = config.hidden, config.intermediate
+        self.shared_experts = config.shared_experts
+        self.shared_i = config.intermediate * config.shared_experts
+        # Internal l1/l2 activation SF views store RN(originalSF *64).
+        # Quantization inverse and public source x_sf retain original SF.
+        self.rows = config.ranks * config.capacity
+        self.fast_math, self.has_stats = config.fast_math, has_stats
+        self.warp_specialized = ((role == 2 and schedule.threads[1] == 384)
+                                 or role == 4)
+        self.max_m = schedule.tile_m
+        if routed_n_factor not in (1, 2) or (routed_n_factor == 2 and not (
+                role == 2 and not self.warp_specialized and self.max_m == 8
+                and self.hidden % 512 == 0 and self.intermediate % 256 == 0)):
+            raise ValueError('invalid SM90 routed N factor for the role geometry')
+        self.routed_n_factor = routed_n_factor
+        shared_layout = get_role_shared_layout(self.max_m, self.warp_specialized,
+                                               self.routed_n_factor)
+        for name in shared_layout.__dataclass_fields__:
+            setattr(self, name, getattr(shared_layout, name))
+        for name, spec in layout.views.items():
+            setattr(self, 'off_' + name, spec.offset)
+        # ── ECO (EPLB placement + online plan) ───────────────────────────
+        # [ECO-SM90] role 5 is the plan CTA. `eco_logical_experts > 0` turns
+        # ECO on; the plan role only exists when it is on.
+        self.eco = int(getattr(config, 'eco_logical_experts', 0)) > 0
+        self.eco_logical = int(getattr(config, 'eco_logical_experts', 0))
+        self.eco_wb = int(getattr(config, 'eco_wb', 0))
+        self.eco_wa = int(getattr(config, 'eco_wa', 0))
+        self.eco_rounds = int(getattr(config, 'eco_rounds', 1))
+        self.eco_cold_rounds = int(getattr(config, 'eco_cold_rounds', 6))
+        self.eco_max_copies = int(getattr(config, 'eco_max_copies', 4))
+        self.eco_hop2_rounds = int(getattr(config, 'eco_hop2_rounds', 0))
+        # [ECO-SM90] GC_MOE_ECO_DEBUG dumps the cold-start intermediates so a
+        # GPU run can be diffed against the CPU reference.
+        import os as _os
+        # [ECO-SM90] GC_MOE_ECO_NOSPLIT is a compile-time triage switch: replica
+        # slots pull their whole stream without waiting for the plan. It is
+        # NEVER set in a real run (it defeats the plan); it exists so the
+        # plan handshake can be isolated from the split.
+        self.eco_nosplit = _os.environ.get('GC_MOE_ECO_NOSPLIT') == '1'
+        # slack = wb + bm + wa (unit_ref.py L30)
+        self.eco_slack = self.eco_wb + schedule.tile_m + self.eco_wa
+        if self.eco:
+            self._eco_smem_offsets()
+        if role == 5:
+            # [ECO-SM90] The plan CTA has its own resources (one CTA, 256
+            # threads) and does not index the three-entry role schedule.
+            self.grid, self.threads = 1, 256
+            self.smem = self.eco_smem if self.eco else 0
+        else:
+            resource_role = 1 if role == 4 else role - 1
+            self.grid, self.threads = schedule.grids[resource_role], schedule.threads[resource_role]
+            self.smem = schedule.smem[resource_role]
+        if self.routed_n_factor == 2 and 2 * self.stage_bytes + 128 > self.smem:
+            raise ValueError('SM90 routed N512 requires two complete stages and control space')
+        if role == 4:
+            shared_stride = (36864 + self.max_m * 144 + 1023) // 1024 * 1024
+            assert 2 * shared_stride + 128 <= self.smem
+        self.cleanup_grids = min(self.grid, (self.local + 127) // 128)
+        self.finalize_flags = layout.views['combine_block_done'].shape[0]
+        if role == 3 and self.grid > self.finalize_flags:
+            raise ValueError('combine grid exceeds the SM90 completion-flag capacity')
+
+    def _eco_smem_offsets(self) -> None:
+        """# [ECO-SM90] Compile-time shared-memory layout of the plan CTA.
+
+        Every array the plan touches is listed here; nothing is allocated at
+        runtime. All offsets are byte offsets from the slab base and every
+        array holds int32 words (signed values as two's complement). Each array
+        has a single writer per barrier interval, so no shared-memory atomics
+        are needed and the result is deterministic.
+        """
+        P, E, R = self.physical, self.eco_logical, self.ranks
+        if E > P or P % R:
+            raise ValueError('ECO needs P % R == 0 and at least one slot per expert')
+        off = 0
+        def take(count: int) -> int:
+            nonlocal off
+            here = off
+            off += count * 4
+            return here
+        S = P // R
+        self.eco_y_off = take(P)        # units per slot
+        self.eco_part_off = take(E)     # slot owning the partial unit (0xFFFFFFFF = none)
+        self.eco_rem_off = take(E)      # partial size, per expert
+        self.eco_k_off = take(E)        # unit count, per expert
+        self.eco_n_off = take(E)        # token count, per expert
+        self.eco_pn_off = take(E)       # warm: the estimate's partial owner
+        self.eco_x_off = take(P)        # cold: even split / warm: q0
+        self.eco_g_off = take(P)        # cold: units per copy / warm: y0
+        self.eco_u_off = take(P)        # warm: inherited units per copy
+        self.eco_phy_off = take(P)      # slot -> logical expert
+        self.eco_act_off = take(P)      # slot is an active (planned) copy
+        self.eco_T_off = take(R)        # rank time
+        self.eco_T0_off = take(R)       # rank time estimate (cold / warm start)
+        self.eco_cks_off = take(P)      # auction: candidate destination slot
+        self.eco_ckv_off = take(P)      # auction: candidate value (receiver time)
+        self.eco_cki_off = take(P)      # auction: candidate receiver increase
+        self.eco_ckh_off = take(P)      # auction: candidate shed (source decrease)
+        self.eco_ckp_off = take(P)      # auction: candidate unit is the partial (1/0)
+        self.eco_hit_off = take(P)      # auction: candidate present
+        self.eco_of_off = take(P * 8)   # auction: offers, 8 words each, base r*S
+        self.eco_rcnt_off = take(R)     # auction: offers per source rank
+        self.eco_gcnt_off = take(R)     # auction: offers per receiver / fill cursor
+        self.eco_gof_off = take(R + 1)  # auction: per-receiver segment base
+        self.eco_grp_off = take(P)      # auction: offer indices grouped by receiver
+        self.eco_acc_off = take(P)      # auction: accepted flag per offer slot
+        self.eco_nof_off = take(1)      # auction: number of offers
+        self.eco_nacc_off = take(1)     # auction: number of accepted offers
+        self.eco_quota_off = take(P)    # quota per slot
+        self.eco_tot_off = take(1)      # sum of T
+        self.eco_flag_off = take(1)     # warm (1) / cold (0)
+        self.eco_smem = (off + 1023) // 1024 * 1024
+        if self.eco_smem > 200 * 1024:
+            raise ValueError(f'ECO plan smem {self.eco_smem} exceeds the 200 KB budget')
+
+
+    @cute.jit
+    def _eco_s(self, slab: cute.Pointer, off: cutlass.Constexpr, idx: Uint32):
+        """Read one int32 word of the plan's shared-memory slab (as Uint32).
+
+        The explicit conversion keeps the DSL's value type stable when the same
+        variable is also assigned from another expression.
+        """
+        return Uint32(shared_cell(slab, Uint32(off) + idx * Uint32(4), Uint32)[0])
+
+    @cute.jit
+    def _eco_set(self, slab: cute.Pointer, off: cutlass.Constexpr, idx: Uint32,
+                 value: Uint32):
+        shared_cell(slab, Uint32(off) + idx * Uint32(4), Uint32)[0] = value
+
+    @cute.jit
+    def _eco_inc(self, slab: cute.Pointer, off: cutlass.Constexpr, idx: Uint32,
+                 value: Uint32):
+        """Atomic add into shared memory; returns the previous value."""
+        return atom_shared_add_u32(
+            cute.recast_ptr(slab + Uint32(off) + idx * Uint32(4), dtype=Uint32),
+            value)
+
+    @cute.jit
+    def _eco_meta_word(self, base: Uint64, idx: Uint32):
+        """One int32 word of the host-built EcoMeta."""
+        return cell(base, Uint64(self.off_eco_meta) + Uint64(idx) * Uint64(4),
+                    Uint32)[0]
+
+    @cute.jit
+    def _eco_copy(self, base: Uint64, e: Uint32, k):
+        """copies[e][k] as an int16 half-word (spec §6.3: SM90 has no Uint16).
+
+        `k` is always a compile-time copy index (a literal or a
+        `range_constexpr` loop variable), so the half-word selection folds at
+        code-read time. SM90's DSL has no Uint16, hence the u32 read.
+        """
+        word = self._eco_meta_word(base, Uint32(16) + e * Uint32(16)
+                                   + Uint32(k // 2))
+        # select the half-word without branching: the DSL forbids an early
+        # return inside a staged `if`
+        return (word >> (Uint32(k % 2) * Uint32(16))) & Uint32(0xFFFF)
+
+    @cute.jit
+    def _eco_slot_of(self, base: Uint64, e: Uint32, j):
+        """Physical slot of the expert's j-th ACTIVE copy."""
+        return self._eco_copy(base, e, j) & Uint32(0x7FFF)
+
+    @cute.jit
+    def _eco_ncopies(self, base: Uint64, e: Uint32):
+        """Number of ACTIVE copies of expert `e` (unit_ref.py L36).
+
+        `copies[e]` lists the active copies first and then the passive ones
+        (bit 15 set); passive copies are never planned, so they must not be
+        counted here.
+        """
+        n = Uint32(0)
+        for k in cutlass.range_constexpr(self.eco_max_copies):
+            raw = self._eco_copy(base, e, k)
+            if raw != Uint32(0x7FFF) and (raw & Uint32(0x8000)) == Uint32(0):
+                n = Uint32(k + 1)
+        return n
+
+    @cute.jit
+    def _eco_phy(self, base: Uint64, slot: Uint32):
+        """phy2log[slot]."""
+        return self._eco_meta_word(
+            base, Uint32(16) + Uint32(self.eco_logical) * Uint32(16) + slot)
+
+    @cute.jit
+    def _eco_num_fixed(self, base: Uint64, rank: Uint32):
+        """EcoMeta.num_fixed[rank]: single-copy slots are the rank's prefix."""
+        return self._eco_meta_word(
+            base, Uint32(16) + Uint32(self.eco_logical) * Uint32(16)
+            + Uint32(self.physical) + rank)
+
+    @cute.jit
+    def _eco_rank_time(self, slab: cute.Pointer, quota_off: cutlass.Constexpr,
+                       out_off: cutlass.Constexpr):
+        """T[r] = sum_slots [wb*ceil(q/bm) + wa*(q>0) + q]  (unit_ref L49-51)."""
+        tid, _, _ = cute.arch.thread_idx()
+        R, P = self.ranks, self.physical
+        S = P // R
+        for r in cutlass.range(tid, R, self.threads):
+            self._eco_set(slab, out_off, r, Uint32(0))
+        cute.arch.sync_threads()
+        for s in cutlass.range(tid, P, self.threads):
+            q = self._eco_s(slab, quota_off, s)
+            blocks = (q + Uint32(self.max_m - 1)) // Uint32(self.max_m)
+            active = Uint32(1) if q > Uint32(0) else Uint32(0)
+            cost = Uint32(self.eco_wb) * blocks + Uint32(self.eco_wa) * active + q
+            self._eco_inc(slab, out_off, s // Uint32(S), cost)
+        cute.arch.sync_threads()
+
+    @cute.jit
+    def _eco_emit_quota(self, slab: cute.Pointer):
+        """quota[s] = y[s]*bm + (rem[e] if part[e] == s else 0) (unit_ref L80-84)."""
+        tid, _, _ = cute.arch.thread_idx()
+        P = self.physical
+        bm = self.max_m
+        for s in cutlass.range(tid, P, self.threads):
+            phy = self._eco_s(slab, self.eco_phy_off, s)
+            y = self._eco_s(slab, self.eco_y_off, s)
+            part = self._eco_s(slab, self.eco_part_off, phy)
+            rem = self._eco_s(slab, self.eco_rem_off, phy)
+            q = y * Uint32(bm)
+            if part == s:
+                q = q + rem
+            self._eco_set(slab, self.eco_quota_off, s, q)
+        cute.arch.sync_threads()
+
+    # ---- costs (unit_ref L53-78) --------------------------------------
+    @cute.jit
+    def _eco_costC(self, slab: cute.Pointer, s: Uint32, y: Uint32, hp: Uint32):
+        """wb*(y+hp) + wa*[y+hp>0] + y*bm + hp*rem[phy[s]] (unit_ref L53-55)."""
+        e = self._eco_s(slab, self.eco_phy_off, s)
+        rem = self._eco_s(slab, self.eco_rem_off, e)
+        blk = y + hp
+        return (Uint32(self.eco_wb) * blk
+                + (Uint32(self.eco_wa) if blk > Uint32(0) else Uint32(0))
+                + y * Uint32(self.max_m) + hp * rem)
+
+    @cute.jit
+    def _eco_hp(self, slab: cute.Pointer, s: Uint32):
+        """1 when slot `s` owns its expert's partial unit."""
+        e = self._eco_s(slab, self.eco_phy_off, s)
+        return Uint32(self._eco_s(slab, self.eco_part_off, e) == s)
+
+    @cute.jit
+    def _eco_has_unit(self, slab: cute.Pointer, s: Uint32):
+        """y[s] > 0 or s owns the partial unit (unit_ref L57)."""
+        return Uint32(self._eco_s(slab, self.eco_y_off, s) > Uint32(0)) | self._eco_hp(slab, s)
+
+    @cute.jit
+    def _eco_out(self, slab: cute.Pointer, s: Uint32):
+        """Shed when one unit leaves `s` = cost(before) - cost(after) > 0 (L60-64).
+
+        Returns (shed, is_partial); shed is non-negative because a unit's
+        contribution to its rank's time is strictly positive.
+        """
+        y = self._eco_s(slab, self.eco_y_off, s)
+        hp = self._eco_hp(slab, s)
+        # Both branches are pre-declared: the DSL requires values used after a
+        # staged `if` to exist before it. cost(partial) - cost(no partial) is
+        # what leaves when the partial is shed; otherwise one full unit leaves.
+        d_part = (self._eco_costC(slab, s, y, Uint32(1))
+                  - self._eco_costC(slab, s, y, Uint32(0)))
+        d_full = (self._eco_costC(slab, s, y, Uint32(0))
+                  - self._eco_costC(slab, s, y - Uint32(1), Uint32(0)))
+        shed = d_part if hp == Uint32(1) else d_full
+        return shed, hp
+
+    @cute.jit
+    def _eco_in(self, slab: cute.Pointer, s: Uint32, ispart: Uint32):
+        """Increase when one unit of type `ispart` enters `s` (L66-68)."""
+        y = self._eco_s(slab, self.eco_y_off, s)
+        hp = self._eco_hp(slab, s)
+        y2 = y if ispart == Uint32(1) else y + Uint32(1)
+        return (self._eco_costC(slab, s, y2, hp + ispart)
+                - self._eco_costC(slab, s, y, hp))
+
+    @cute.jit
+    def _eco_move(self, slab: cute.Pointer, a: Uint32, b: Uint32, ispart: Uint32):
+        """Move the partial (a owns it) or one full unit from slot a to slot b (L70-78)."""
+        e = self._eco_s(slab, self.eco_phy_off, a)
+        if ispart == Uint32(1):
+            self._eco_set(slab, self.eco_part_off, e, b)
+        else:
+            self._eco_set(slab, self.eco_y_off, a,
+                          self._eco_s(slab, self.eco_y_off, a) - Uint32(1))
+            self._eco_set(slab, self.eco_y_off, b,
+                          self._eco_s(slab, self.eco_y_off, b) + Uint32(1))
+
+    # ---- cold start (unit_ref L107-129) -------------------------------
+    @cute.jit
+    def _eco_cold_key(self, base: Uint64, slab: cute.Pointer, e: Uint32,
+                      xs, j: cutlass.Constexpr):
+        """t0[rank]*bm - (x%bm)*(wb+bm) (unit_ref L118)."""
+        s = self._eco_slot_of(base, e, j)
+        S = self.physical // self.ranks
+        t0 = self._eco_s(slab, self.eco_T0_off, s // Uint32(S))
+        x = xs[j]
+        # SIGNED: unit_ref's key `t0*bm - (x%bm)*(wb+bm)` is routinely negative,
+        # and a Uint32 subtraction would wrap it to a huge positive value and
+        # invert the ordering.
+        return (Int32(t0 * Uint32(self.max_m))
+                - Int32((x % Uint32(self.max_m)) * Uint32(self.eco_wb + self.max_m)))
+
+    @cute.jit
+    def _eco_do_cold(self, base: Uint64, slab: cute.Pointer):
+        """Even split, load-aware rounding to units, partial owner (L107-129)."""
+        tid, _, _ = cute.arch.thread_idx()
+        P, E = self.physical, self.eco_logical
+        bm = self.max_m
+
+        # x[s]: even split over the ACTIVE copies; the first copy takes the rest
+        for s in cutlass.range(tid, P, self.threads):
+            phy = self._eco_s(slab, self.eco_phy_off, s)
+            nc = self._eco_ncopies(base, phy)
+            n = self._eco_s(slab, self.eco_n_off, phy)
+            x = Uint32(0)
+            if self._eco_s(slab, self.eco_act_off, s) != Uint32(0) and nc > Uint32(0):
+                x = n // nc
+                if self._eco_slot_of(base, phy, 0) == s:
+                    x = x + (n - (n // nc) * nc)
+            self._eco_set(slab, self.eco_x_off, s, x)
+        cute.arch.sync_threads()
+        self._eco_rank_time(slab, self.eco_x_off, self.eco_T0_off)
+        # [ECO-SM90] debug: expose the cold-start estimate (x and T0) so a GPU
+        # run can be diffed against the CPU reference bit for bit.
+        # per replicated expert (one thread each)
+        for e in cutlass.range(tid, E, self.threads):
+            n = self._eco_s(slab, self.eco_n_off, e)
+            nc = self._eco_ncopies(base, e)
+            if nc > Uint32(1) and n > Uint32(0):
+                k = self._eco_s(slab, self.eco_k_off, e)
+                g = cute.make_rmem_tensor((4,), Uint32)
+                xs = cute.make_rmem_tensor((4,), Uint32)
+                order = cute.make_rmem_tensor((4,), Uint32)
+                total_g = Uint32(0)
+                for j in cutlass.range_constexpr(4):
+                    v = Uint32(0)
+                    xv = Uint32(0)
+                    if Uint32(j) < nc:
+                        s = self._eco_slot_of(base, e, j)
+                        xv = self._eco_s(slab, self.eco_x_off, s)
+                        v = xv // Uint32(bm)
+                    g[j] = v
+                    xs[j] = xv
+                    total_g = total_g + v
+                    order[j] = Uint32(j)
+                # sum(floor(x/bm)) <= ceil(n/bm) always holds, so left >= 0.
+                left = Uint32(0) if k < total_g else k - total_g
+                # Selection sort on (key, j); positions >= nc keep their order
+                # (unit_ref only sorts the expert's real copies).
+                for i in cutlass.range_constexpr(4):
+                    if Uint32(i) < nc:
+                        best = Uint32(i)
+                        best_key = Int32(self._eco_cold_key(base, slab, e, xs, i))
+                        for j in cutlass.range_constexpr(4):
+                            if cutlass.const_expr(j > i):
+                                if Uint32(j) < nc:
+                                    key = Int32(self._eco_cold_key(base, slab, e, xs, j))
+                                    if key < best_key:
+                                        best = Uint32(j)
+                                        best_key = key
+                        swap = order[i]
+                        order[i] = order[best]
+                        order[best] = swap
+                for i in cutlass.range_constexpr(4):
+                    if Uint32(i) < left:
+                        j = order[i]
+                        g[j] = g[j] + Uint32(1)
+                # jp: max (g*bm - x); ties go to the lowest copy index
+                # jp = argmax (g*bm - x), ties to the lowest copy index. The
+                # difference is SIGNED (it is negative whenever a copy was
+                # rounded down), so it must not be compared as Uint32.
+                jp = Uint32(0)
+                best_val = Int32(0)
+                seen = Uint32(0)
+                for j in cutlass.range_constexpr(4):
+                    if Uint32(j) < nc and g[j] > Uint32(0):
+                        val = Int32(g[j] * Uint32(bm)) - Int32(xs[j])
+                        if seen == Uint32(0) or val > best_val:
+                            best_val = val
+                            jp = Uint32(j)
+                            seen = Uint32(1)
+                for j in cutlass.range_constexpr(4):
+                    if Uint32(j) < nc:
+                        s = self._eco_slot_of(base, e, j)
+                        self._eco_set(slab, self.eco_y_off, s,
+                                      g[j] - (Uint32(1) if j == jp else Uint32(0)))
+                self._eco_set(slab, self.eco_part_off, e,
+                              self._eco_slot_of(base, e, jp))
+        cute.arch.sync_threads()
+
+    # ---- warm start (unit_ref L131-173) -------------------------------
+    @cute.jit
+    def _eco_do_warm(self, base: Uint64, slab: cute.Pointer):
+        """Congruent inverse of the previous plan, then delta adjust (L131-173).
+
+        The previous quotas live in `eco_state[0:P]` and the previous counts in
+        `eco_state[P:P+E]`, both written at the end of the previous call. One
+        thread per replicated expert; the unit arrays are registers.
+        """
+        tid, _, _ = cute.arch.thread_idx()
+        P, E = self.physical, self.eco_logical
+        bm = self.max_m
+        unit = Uint32(self.eco_wb + self.max_m)
+        S = P // self.ranks
+        state = self._field(base, 'eco_state', Uint32)
+
+        # y0 / part0 start from the fixed single-copy state (plan step 4)
+        for s in cutlass.range(tid, P, self.threads):
+            self._eco_set(slab, self.eco_g_off, s, self._eco_s(slab, self.eco_y_off, s))
+            self._eco_set(slab, self.eco_u_off, s, Uint32(0))
+        for e in cutlass.range(tid, E, self.threads):
+            self._eco_set(slab, self.eco_pn_off, e,
+                          self._eco_s(slab, self.eco_part_off, e))
+        cute.arch.sync_threads()
+
+        # (1) congruent inverse: which copy held the previous partial?
+        #     u[j] = (qs[j] - [j == own] * remp) / bm + [j == own]
+        #     own == -1 (inconsistent previous plan) drops the expert's units.
+        for e in cutlass.range(tid, E, self.threads):
+            n = self._eco_s(slab, self.eco_n_off, e)
+            nc = self._eco_ncopies(base, e)
+            if nc > Uint32(1) and n > Uint32(0):
+                npv = state[P + e]
+                kp = (npv + Uint32(bm - 1)) // Uint32(bm)
+                own = Uint32(0xFFFFFFFF)
+                remp = Uint32(0)
+                if kp > Uint32(0):
+                    remp = npv - (kp - Uint32(1)) * Uint32(bm)
+                    for j in cutlass.range_constexpr(4):
+                        if Uint32(j) < nc:
+                            qs = state[self._eco_slot_of(base, e, j)]
+                            # only the partial owner has (quota - remp) % bm == 0
+                            if (own == Uint32(0xFFFFFFFF) and qs >= remp
+                                    and (qs - remp) % Uint32(bm) == Uint32(0)):
+                                own = Uint32(j)
+                if own != Uint32(0xFFFFFFFF):
+                    for j in cutlass.range_constexpr(4):
+                        if Uint32(j) < nc:
+                            s = self._eco_slot_of(base, e, j)
+                            qs0 = state[s] - (remp if j == own else Uint32(0))
+                            u = qs0 // Uint32(bm) + (Uint32(1) if j == own else Uint32(0))
+                            self._eco_set(slab, self.eco_u_off, s, u)
+                            self._eco_set(slab, self.eco_g_off, s,
+                                          u - (Uint32(1) if j == own else Uint32(0)))
+                    self._eco_set(slab, self.eco_pn_off, e,
+                                  self._eco_slot_of(base, e, own))
+        cute.arch.sync_threads()
+
+        # (2) rank-time estimate from the kept units + this call's partial sizes
+        for s in cutlass.range(tid, P, self.threads):
+            e = self._eco_s(slab, self.eco_phy_off, s)
+            q0 = self._eco_s(slab, self.eco_g_off, s) * Uint32(bm)
+            if self._eco_s(slab, self.eco_pn_off, e) == s:
+                q0 = q0 + self._eco_s(slab, self.eco_rem_off, e)
+            self._eco_set(slab, self.eco_x_off, s, q0)
+        cute.arch.sync_threads()
+        self._eco_rank_time(slab, self.eco_x_off, self.eco_T0_off)
+
+        # (3) delta = k - sum(u) against ONE estimate, then move the partial
+        for e in cutlass.range(tid, E, self.threads):
+            n = self._eco_s(slab, self.eco_n_off, e)
+            nc = self._eco_ncopies(base, e)
+            if nc > Uint32(1) and n > Uint32(0):
+                u = cute.make_rmem_tensor((4,), Uint32)
+                add = cute.make_rmem_tensor((4,), Uint32)
+                t0 = cute.make_rmem_tensor((4,), Uint32)
+                total_u = Uint32(0)
+                own = Uint32(0xFFFFFFFF)
+                pn = self._eco_s(slab, self.eco_pn_off, e)
+                for j in cutlass.range_constexpr(4):
+                    v = Uint32(0)
+                    t = Uint32(0)
+                    if Uint32(j) < nc:
+                        s = self._eco_slot_of(base, e, j)
+                        v = self._eco_s(slab, self.eco_u_off, s)
+                        t = self._eco_s(slab, self.eco_T0_off, s // Uint32(S))
+                        if s == pn:
+                            own = Uint32(j)
+                    u[j] = v
+                    add[j] = Uint32(0)
+                    t0[j] = t
+                    total_u = total_u + v
+                k = self._eco_s(slab, self.eco_k_off, e)
+                # delta > 0: give units to the lowest (t0 + additions * unit)
+                for _step in cutlass.range(k):
+                    if total_u + Uint32(_step) < k:
+                        bj = Uint32(0)
+                        bk = Uint32(0xFFFFFFFF)
+                        for j in cutlass.range_constexpr(4):
+                            if Uint32(j) < nc:
+                                key = t0[j] + add[j] * unit
+                                if key < bk:
+                                    bk = key
+                                    bj = Uint32(j)
+                        u[bj] = u[bj] + Uint32(1)
+                        add[bj] = add[bj] + Uint32(1)
+                # delta < 0: take units from the highest (t0 + additions * unit)
+                for _step in cutlass.range(total_u):
+                    if total_u > k + Uint32(_step):
+                        bj = Uint32(0)
+                        bk = Uint32(0)
+                        found = Uint32(0)
+                        for j in cutlass.range_constexpr(4):
+                            if Uint32(j) < nc and u[j] > Uint32(0):
+                                key = t0[j] + add[j] * unit
+                                # max (estimate, -j): ties pick the LOWEST index
+                                if found == Uint32(0) or key > bk:
+                                    bk = key
+                                    bj = Uint32(j)
+                                    found = Uint32(1)
+                        if found != Uint32(0):
+                            u[bj] = u[bj] - Uint32(1)
+                            add[bj] = add[bj] - Uint32(1)
+                # the partial stays with its owner while it holds a unit, else it
+                # moves to the holding copy on the highest-estimate rank
+                if own == Uint32(0xFFFFFFFF) or u[own] == Uint32(0):
+                    bj = Uint32(0)
+                    bk = Uint32(0)
+                    found = Uint32(0)
+                    for j in cutlass.range_constexpr(4):
+                        if Uint32(j) < nc and u[j] > Uint32(0):
+                            if found == Uint32(0) or t0[j] > bk:
+                                bk = t0[j]
+                                bj = Uint32(j)
+                                found = Uint32(1)
+                    own = bj
+                for j in cutlass.range_constexpr(4):
+                    if Uint32(j) < nc:
+                        s = self._eco_slot_of(base, e, j)
+                        self._eco_set(slab, self.eco_y_off, s,
+                                      u[j] - (Uint32(1) if j == own else Uint32(0)))
+                self._eco_set(slab, self.eco_part_off, e,
+                              self._eco_slot_of(base, e, own))
+        cute.arch.sync_threads()
+
+    # ---- auction (unit_ref L176-265, one-hop rounds) -------------------
+    @cute.jit
+    def _eco_of(self, slab: cute.Pointer, idx: Uint32, field: cutlass.Constexpr):
+        """Offer word `field` of offer `idx`."""
+        return self._eco_s(slab, self.eco_of_off, idx * Uint32(8) + Uint32(field))
+
+    @cute.jit
+    def _eco_setof(self, slab: cute.Pointer, idx: Uint32, field: cutlass.Constexpr,
+                   value: Uint32):
+        self._eco_set(slab, self.eco_of_off, idx * Uint32(8) + Uint32(field), value)
+
+    @cute.jit
+    def _eco_do_auction_round(self, base: Uint64, slab: cute.Pointer):
+        """One auction round; returns the number of accepted moves (L182-265).
+
+        This is `unit_ref._auction_round` with hop2 = False. EP8/EP16 have a
+        complete rank graph, so every two-hop path has an equivalent one-hop
+        move; the SM100 build also uses zero two-hop rounds at these EP sizes
+        (`eco_unit_config`), so nothing is simplified away.
+
+        Offer layout (8 words): 0 receiver, 1 -t_source, 2 value,
+        3 source slot, 4 limit (= t_source), 5 destination slot,
+        6 receiver increase, 7 partial bit.
+        """
+        tid, _, _ = cute.arch.thread_idx()
+        P, E, R = self.physical, self.eco_logical, self.ranks
+        S = P // R
+
+        # ---- 0. total time (L184) ----------------------------------------
+        if tid == 0:
+            tot = Uint32(0)
+            for r in cutlass.range_constexpr(R):
+                tot = tot + self._eco_s(slab, self.eco_T_off, Uint32(r))
+            self._eco_set(slab, self.eco_tot_off, Uint32(0), tot)
+            self._eco_set(slab, self.eco_nof_off, Uint32(0), Uint32(0))
+        cute.arch.sync_threads()
+        tot = self._eco_s(slab, self.eco_tot_off, Uint32(0))
+
+        # ---- 1. per slot: its best destination (L196-217) ----------------
+        # One thread per slot; parallel-safe because each writes only its own.
+        for s0 in cutlass.range(tid, P, self.threads):
+            e = self._eco_s(slab, self.eco_phy_off, s0)
+            nc = self._eco_ncopies(base, e)
+            r0 = s0 // Uint32(S)
+            tmax = self._eco_s(slab, self.eco_T_off, r0)
+            hit = Uint32(0)
+            if (nc > Uint32(1)
+                    and self._eco_s(slab, self.eco_act_off, s0) != Uint32(0)
+                    and tmax * Uint32(R) > tot
+                    and (self._eco_s(slab, self.eco_y_off, s0) > Uint32(0)
+                         or self._eco_hp(slab, s0) == Uint32(1))):
+                shed, ip = self._eco_out(slab, s0)
+                bv = Uint32(0)
+                bs = Uint32(0)
+                bi = Uint32(0)
+                for k in cutlass.range_constexpr(4):
+                    if k < nc:
+                        s1 = self._eco_slot_of(base, e, k)
+                        if s1 != s0:
+                            in1 = self._eco_in(slab, s1, ip)
+                            v = self._eco_s(slab, self.eco_T_off, s1 // Uint32(S)) + in1
+                            # keep the receiver below the source (L204)
+                            if v < tmax:
+                                if (hit == Uint32(0) or v < bv
+                                        or (v == bv and s1 < bs)):
+                                    hit = Uint32(1)
+                                    bv = v
+                                    bs = s1
+                                    bi = in1
+                if hit != Uint32(0):
+                    self._eco_set(slab, self.eco_cks_off, s0, bs)
+                    self._eco_set(slab, self.eco_ckv_off, s0, bv)
+                    self._eco_set(slab, self.eco_cki_off, s0, bi)
+                    self._eco_set(slab, self.eco_ckh_off, s0, shed)
+                    self._eco_set(slab, self.eco_ckp_off, s0, ip)
+            self._eco_set(slab, self.eco_hit_off, s0, hit)
+        cute.arch.sync_threads()
+
+        # ---- 2. offers, one thread per source rank (L218-227) ------------
+        # Order by (max(source after, value), value, destination, slot) and
+        # stop as soon as the rank's shed covers its excess over the mean.
+        for r0 in cutlass.range(tid, R, self.threads):
+            tmax = self._eco_s(slab, self.eco_T_off, r0)
+            emitted = Uint32(0)
+            if tmax * Uint32(R) > tot:
+                excess = tmax * Uint32(R) - tot
+                shed = Uint32(0)
+                for _step in cutlass.range(S):
+                    found = Uint32(0)
+                    bkey = Uint32(0)
+                    bv = Uint32(0)
+                    bsl = Uint32(0)
+                    bj = Uint32(0)
+                    for j in cutlass.range(S):
+                        s0 = r0 * Uint32(S) + Uint32(j)
+                        if self._eco_s(slab, self.eco_hit_off, s0) != Uint32(0):
+                            v = self._eco_s(slab, self.eco_ckv_off, s0)
+                            after = tmax - self._eco_s(slab, self.eco_ckh_off, s0)
+                            key = after if after > v else v
+                            sl = self._eco_s(slab, self.eco_cks_off, s0)
+                            if (found == Uint32(0) or key < bkey
+                                    or (key == bkey and (v < bv
+                                        or (v == bv and (sl < bsl
+                                            or (sl == bsl and s0 < bj)))))):
+                                found = Uint32(1)
+                                bkey = key
+                                bv = v
+                                bsl = sl
+                                bj = s0
+                    # staged `break` is not allowed: the two stop conditions
+                    # (nothing left to offer, or the shed already covers the
+                    # excess) gate the body instead.
+                    if found != Uint32(0) and shed * Uint32(R) < excess:
+                        self._eco_set(slab, self.eco_hit_off, bj, Uint32(0))
+                        idx = r0 * Uint32(S) + emitted
+                        self._eco_setof(slab, idx, 0, bsl // Uint32(S))
+                        self._eco_setof(slab, idx, 1, Uint32(0) - tmax)
+                        self._eco_setof(slab, idx, 2, bv)
+                        self._eco_setof(slab, idx, 3, bj)
+                        self._eco_setof(slab, idx, 4, tmax)
+                        self._eco_setof(slab, idx, 5, bsl)
+                        self._eco_setof(slab, idx, 6, self._eco_s(slab, self.eco_cki_off, bj))
+                        self._eco_setof(slab, idx, 7, self._eco_s(slab, self.eco_ckp_off, bj))
+                        shed = shed + self._eco_s(slab, self.eco_ckh_off, bj)
+                        emitted = emitted + Uint32(1)
+            self._eco_set(slab, self.eco_rcnt_off, r0, emitted)
+        cute.arch.sync_threads()
+
+        # ---- 3. group the offers by receiver (L253-254) ------------------
+        # Step 3a: count the offers of every receiver. Step 3b: prefix sums of
+        # those COUNTS give each receiver's segment base. (Using the per-source
+        # counts here instead would hand several receivers overlapping
+        # segments and silently mix up their offers.)
+        if tid == 0:
+            total_offers = Uint32(0)
+            for r in cutlass.range_constexpr(R):
+                self._eco_set(slab, self.eco_gcnt_off, Uint32(r), Uint32(0))
+            self._eco_set(slab, self.eco_nacc_off, Uint32(0), Uint32(0))
+        cute.arch.sync_threads()
+        # Offers live at index r0*S + j (one contiguous block per source rank,
+        # so a source thread writes without atomics); scan exactly those.
+        for item in cutlass.range(tid, Uint32(R * S), self.threads):
+            src_rank = item // Uint32(S)
+            if item % Uint32(S) < self._eco_s(slab, self.eco_rcnt_off, src_rank):
+                rcv = self._eco_of(slab, item, 0)
+                if rcv < Uint32(R):
+                    self._eco_inc(slab, self.eco_gcnt_off, rcv, Uint32(1))
+        cute.arch.sync_threads()
+        if tid == 0:
+            total_offers = Uint32(0)
+            for r in cutlass.range_constexpr(R):
+                self._eco_set(slab, self.eco_gof_off, Uint32(r), total_offers)
+                total_offers = total_offers + self._eco_s(slab, self.eco_gcnt_off, Uint32(r))
+                self._eco_set(slab, self.eco_gcnt_off, Uint32(r), Uint32(0))
+            self._eco_set(slab, self.eco_gof_off, Uint32(R), total_offers)
+            self._eco_set(slab, self.eco_nof_off, Uint32(0), total_offers)
+        cute.arch.sync_threads()
+        for item in cutlass.range(tid, Uint32(R * S), self.threads):
+            src_rank = item // Uint32(S)
+            if item % Uint32(S) < self._eco_s(slab, self.eco_rcnt_off, src_rank):
+                rcv = self._eco_of(slab, item, 0)
+                if rcv < Uint32(R):
+                    pos = self._eco_inc(slab, self.eco_gcnt_off, rcv, Uint32(1))
+                    self._eco_set(slab, self.eco_grp_off,
+                                  self._eco_s(slab, self.eco_gof_off, rcv) + pos, item)
+        cute.arch.sync_threads()
+
+        # ---- 4. one thread per receiver: sort its offers, accept a prefix -
+        for rcv in cutlass.range(tid, R, self.threads):
+            b = self._eco_s(slab, self.eco_gof_off, rcv)
+            cnt = self._eco_s(slab, self.eco_gof_off, rcv + Uint32(1)) - b
+            # selection sort on (-t_source, value, source slot); the source
+            # slot makes the key a total order, so ties never matter
+            for i in cutlass.range(cnt):
+                oi = self._eco_s(slab, self.eco_grp_off, b + i)
+                bi = i
+                bk0 = self._eco_of(slab, oi, 1)
+                bk1 = self._eco_of(slab, oi, 2)
+                bk2 = self._eco_of(slab, oi, 3)
+                for j in cutlass.range(cnt):
+                    if j > i:
+                        oj = self._eco_s(slab, self.eco_grp_off, b + j)
+                        k0 = self._eco_of(slab, oj, 1)
+                        k1 = self._eco_of(slab, oj, 2)
+                        k2 = self._eco_of(slab, oj, 3)
+                        if (k0 < bk0 or (k0 == bk0 and (k1 < bk1
+                                or (k1 == bk1 and k2 < bk2)))):
+                            bk0 = k0
+                            bk1 = k1
+                            bk2 = k2
+                            bi = j
+                if bi != i:
+                    swap = self._eco_s(slab, self.eco_grp_off, b + i)
+                    self._eco_set(slab, self.eco_grp_off, b + i,
+                                  self._eco_s(slab, self.eco_grp_off, b + bi))
+                    self._eco_set(slab, self.eco_grp_off, b + bi, swap)
+            # accept the prefix; two breaks stop before the receiver passes
+            # the source or mean + slack (L257-259)
+            cur = self._eco_s(slab, self.eco_T_off, rcv)
+            nacc = Uint32(0)
+            stopped = Uint32(0)
+            for i in cutlass.range(cnt):
+                oi = self._eco_s(slab, self.eco_grp_off, b + i)
+                inc = self._eco_of(slab, oi, 6)
+                lim = self._eco_of(slab, oi, 4)
+                nxt = cur + inc
+                # The two acceptance constraints (unit_ref L257-259): never
+                # push the receiver past the source, never past mean + slack.
+                # A staged loop cannot `break`, so `stopped` gates the body.
+                if (stopped == Uint32(0) and nxt < lim
+                        and (Int32(nxt) - Int32(self.eco_slack)) * Int32(R) <= Int32(tot)):
+                    cur = nxt
+                    self._eco_set(slab, self.eco_grp_off, b + nacc, oi)
+                    nacc = nacc + Uint32(1)
+                elif stopped == Uint32(0):
+                    stopped = Uint32(1)
+            self._eco_set(slab, self.eco_acc_off, rcv, nacc)
+        cute.arch.sync_threads()
+
+        # ---- 5. apply every accepted move, in accept order (L261-265) ----
+        # One thread: a receiver's moves are order-dependent (a partial unit
+        # can leave a slot another offer fills), and the reference applies them
+        # serially. Accepted counts are tiny (bounded by the excess).
+        if tid == 0:
+            for rcv in cutlass.range_constexpr(R):
+                b = self._eco_s(slab, self.eco_gof_off, Uint32(rcv))
+                nacc = self._eco_s(slab, self.eco_acc_off, Uint32(rcv))
+                for i in cutlass.range(nacc):
+                    oi = self._eco_s(slab, self.eco_grp_off, b + i)
+                    self._eco_move(slab, self._eco_of(slab, oi, 3),
+                                   self._eco_of(slab, oi, 5),
+                                   self._eco_of(slab, oi, 7))
+        cute.arch.sync_threads()
+        if tid == 0:
+            n = Uint32(0)
+            for rcv in cutlass.range_constexpr(R):
+                n = n + self._eco_s(slab, self.eco_acc_off, Uint32(rcv))
+            self._eco_set(slab, self.eco_nacc_off, Uint32(0), n)
+        cute.arch.sync_threads()
+        cute.arch.sync_threads()
+        return self._eco_s(slab, self.eco_nacc_off, Uint32(0))
+
+    @cute.jit
+    def _eco_plan(self, base: Uint64, peers: cute.Pointer, rank: Uint32,
+                  tokens: Uint32, slab: cute.Pointer):
+        """Compute this call's per-slot quota and publish it (spec §5.4).
+
+        Mirrors eco_ref/plan_port.py::_eco_plan_assign:
+          wait for counts -> static tables -> D_e over ALL ranks ->
+          unit count / partial size -> single-copy units -> cold or warm ->
+          auction rounds -> publish quota / quota_start / next warm state.
+        """
+        tid, _, _ = cute.arch.thread_idx()
+        P, E, R = self.physical, self.eco_logical, self.ranks
+        bm = self.max_m
+        ready = self._field(base, 'eco_ready', Uint32)
+        state = self._field(base, 'eco_state', Uint32)
+        epoch = ld_acquire_gpu_u32(self._field(base, 'header', Uint32))
+
+        # ---- 1. wait until every rank published its eco_counts row ---------
+        if tid == 0:
+            wait_epoch(ready, epoch + Uint32(1), False)
+        cute.arch.sync_threads()
+
+        # ---- 2. static tables: phy[slot] and act[slot] ---------------------
+        # `act` marks the copies the plan may split an expert over; the passive
+        # duplicates a rank holds are never planned (unit_ref L36).
+        for s in cutlass.range(tid, P, self.threads):
+            phy = self._eco_phy(base, s)
+            self._eco_set(slab, self.eco_phy_off, s, phy)
+            nc = self._eco_ncopies(base, phy)
+            act = Uint32(0)
+            for k in cutlass.range_constexpr(4):
+                if k < nc:
+                    if self._eco_slot_of(base, phy, k) == s:
+                        act = Uint32(1)
+            self._eco_set(slab, self.eco_act_off, s, act)
+        cute.arch.sync_threads()
+
+        # ---- 3. demand per logical expert, summed over ALL ranks -----------
+        # Every active copy of an expert receives that expert's complete route
+        # stream, so one copy's per-source histogram sums to D_e. Reading only
+        # this rank's row would make D_e 1/R of the truth (spec §5.5).
+        peer_table = cute.make_tensor(peers, cute.make_layout((R,)))
+        for e in cutlass.range(tid, E, self.threads):
+            s0 = self._eco_copy(base, Uint32(e), 0)
+            running = Uint32(0)
+            if s0 != Uint32(0x7FFF):
+                slot = s0 & Uint32(0x7FFF)
+                for r in cutlass.range_constexpr(R):
+                    rbase = Uint64(peer_table[r])
+                    running += self._field(rbase, 'eco_counts', Uint32)[r * P + slot]
+            self._eco_set(slab, self.eco_n_off, e, running)
+        cute.arch.sync_threads()
+
+        # ---- 4. plan state: no partial, no units, k / rem per expert ------
+        for e in cutlass.range(tid, E, self.threads):
+            self._eco_set(slab, self.eco_part_off, e, Uint32(0xFFFFFFFF))
+            n = self._eco_s(slab, self.eco_n_off, e)
+            k = (n + Uint32(bm - 1)) // Uint32(bm)
+            self._eco_set(slab, self.eco_k_off, e, k)
+            self._eco_set(slab, self.eco_rem_off, e,
+                          Uint32(0) if n == Uint32(0)
+                          else n - (k - Uint32(1)) * Uint32(bm))
+        for s in cutlass.range(tid, P, self.threads):
+            self._eco_set(slab, self.eco_y_off, s, Uint32(0))
+        cute.arch.sync_threads()
+
+        # ---- 5. single-copy experts: their units are fixed up front -------
+        for s in cutlass.range(tid, P, self.threads):
+            phy = self._eco_s(slab, self.eco_phy_off, s)
+            if (self._eco_s(slab, self.eco_act_off, s) != Uint32(0)
+                    and self._eco_ncopies(base, phy) == Uint32(1)):
+                n = self._eco_s(slab, self.eco_n_off, phy)
+                if n > Uint32(0):
+                    self._eco_set(slab, self.eco_y_off, s,
+                                  self._eco_s(slab, self.eco_k_off, phy) - Uint32(1))
+                    self._eco_set(slab, self.eco_part_off, phy, s)
+        cute.arch.sync_threads()
+
+        # ---- 6. warm iff the previous call left counts (unit_ref L102-105) -
+        if tid == 0:
+            prev = Uint32(0)
+            for e in cutlass.range_constexpr(E):
+                prev = prev + state[P + e]
+            self._eco_set(slab, self.eco_flag_off, Uint32(0),
+                          Uint32(1) if prev > Uint32(0) else Uint32(0))
+        cute.arch.sync_threads()
+        warm = self._eco_s(slab, self.eco_flag_off, Uint32(0)) != Uint32(0)
+        rounds = Uint32(0)
+        if warm:
+            self._eco_do_warm(base, slab)
+            rounds = Uint32(self.eco_rounds)
+        else:
+            self._eco_do_cold(base, slab)
+            rounds = Uint32(self.eco_cold_rounds)
+
+        # ---- 7. auction rounds (stops early when nothing is accepted) -----
+        self._eco_emit_quota(slab)
+        more = Uint32(1)
+        for _it in cutlass.range(rounds):
+            if more != Uint32(0):
+                self._eco_rank_time(slab, self.eco_quota_off, self.eco_T_off)
+                if self._eco_do_auction_round(base, slab) == Uint32(0):
+                    more = Uint32(0)
+                else:
+                    self._eco_emit_quota(slab)
+
+        # ---- 8. publish quota / quota_start and the next warm state -------
+        # quota_start is the offset of this copy's slice inside the expert's
+        # canonical order: the sum of the quotas of the active copies that
+        # precede it (unit_ref's ascending-slot copy order).
+        for s in cutlass.range(tid, P, self.threads):
+            self._eco_publish_slot(base, slab, s)
+        for e in cutlass.range(tid, E, self.threads):
+            self._eco_publish_count_state(base, slab, e)
+        cute.arch.sync_threads()
+        fence_sys()
+        if tid == 0:
+            st_release_u32(ready + Uint32(1), epoch + Uint32(1), False)
+
+
+    @cute.jit
+    def _eco_is_active(self, base: Uint64, e: Uint32, slot: Uint32):
+        """[ECO-SM90] Is `slot` one of the expert's ACTIVE copies?
+
+        EcoMeta lists the active copies first and the passive duplicates after
+        them (bit 15 set). Only active copies are planned and only they pull.
+        """
+        active = Uint32(0)
+        for k in cutlass.range_constexpr(self.eco_max_copies):
+            raw = self._eco_copy(base, e, k)
+            if raw != Uint32(0x7FFF) and (raw & Uint32(0x8000)) == Uint32(0):
+                if (raw & Uint32(0x7FFF)) == slot:
+                    active = Uint32(1)
+        return active
+
+    @cute.jit
+    def _eco_publish_count(self, base: Uint64, rank: Uint32, shard: Uint32):
+        """Copy slot `shard`'s canonical send count into this rank's row.
+
+        The row is indexed by GLOBAL slot and every copy of a logical expert
+        carries that expert's single canonical count, which is what the plan
+        sums into D_e.
+        """
+        shard_expert = self._eco_phy(base, shard)
+        self._field(base, 'eco_counts', Uint32)[rank * Uint32(self.physical) + shard] = \
+            self._field(base, 'send_count', Uint32)[shard_expert]
+
+    @cute.jit
+    def _eco_publish_slot(self, base: Uint64, slab: cute.Pointer, s: Uint32):
+        """Publish one slot's quota, its quota_start and its warm-start quota.
+
+        quota_start is the sum of the quotas of the active copies that precede
+        `s` in the expert's canonical (ascending slot) order.
+        """
+        q = self._eco_s(slab, self.eco_quota_off, s)
+        e = self._eco_s(slab, self.eco_phy_off, s)
+        nc = self._eco_ncopies(base, e)
+        start = Uint32(0)
+        for k in cutlass.range_constexpr(self.eco_max_copies):
+            if Uint32(k) < nc:
+                c = self._eco_slot_of(base, e, k)
+                if c < s:
+                    start = start + self._eco_s(slab, self.eco_quota_off, c)
+        self._field(base, 'eco_quota', Uint32)[s] = q
+        self._field(base, 'eco_quota_start', Uint32)[s] = start
+        self._field(base, 'eco_state', Uint32)[s] = q
+
+    @cute.jit
+    def _eco_publish_count_state(self, base: Uint64, slab: cute.Pointer, e: Uint32):
+        """Record this call's per-expert token count for the next warm start."""
+        self._field(base, 'eco_state', Uint32)[Uint32(self.physical) + e] = \
+            self._eco_s(slab, self.eco_n_off, e)
+
+    @cute.jit
+    def _field(self, base: Uint64, name: cutlass.Constexpr, dtype: cutlass.Constexpr):
+        return cute.make_ptr(dtype, base + Uint64(getattr(self, 'off_' + name)),
+                             cute.AddressSpace.gmem, assumed_align=16)
+
+    @cute.jit
+    def _dispatch_grid(self, head: cute.Pointer, epoch: Uint32,
+                         counter: cutlass.Constexpr, signal: cutlass.Constexpr,
+                         publish_source: cutlass.Constexpr):
+        tid, _, _ = cute.arch.thread_idx()
+        if cutlass.const_expr(publish_source):
+            fence_sys()
+        else:
+            fence_gpu()
+        cute.arch.sync_threads()
+        if tid == 0:
+            arrived = atom_acq_rel_add_u32(head + counter, Uint32(1))
+            if arrived == self.grid - 1:
+                if cutlass.const_expr(publish_source):
+                    st_release_u32(head + 1, epoch, True)
+                st_release_u32(head + signal, epoch, False)
+            wait_epoch(head + signal, epoch, False)
+        cute.arch.sync_threads()
+
+    @cute.jit
+    def _dispatch(self, base: Uint64, peers: cute.Pointer, rank: Uint32,
+                   tokens: Uint32, stats: cute.Pointer):
+        tid, _, _ = cute.arch.thread_idx()
+        block, _, _ = cute.arch.block_idx()
+        lane, warp = tid % 32, tid // 32
+        peer_table = cute.make_tensor(peers, cute.make_layout((self.ranks,)))
+        head = self._field(base, 'header', Uint32)
+        epoch = ld_acquire_gpu_u32(head)
+        if block == 0 and tid == 0:
+            token_out = cell(base, Uint64(8), Uint32)
+            token_out[0] = tokens
+        for e in cutlass.range(block * self.threads + tid, self.ranks * self.local,
+                               self.grid * self.threads):
+            out = cell(base, Uint64(self.off_send_count) + Uint64(e) * 4, Uint32)
+            out[0] = Uint32(0)
+        # Four launch-bounded resident CTAs per communication SM make this
+        # local grid rendezvous safe even when the compute partition is busy.
+        self._dispatch_grid(head, epoch, 11, 12, False)
+        for route in cutlass.range(block * self.threads + tid, tokens * self.topk,
+                                   self.grid * self.threads):
+            expert_id = cell(base, Uint64(self.off_topk_idx) + Uint64(route) * 8, Int64)[0]
+            if cutlass.const_expr(self.eco):
+                # [ECO-SM90] `topk_idx` holds a LOGICAL expert id. Every active
+                # copy gets its own copy of the route, so each replica's pull
+                # phase can take its quota slice of the expert's canonical
+                # order (spec §5.6). A single-copy expert has one entry in
+                # `copies`, so it is written exactly once.
+                if expert_id >= 0 and expert_id < Int64(self.eco_logical):
+                    e = Uint32(expert_id)
+                    # ONE counter per logical expert: every copy of the expert
+                    # must see the SAME canonical order, because each copy
+                    # pulls the slice [quota_start, quota_start + quota) of it
+                    # (spec §5.6). A per-slot counter would give each copy a
+                    # different order, and the slices would overlap and lose
+                    # tokens.
+                    slot = atom_add_u32(
+                        self._field(base, 'send_count', Uint32) + e, Uint32(1))
+                    # NOTE: `range_constexpr` unrolls in Python, so it cannot
+                    # contain `continue`; the two skip conditions are nested.
+                    for k in cutlass.range_constexpr(self.eco_max_copies):
+                        raw = self._eco_copy(base, e, k)
+                        # 0x7FFF: unused entry; bit 15: passive copy
+                        if raw != Uint32(0x7FFF) and (raw & Uint32(0x8000)) == Uint32(0):
+                            s = raw & Uint32(0x7FFF)
+                            dst = Uint64(peer_table[s // self.local])
+                            addr = (Uint64(self.off_source_index)
+                                    + ((Uint64(s % Uint32(self.local)) * self.ranks + rank)
+                                       * self.capacity + slot) * 4)
+                            cell(dst, addr, Uint32)[0] = Uint32(route)
+            elif expert_id >= 0 and expert_id < self.ranks * self.local:
+                expert_u = Uint32(expert_id)
+                slot = atom_add_u32(self._field(base, 'send_count', Uint32) + expert_u, Uint32(1))
+                destination = Uint64(peer_table[expert_u // self.local])
+                address = Uint64(self.off_source_index) + ((Uint64(expert_u % self.local) * self.ranks + rank) * self.capacity + slot) * 4
+                route_out = cell(destination, address, Uint32)
+                route_out[0] = Uint32(route)
+        self._dispatch_grid(head, epoch, 13, 14, True)
+        if tid < self.ranks:
+            wait_epoch(self._field(Uint64(peer_table[tid]), 'header', Uint32) + 1, epoch, True)
+        cute.arch.sync_threads()
+        if cutlass.const_expr(self.eco):
+            # [ECO-SM90] Publish this rank's per-slot histogram, then rendezvous
+            # across ranks before waking the plan CTA (spec §5.4 steps 4-8).
+            #
+            # send_count[s] is this rank's contribution to physical slot s, so
+            # writing the row here and letting the plan read EVERY peer's row
+            # is what makes D_e global. Skipping the cross-rank rendezvous
+            # (header[24]) lets the plan read stale rows and each rank then
+            # derives a different D_e -- wrong numbers, no error.
+            # [ECO-SM90] EcoMeta has `physical` slots per rank, which exceeds
+            # the 256 plan/dispatch threads, so this must be a strided loop.
+            # Row indexing is GLOBAL on both sides (the plan reads
+            # eco_counts[r * physical + slot] for a global slot), and every
+            # copy of an expert carries the expert's single canonical count.
+            # `physical` (320) exceeds the thread count, so this is a strided
+            # walk (same shape as the send_count clear above).
+            for shard in cutlass.range(block * self.threads + tid, self.physical,
+                                       self.grid * self.threads):
+                self._eco_publish_count(base, rank, shard)
+            cute.arch.sync_threads()
+            fence_sys()
+            if block == 0 and tid == 0:
+                # header[24] (byte offset 24*4): cross-rank counts rendezvous
+                st_release_u32(head + Uint32(24), epoch, True)
+                # [ECO-SM90] stage marker: counts published (triage only)
+            if tid < self.ranks:
+                wait_epoch(self._field(Uint64(peer_table[tid]), 'header', Uint32)
+                           + Uint32(24), epoch, True)
+            cute.arch.sync_threads()
+            if block == 0 and tid == 0:
+                # step 8: wake the plan CTA
+                st_release_u32(self._field(base, 'eco_ready', Uint32),
+                               epoch + Uint32(1), False)
+        alloc = cutlass.utils.SmemAllocator()
+        counts = alloc.allocate_tensor(Uint32, cute.make_layout((self.ranks,)), 4)
+        prefix = alloc.allocate_tensor(Uint32, cute.make_layout((self.ranks + 1,)), 4)
+        total_shared = alloc.allocate_tensor(Uint32, cute.make_layout((2,)), 4)
+        # [ECO-SM90] A replica slot only knows how many tokens it owns after
+        # the plan published their quotas, so its slice is [quota_start,
+        # quota_start + quota]. Single-copy slots keep the whole stream and are
+        # never blocked on the plan, which is what lets them overlap.
+        # [ECO-SM90] Blocks grid-stride over the local slots exactly like the
+        # plain path. A replica slot blocks here until the plan has published
+        # its quota (the two-phase split of spec §5.3 without growing the grid,
+        # which the dispatch role's whole-grid rendezvous forbids), so
+        # single-copy slots keep pulling while the plan runs.
+        for expert in cutlass.range(block, self.local, self.grid):
+            # [ECO-SM90] per logical expert, because the copies of an expert
+            # share one canonical order; without ECO the key is the global
+            # slot (rank * local + local slot), as before.
+            # [ECO-SM90] `expert` is this rank's LOCAL slot index; EcoMeta,
+            # eco_quota and eco_quota_start are indexed by GLOBAL slot.
+            global_slot = rank * Uint32(self.local) + Uint32(expert)
+            slot_expert = global_slot
+            key = global_slot
+            if cutlass.const_expr(self.eco):
+                slot_expert = self._eco_phy(base, global_slot)
+                # ECO's send_count is indexed by LOGICAL expert (one canonical
+                # stream per expert, shared by all of its copies).
+                key = slot_expert
+            if tid < self.ranks:
+                source_base = Uint64(peer_table[tid])
+                source_count = self._field(source_base, 'send_count', Uint32)
+                counts[tid] = ld_acquire_sys_u32(source_count + key)
+            cute.arch.sync_threads()
+            if tid == 0:
+                running_count = Uint32(0)
+                prefix[0] = Uint32(0)
+                for source in cutlass.range_constexpr(self.ranks):
+                    running_count += counts[source]
+                    prefix[source + 1] = running_count
+                total_shared[0] = running_count
+            cute.arch.sync_threads()
+            total = total_shared[0]
+            # [ECO-SM90] replica slots: wait for the plan, then take our slice
+            # [ECO-SM90] `replicated` is decided from EcoMeta (does this
+            # slot's logical expert have more than one active copy?), not from
+            # a num_fixed prefix: the EPLB packer does not guarantee that the
+            # single-copy slots come first on a rank.
+            lo = Uint32(0)
+            hi = total
+            if cutlass.const_expr(self.eco):
+                # [ECO-SM90] PASSIVE copies pull nothing. A passive copy is a
+                # duplicate an expert holds on a rank that already serves it
+                # (unit_ref.py L36): the plan never gives it a quota, and every
+                # copy receives the FULL canonical stream, so letting it pull
+                # would duplicate that expert's tokens (measured: exactly the
+                # 2 passive experts' demand came out twice).
+                if cutlass.const_expr(True):
+                    if not self._eco_is_active(base, slot_expert, global_slot):
+                        hi = Uint32(0)
+                if self._eco_ncopies(base, slot_expert) > Uint32(1):
+                    if cutlass.const_expr(not self.eco_nosplit):
+                        if tid == 0:
+                            wait_epoch(self._field(base, 'eco_ready', Uint32) + 1,
+                                       epoch + Uint32(1), False)
+                        cute.arch.sync_threads()
+                    lo = Uint32(self._field(base, 'eco_quota_start', Uint32)[global_slot])
+                    hi = lo + Uint32(self._field(base, 'eco_quota', Uint32)[global_slot])
+                    # [ECO-SM90] A COPY'S SLICE MAY BE SHORTER THAN ITS QUOTA.
+                    # The plan splits an expert's demand into whole units
+                    # (multiples of block M), but the canonical stream is a
+                    # per-source concatenation the copies slice in order: the
+                    # first copy can be handed a quota that runs past the end
+                    # of its own share of the stream while the next copy then
+                    # starts beyond it. Each copy therefore pulls
+                    # [quota_start, min(quota_start + quota, D_e)) -- a contiguous
+                    # range of the SAME canonical order, so the union over the
+                    # copies is still exactly [0, D_e) and no token is lost or
+                    # duplicated.
+                    # The plan sizes a copy's slice in UNITS (multiples of
+                    # block M), so a slice can extend past the expert's real
+                    # stream -- in particular a quiet expert's second copy gets
+                    # a start beyond the end. Clamp to the canonical order's
+                    # length: the union of the clamped slices is still exactly
+                    # [0, D_e) because the quotas sum to D_e and the starts are
+                    # their prefix sums.
+                    if lo > total:
+                        lo = total
+                    if hi > total:
+                        hi = total
+            meta_base = Uint64(self.off_route_meta) + Uint64(expert) * self.rows * 12
+            weight_base = Uint64(self.off_route_weight) + Uint64(expert) * self.rows * 4
+            for row in cutlass.range(lo + tid, hi, self.threads):
+                source = Uint32(0)
+                for candidate in cutlass.range_constexpr(1, self.ranks):
+                    if row >= prefix[candidate]:
+                        source = Uint32(candidate)
+                source_slot = Uint32(row) - prefix[source]
+                route = cell(base, Uint64(self.off_source_index) + ((Uint64(expert) * self.ranks + source) * self.capacity + source_slot) * 4, Uint32)[0]
+                source_token, route_slot = route // self.topk, route % self.topk
+                local_row = Uint32(row) - lo
+                rank_out = cell(base, meta_base + Uint64(local_row * 3) * 4, Uint32)
+                rank_out[0] = source
+                token_out = cell(base, meta_base + Uint64(local_row * 3 + 1) * 4, Uint32)
+                token_out[0] = source_token
+                slot_out = cell(base, meta_base + Uint64(local_row * 3 + 2) * 4, Uint32)
+                slot_out[0] = route_slot
+                weight_out = cell(base, weight_base + Uint64(local_row) * 4, Float32)
+                weight_out[0] = cell(Uint64(peer_table[source]), Uint64(self.off_topk_weights) + Uint64(route) * 4, Float32)[0]
+            cute.arch.sync_threads()
+            # A warp retains one source/token pair while copying an entire
+            # route, avoiding metadata reloads for every sixteen data bytes.
+            for pull_row in cutlass.range(lo + warp, hi, self.threads // 32):
+                local_row = Uint32(pull_row) - lo
+                source_rank = cell(base, meta_base + Uint64(local_row * 3) * 4, Uint32)[0]
+                token = cell(base, meta_base + Uint64(local_row * 3 + 1) * 4, Uint32)[0]
+                remote = Uint64(peer_table[source_rank])
+                src = remote + Uint64(self.off_x) + Uint64(token) * self.hidden
+                dst = base + Uint64(self.off_l1_acts) + (Uint64(expert) * self.rows + Uint64(local_row)) * self.hidden
+                for k in cutlass.range(lane, self.hidden // 16, 32):
+                    copy_global_16(dst + Uint64(k) * 16, src + Uint64(k) * 16)
+                for sf_k in cutlass.range(lane, self.hidden // 128, 32):
+                    sf_value = cell(remote, Uint64(self.off_x_sf) + (Uint64(token) * (self.hidden // 128) + Uint32(sf_k)) * 4, Float32)[0]
+                    sf_out = cell(base, Uint64(self.off_l1_acts_sf) + ((Uint64(expert) * (self.hidden // 128) + Uint32(sf_k)) * self.rows + Uint64(local_row)) * 4, Float32)
+                    sf_out[0] = sf_value * Float32(64)
+            fence_gpu()
+            cute.arch.sync_threads()
+            owned = hi - lo
+            if tid == 0:
+                count_out = cell(base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)
+                count_out[0] = owned
+                if cutlass.const_expr(self.has_stats):
+                    recv_stats = cute.make_tensor(stats, cute.make_layout((self.local,)))
+                    recv_stats[expert] += owned
+                st_release_u32(self._field(base, 'expert_ready', Uint32) + Uint32(expert), epoch, False)
+                if owned > 0:
+                    active_slot = atom_add_u32(head + 7, Uint32(1))
+                    active_out = cell(base, Uint64(self.off_active_expert) + Uint64(active_slot) * 4, Uint32)
+                    active_out[0] = Uint32(expert)
+                    st_release_u32(self._field(base, 'active_ready', Uint32) + active_slot, epoch, False)
+                finished = atom_release_gpu_add_u32(head + 8, Uint32(1))
+                if finished == self.local - 1:
+                    st_release_u32(head + 9, epoch, False)
+            cute.arch.sync_threads()
+
+    @cute.jit
+    def _dispatch_direct(self, base: Uint64, peers: cute.Pointer, rank: Uint32,
+                          tokens: Uint32, stats: cute.Pointer):
+        tid, _, _ = cute.arch.thread_idx()
+        expert, _, _ = cute.arch.block_idx()
+        lane, warp = tid % 32, tid // 32
+        peer_table = cute.make_tensor(peers, cute.make_layout((self.ranks,)))
+        head = self._field(base, 'header', Uint32)
+        epoch = ld_acquire_gpu_u32(head)
+        if expert == 0 and tid == 0:
+            scan_out1 = cell(base, Uint64(8), Uint32)
+            scan_out1[0] = tokens
+            st_release_u32(head + 1, epoch, True)
+        alloc = cutlass.utils.SmemAllocator()
+        counts = alloc.allocate_tensor(Uint32, cute.make_layout((self.ranks,)), 4)
+        prefix = alloc.allocate_tensor(Uint32, cute.make_layout((self.ranks + 1,)), 4)
+        route_count = alloc.allocate_tensor(Uint32, cute.make_layout((1,)), 4)
+        if tid < self.ranks:
+            remote = Uint64(peer_table[tid])
+            wait_epoch(self._field(remote, 'header', Uint32) + 1, epoch, True)
+            counts[tid] = cell(remote, Uint64(8), Uint32)[0] * self.topk
+        cute.arch.sync_threads()
+        if tid == 0:
+            running_count = Uint32(0)
+            prefix[0] = Uint32(0)
+            for prefix_source in cutlass.range_constexpr(self.ranks):
+                running_count += counts[prefix_source]
+                prefix[prefix_source + 1] = running_count
+            route_count[0] = Uint32(0)
+        cute.arch.sync_threads()
+        meta_base = Uint64(self.off_route_meta) + Uint64(expert) * self.rows * 12
+        weight_base = Uint64(self.off_route_weight) + Uint64(expert) * self.rows * 4
+        for candidate_route in cutlass.range(tid, prefix[self.ranks], self.threads):
+            source = Uint32(0)
+            for candidate in cutlass.range_constexpr(1, self.ranks):
+                if candidate_route >= prefix[candidate]:
+                    source = Uint32(candidate)
+            source_route = Uint32(candidate_route) - prefix[source]
+            remote = Uint64(peer_table[source])
+            expert_id = cell(remote, Uint64(self.off_topk_idx) + Uint64(source_route) * 8, Int64)[0]
+            if expert_id == Int64(rank * self.local + Uint32(expert)):
+                row = atom_shared_add_u32(route_count.iterator, Uint32(1))
+                scan_out3 = cell(base, meta_base + Uint64(row * 3) * 4, Uint32)
+                scan_out3[0] = source
+                scan_out4 = cell(base, meta_base + Uint64(row * 3 + 1) * 4, Uint32)
+                scan_out4[0] = source_route // self.topk
+                scan_out5 = cell(base, meta_base + Uint64(row * 3 + 2) * 4, Uint32)
+                scan_out5[0] = source_route % self.topk
+                scan_out6 = cell(base, weight_base + Uint64(row) * 4, Float32)
+                scan_out6[0] = cell(remote, Uint64(self.off_topk_weights) + Uint64(source_route) * 4, Float32)[0]
+        cute.arch.sync_threads()
+        total = route_count[0]
+        # A warp retains one source/token pair while copying an entire
+        # route, avoiding metadata reloads for every sixteen data bytes.
+        for pull_row in cutlass.range(warp, total, self.threads // 32):
+            source_rank = cell(base, meta_base + Uint64(pull_row * 3) * 4, Uint32)[0]
+            token = cell(base, meta_base + Uint64(pull_row * 3 + 1) * 4, Uint32)[0]
+            remote = Uint64(peer_table[source_rank])
+            src = remote + Uint64(self.off_x) + Uint64(token) * self.hidden
+            dst = base + Uint64(self.off_l1_acts) + (Uint64(expert) * self.rows + Uint32(pull_row)) * self.hidden
+            for k in cutlass.range(lane, self.hidden // 16, 32):
+                copy_global_16(dst + Uint64(k) * 16, src + Uint64(k) * 16)
+            for sf_k in cutlass.range(lane, self.hidden // 128, 32):
+                sf_value = cell(remote, Uint64(self.off_x_sf) + (Uint64(token) * (self.hidden // 128) + Uint32(sf_k)) * 4, Float32)[0]
+                sf_out = cell(base, Uint64(self.off_l1_acts_sf) + ((Uint64(expert) * (self.hidden // 128) + Uint32(sf_k)) * self.rows + Uint32(pull_row)) * 4, Float32)
+                sf_out[0] = sf_value * Float32(64)
+        fence_gpu()
+        cute.arch.sync_threads()
+        if tid == 0:
+            count_out = cell(base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)
+            count_out[0] = total
+            if cutlass.const_expr(self.has_stats):
+                recv_stats = cute.make_tensor(stats, cute.make_layout((self.local,)))
+                recv_stats[expert] += total
+            st_release_u32(self._field(base, 'expert_ready', Uint32) + Uint32(expert), epoch, False)
+            if total > 0:
+                active_slot = atom_add_u32(head + 7, Uint32(1))
+                active_out = cell(base, Uint64(self.off_active_expert) + Uint64(active_slot) * 4, Uint32)
+                active_out[0] = Uint32(expert)
+                st_release_u32(self._field(base, 'active_ready', Uint32) + active_slot, epoch, False)
+            finished = atom_release_gpu_add_u32(head + 8, Uint32(1))
+            if finished == self.local - 1:
+                st_release_u32(head + 9, epoch, False)
+        cute.arch.sync_threads()
+
+
+
+    @cute.jit
+    def _stage(self, base: Uint64, slab: cute.Pointer, expert: Uint32,
+               ntile: Uint32, start: Uint32, valid: Uint32, kb: Uint32,
+               stage: Uint32, weights: cute.Pointer, offsets: cute.Pointer,
+               n: cutlass.Constexpr, l1: cutlass.Constexpr):
+        tid, _, _ = cute.arch.thread_idx()
+        k_size = self.hidden if l1 else self.intermediate
+        n_size = 2 * self.intermediate if l1 else self.hidden
+        input_offset = self.off_l1_acts if l1 else self.off_l2_acts
+        stage_base = stage * self.stage_bytes
+        if tid == 0:
+            bar = cute.recast_ptr(slab + self.smem - 128 + stage * 8, dtype=Uint64)
+            cute.arch.mbarrier_arrive_and_expect_tx(bar, 17408 * self.routed_n_factor)
+            for sub in cutlass.range_constexpr(self.routed_n_factor):
+                index = (Uint64(expert) * (n_size // 256) + ntile * self.routed_n_factor + sub) * (k_size // 128) + kb
+                bulk_g2s_1d(slab + stage_base + sub * 16384, weights + index * 16384, Uint32(16384), bar)
+                bulk_g2s_1d(slab + stage_base + 16384 * self.routed_n_factor + sub * 1024, offsets + index * 1024, Uint32(1024), bar)
+        for j in cutlass.range(tid, n * 8, 256):
+            row, k = Uint32(j // 8), Uint32((j % 8) * 16)
+            size = Uint32(0)
+            if row < valid:
+                size = Uint32(16)
+            address = base + Uint64(input_offset) + ((Uint64(expert) * self.rows + start + row) * k_size + kb * 128 + k)
+            src = cute.make_ptr(Uint8, address, cute.AddressSpace.gmem, assumed_align=16)
+            copy_async_16(slab + stage_base + self.routed_x_offset + canonical_offset(row, k), src, size)
+        if tid < n:
+            sf_size = Uint32(0)
+            if tid < valid:
+                sf_size = Uint32(4)
+            sf_offset = self.off_l1_acts_sf if l1 else self.off_l2_acts_sf
+            sf_address = base + Uint64(sf_offset) + ((Uint64(expert) * (k_size // 128) + kb) * self.rows + start + tid) * 4
+            sf_src = cute.make_ptr(Uint8, sf_address, cute.AddressSpace.gmem, assumed_align=4)
+            copy_async_4(slab + stage_base + self.sf_stage_offset + tid * 4, sf_src, sf_size)
+        copy_commit()
+
+    @cute.jit
+    def _tile_sync(self, base: Uint64, peers: cute.Pointer, slab: cute.Pointer,
+               expert: Uint32, ntile: Uint32, start: Uint32, valid: Uint32,
+               weights: cute.Pointer, offsets: cute.Pointer, secondary: cute.Pointer,
+               clamp: Float32, n: cutlass.Constexpr, l1: cutlass.Constexpr):
+        k_size = self.hidden if l1 else self.intermediate
+        tid, _, _ = cute.arch.thread_idx()
+        lane, warp = tid % 32, (tid // 32) % 4
+        wg = tid // 128
+        if tid == 0:
+            cute.arch.mbarrier_init(cute.recast_ptr(slab + self.smem - 128, dtype=Uint64), 1)
+            cute.arch.mbarrier_init(cute.recast_ptr(slab + self.smem - 120, dtype=Uint64), 1)
+        cute.arch.sync_threads()
+        cute.arch.mbarrier_init_fence()
+        final = cute.make_rmem_tensor((2 * self.routed_n_factor, n // 2), Float32)
+        final.fill(Float32(0))
+        secondary_value = cute.make_tensor(secondary, cute.make_layout((self.local,)))[expert]
+        self._stage(base, slab, expert, ntile, start, valid, Uint32(0), Uint32(0), weights, offsets, n, l1)
+        for kb in cutlass.range(k_size // 128):
+            stage = Uint32(kb % 2)
+            if tid == 0:
+                cute.arch.mbarrier_wait(cute.recast_ptr(slab + self.smem - 128 + stage * 8, dtype=Uint64), Uint32((kb // 2) % 2))
+            copy_wait()
+            cute.arch.sync_threads()
+            tma_store_fence()
+            if kb + 1 < k_size // 128:
+                self._stage(base, slab, expert, ntile, start, valid, Uint32(kb + 1), stage ^ Uint32(1), weights, offsets, n, l1)
+            scales = cute.make_rmem_tensor((n // 4,), Float32)
+            for group in cutlass.range_constexpr(n // 8):
+                token = Uint32(group * 8 + 2 * (lane % 4))
+                raw_sf = load_scale_pair(slab + stage * self.stage_bytes + Uint32(self.sf_stage_offset) + token * 4)
+                scale0 = raw_sf[0] * secondary_value
+                scale1 = raw_sf[1] * secondary_value
+                scales[group * 2], scales[group * 2 + 1] = scale0, scale1
+            for h in cutlass.range_constexpr(2 * self.routed_n_factor):
+                weight_half = Uint32(wg * 2 * self.routed_n_factor + h)
+                row = Uint32(warp * 16 + lane // 4)
+                word_ptr = slab + stage * self.stage_bytes + weight_half * 4096 + Uint32(warp * 1024 + lane * 16)
+                scale_ptr = slab + stage * self.stage_bytes + Uint32(16384 * self.routed_n_factor) + weight_half * 256 + Uint32(warp * 64 + (lane // 4) * 8)
+                frag = decode_fragment(word_ptr, scale_ptr)
+                part = wgmma_rs_k128(frag, smem_descriptor(slab + stage * self.stage_bytes + self.routed_x_offset), n)
+                for group in cutlass.range_constexpr(n // 8):
+                    final[h, group * 4] = cute.math.fma(part[group * 4], scales[group * 2], final[h, group * 4])
+                    final[h, group * 4 + 1] = cute.math.fma(part[group * 4 + 1], scales[group * 2 + 1], final[h, group * 4 + 1])
+                    final[h, group * 4 + 2] = cute.math.fma(part[group * 4 + 2], scales[group * 2], final[h, group * 4 + 2])
+                    final[h, group * 4 + 3] = cute.math.fma(part[group * 4 + 3], scales[group * 2 + 1], final[h, group * 4 + 3])
+        cute.arch.sync_threads()
+        for h in cutlass.range_constexpr(2 * self.routed_n_factor):
+            output_half = Uint32(wg * 2 * self.routed_n_factor + h)
+            for group in cutlass.range_constexpr(n // 8):
+                token = Uint32(group * 8 + 2 * (lane % 4))
+                row = Uint32(warp * 16 + lane // 4)
+                skew = Uint32((token % 8) // 2 * 8)
+                # L1 needs row XOR only; L2 also permutes vector chunks.
+                if cutlass.const_expr(l1):
+                    shared_cell(slab, (token * (256 * self.routed_n_factor) + ((output_half * 64 + row) ^ skew)) * 4, Float32)[0] = final[h, group * 4]
+                    shared_cell(slab, ((token + 1) * (256 * self.routed_n_factor) + ((output_half * 64 + row) ^ skew)) * 4, Float32)[0] = final[h, group * 4 + 1]
+                    shared_cell(slab, (token * (256 * self.routed_n_factor) + ((output_half * 64 + row + 8) ^ skew)) * 4, Float32)[0] = final[h, group * 4 + 2]
+                    shared_cell(slab, ((token + 1) * (256 * self.routed_n_factor) + ((output_half * 64 + row + 8) ^ skew)) * 4, Float32)[0] = final[h, group * 4 + 3]
+                else:
+                    shared_cell(slab, (token * (256 * self.routed_n_factor) + ((output_half * 64 + row) ^ skew ^ (((output_half * 64 + row) & 32) >> 3))) * 4, Float32)[0] = final[h, group * 4]
+                    shared_cell(slab, ((token + 1) * (256 * self.routed_n_factor) + ((output_half * 64 + row) ^ skew ^ (((output_half * 64 + row) & 32) >> 3))) * 4, Float32)[0] = final[h, group * 4 + 1]
+                    shared_cell(slab, (token * (256 * self.routed_n_factor) + ((output_half * 64 + row + 8) ^ skew ^ (((output_half * 64 + row + 8) & 32) >> 3))) * 4, Float32)[0] = final[h, group * 4 + 2]
+                    shared_cell(slab, ((token + 1) * (256 * self.routed_n_factor) + ((output_half * 64 + row + 8) ^ skew ^ (((output_half * 64 + row + 8) & 32) >> 3))) * 4, Float32)[0] = final[h, group * 4 + 3]
+        cute.arch.sync_threads()
+        if cutlass.const_expr(l1):
+            for ep_token in cutlass.range(tid // 32, valid, 8):
+                for sub in cutlass.range_constexpr(self.routed_n_factor):
+                    values = cute.make_rmem_tensor((4,), Float32)
+                    amax = Float32(0)
+                    weight = cell(base, Uint64(self.off_route_weight) + (Uint64(expert) * self.rows + start + ep_token) * 4, Float32)[0]
+                    skew = Uint32((ep_token % 8) // 2 * 8)
+                    raw = load_shared_8(slab + ep_token * (1024 * self.routed_n_factor) + sub * 1024 + ((lane * 4) ^ skew) * 4, True)
+                    for ep_j in cutlass.range_constexpr(4):
+                        gate = cute.math.min(raw[ep_j], clamp)
+                        up = cute.math.min(cute.math.max(raw[ep_j + 4], -clamp), clamp)
+                        sigmoid = cute.math.rcp(Float32(1) + cute.math.exp(-gate, fastmath=self.fast_math))
+                        values[ep_j] = gate * sigmoid * up * weight
+                        amax = cute.math.max(amax, abs_f32(values[ep_j]))
+                    for shift in cutlass.range_constexpr(5):
+                        amax = cute.math.max(amax, cute.arch.shuffle_sync_bfly(amax, 16 >> shift))
+                    scale = cute.math.max(amax, Float32(1e-10)) * Float32(1.0 / 448.0)
+                    inverse = cute.math.rcp(scale)
+                    if lane == 0:
+                        activation_scale_out = cell(base, Uint64(self.off_l2_acts_sf) + ((Uint64(expert) * (self.intermediate // 128) + ntile * self.routed_n_factor + sub) * self.rows + start + ep_token) * 4, Float32)
+                        activation_scale_out[0] = scale * Float32(64)
+                    low = f32x2_to_e4m3x2_bits(values[0] * inverse, values[1] * inverse)
+                    high = f32x2_to_e4m3x2_bits(values[2] * inverse, values[3] * inverse)
+                    activation_out = cell(base, Uint64(self.off_l2_acts) + (Uint64(expert) * self.rows + start + ep_token) * self.intermediate + ntile * (128 * self.routed_n_factor) + sub * 128 + lane * 4, Uint32)
+                    activation_out[0] = Uint32(low) | (Uint32(high) << 16)
+        else:
+            peer_table = cute.make_tensor(peers, cute.make_layout((self.ranks,)))
+            for ep_j in cutlass.range(tid, valid * (32 * self.routed_n_factor), 256):
+                ep_token, ep_col = ep_j // (32 * self.routed_n_factor), (ep_j % (32 * self.routed_n_factor)) * 8
+                meta = Uint64(self.off_route_meta) + (Uint64(expert) * self.rows + start + ep_token) * 12
+                source = cell(base, meta, Uint32)[0]
+                source_token = cell(base, meta + 4, Uint32)[0]
+                slot = cell(base, meta + 8, Uint32)[0]
+                remote = Uint64(peer_table[source])
+                skew = Uint32((ep_token % 8) // 2 * 8)
+                # DeepGEMM-style column-bit swizzle: address each LDS128
+                # independently; the logical eight values and STG128 stay intact.
+                values_lo = load_shared_4(slab + ep_token * (1024 * self.routed_n_factor) + (ep_col ^ skew ^ ((ep_col & 32) >> 3)) * 4)
+                values_hi = load_shared_4(slab + ep_token * (1024 * self.routed_n_factor) + ((ep_col + 4) ^ skew ^ (((ep_col + 4) & 32) >> 3)) * 4)
+                values8 = (*values_lo, *values_hi)
+                destination = remote + Uint64(self.off_combine) + ((Uint64(source_token) * self.topk + slot) * self.hidden + ntile * (256 * self.routed_n_factor) + ep_col) * 2
+                store_bf16_8(destination, values8)
+        cute.arch.sync_threads()
+
+    @cute.jit
+    def _stage_weights(self, slab: cute.Pointer, expert: Uint32, ntile: Uint32,
+                        kb: Uint32, stage: Uint32, weights: cute.Pointer,
+                        offsets: cute.Pointer, l1: cutlass.Constexpr):
+        tid, _, _ = cute.arch.thread_idx()
+        if tid == (0 if self.max_m == 64 else 64):
+            k_size = self.hidden if l1 else self.intermediate
+            n_size = 2 * self.intermediate if l1 else self.hidden
+            stage_base = stage * self.stage_bytes
+            full = cute.recast_ptr(slab + self.full_offset + stage * 8, dtype=Uint64)
+            cute.arch.mbarrier_arrive_and_expect_tx(full, 17408)
+            index = (Uint64(expert) * (n_size // 256) + ntile) * (k_size // 128) + kb
+            bulk_g2s_1d(slab + stage_base, weights + index * 16384, Uint32(16384), full)
+            bulk_g2s_1d(slab + stage_base + 16384, offsets + index * 1024, Uint32(1024), full)
+
+    @cute.jit
+    def _stage_activation(self, base: Uint64, slab: cute.Pointer, expert: Uint32,
+                           start: Uint32, valid: Uint32, kb: Uint32,
+                           stage: Uint32, n: Uint32, l1: cutlass.Constexpr):
+        tid, _, _ = cute.arch.thread_idx()
+        k_size = self.hidden if l1 else self.intermediate
+        input_offset = self.off_l1_acts if l1 else self.off_l2_acts
+        stage_base = stage * self.stage_bytes
+        full = cute.recast_ptr(slab + self.full_offset + stage * 8, dtype=Uint64)
+        for j in cutlass.range(tid, n * 8, 128 if self.max_m == 64 else 64):
+            row, k = Uint32(j // 8), Uint32((j % 8) * 16)
+            size = Uint32(0)
+            if row < valid:
+                size = Uint32(16)
+            address = base + Uint64(input_offset) + ((Uint64(expert) * self.rows + start + row) * k_size + kb * 128 + k)
+            src = cute.make_ptr(Uint8, address, cute.AddressSpace.gmem, assumed_align=16)
+            copy_async_16(slab + stage_base + 17408 + canonical_offset(row, k), src, size)
+        if tid < n:
+            sf_size = Uint32(0)
+            if tid < valid:
+                sf_size = Uint32(4)
+            sf_offset = self.off_l1_acts_sf if l1 else self.off_l2_acts_sf
+            sf_address = base + Uint64(sf_offset) + ((Uint64(expert) * (k_size // 128) + kb) * self.rows + start + tid) * 4
+            sf_src = cute.make_ptr(Uint8, sf_address, cute.AddressSpace.gmem, assumed_align=4)
+            copy_async_4(slab + stage_base + self.sf_stage_offset + tid * 4, sf_src, sf_size)
+        copy_commit()
+        copy_arrive(full)
+
+    @cute.jit
+    def _bucket_tile(self, base: Uint64, peers: cute.Pointer, slab: cute.Pointer,
+                      expert: Uint32, ntile: Uint32, start: Uint32, valid: Uint32,
+                      weights: cute.Pointer, offsets: cute.Pointer, secondary: cute.Pointer,
+                      clamp: Float32, l1: cutlass.Constexpr):
+        if cutlass.const_expr(self.max_m == 8):
+            self._tile_sync(base, peers, slab, expert, ntile, start, valid,
+                       weights, offsets, secondary, clamp, 8, l1)
+        else:
+            if valid <= 8:
+                self._tile_sync(base, peers, slab, expert, ntile, start, valid,
+                           weights, offsets, secondary, clamp, 8, l1)
+            else:
+                if cutlass.const_expr(self.max_m == 16):
+                    self._tile_sync(base, peers, slab, expert, ntile, start, valid,
+                               weights, offsets, secondary, clamp, 16, l1)
+                else:
+                    if valid <= 16:
+                        self._tile_sync(base, peers, slab, expert, ntile, start, valid,
+                                   weights, offsets, secondary, clamp, 16, l1)
+                    elif valid <= 32:
+                        self._tile_sync(base, peers, slab, expert, ntile, start, valid,
+                                   weights, offsets, secondary, clamp, 32, l1)
+                    else:
+                        self._tile_sync(base, peers, slab, expert, ntile, start, valid,
+                                   weights, offsets, secondary, clamp, 64, l1)
+
+    @cute.jit
+    def _claim_command(self, base: Uint64, command: cute.Tensor,
+                         epoch: Uint32, is_l1: Boolean):
+        tid, _, _ = cute.arch.thread_idx()
+        head = self._field(base, 'header', Uint32)
+        active_ptr = self._field(base, 'active_ready', Uint32)
+        expert_ptr = self._field(base, 'expert_ready', Uint32)
+        l1_ptr = self._field(base, 'l1_done', Uint32)
+        if tid == 0:
+            task, active_slot, ntile = Uint32(0), Uint32(0), Uint32(0)
+            if is_l1:
+                task = claim_sm90_task(head + 3)
+                active_slot, ntile = task // Uint32(self.intermediate // (128 * self.routed_n_factor)), task % Uint32(self.intermediate // (128 * self.routed_n_factor))
+            else:
+                task = claim_sm90_task(head + 10)
+                active_slot, ntile = task // Uint32(self.hidden // (256 * self.routed_n_factor)), task % Uint32(self.hidden // (256 * self.routed_n_factor))
+            active_count = ld_acquire_gpu_u32(head + 7)
+            if is_l1:
+                dispatch_done = ld_acquire_gpu_u32(head + 9)
+                while active_slot >= active_count and dispatch_done != epoch:
+                    active_count = ld_acquire_gpu_u32(head + 7)
+                    dispatch_done = ld_acquire_gpu_u32(head + 9)
+                active_count = ld_acquire_gpu_u32(head + 7)
+            command[0] = Uint32(0)
+            if active_slot < active_count:
+                wait_epoch(active_ptr + active_slot, epoch, False)
+                expert = cell(base, Uint64(self.off_active_expert) + Uint64(active_slot) * 4, Uint32)[0]
+                wait_epoch(expert_ptr + expert, epoch, False)
+                if not is_l1:
+                    wait_count(l1_ptr + expert, Uint32(self.intermediate // 128))
+                command[0] = Uint32(1)
+                command[1] = Uint32(expert)
+                command[2] = Uint32(ntile)
+
+    @cute.jit
+    def _publish_task(self, slab: cute.Pointer, task_iter: Uint32,
+                       phase: Uint32, expert: Uint32, ntile: Uint32,
+                       start: Uint32, valid: Uint32, last: Uint32):
+        tid, _, _ = cute.arch.thread_idx()
+        slot = task_iter % 2
+        if tid == 0 and task_iter >= 2:
+            cute.arch.mbarrier_wait(cute.recast_ptr(slab + self.task_empty_offset + slot * 8, dtype=Uint64), Uint32((task_iter // 2 - 1) % 2))
+        sync_loader()
+        if tid == 0:
+            record = slab + self.task_record_offset + slot * 32
+            shared_cell(record, Uint32(0), Uint32)[0] = phase
+            shared_cell(record, Uint32(4), Uint32)[0] = expert
+            shared_cell(record, Uint32(8), Uint32)[0] = ntile
+            shared_cell(record, Uint32(12), Uint32)[0] = start
+            shared_cell(record, Uint32(16), Uint32)[0] = valid
+            shared_cell(record, Uint32(20), Uint32)[0] = last
+            cute.arch.mbarrier_arrive(cute.recast_ptr(slab + self.task_full_offset + slot * 8, dtype=Uint64))
+        sync_loader()
+
+    @cute.jit
+    def _load_persistent_tile(self, base: Uint64, slab: cute.Pointer,
+                               data_iter: Uint32, expert: Uint32, ntile: Uint32,
+                               start: Uint32, valid: Uint32, weights: cute.Pointer,
+                               offsets: cute.Pointer, l1: cutlass.Constexpr):
+        tid, _, _ = cute.arch.thread_idx()
+        k_size = self.hidden if l1 else self.intermediate
+        load_m = Uint32(64)
+        if valid <= 8:
+            load_m = Uint32(8)
+        elif valid <= 16:
+            load_m = Uint32(16)
+        elif valid <= 32:
+            load_m = Uint32(32)
+        elif valid <= 40:
+            load_m = Uint32(40)
+        elif valid <= 48:
+            load_m = Uint32(48)
+        if cutlass.const_expr(self.max_m == 64):
+            for kb in cutlass.range(k_size // 128):
+                iteration = data_iter + Uint32(kb)
+                stage = iteration % self.stages
+                if tid == 0 and iteration >= self.stages:
+                    cute.arch.mbarrier_wait(cute.recast_ptr(slab + self.empty_offset + stage * 8, dtype=Uint64), Uint32((iteration // self.stages - 1) % 2))
+                sync_loader()
+                self._stage_weights(slab, expert, ntile, Uint32(kb), stage, weights, offsets, l1)
+                self._stage_activation(base, slab, expert, start, valid, Uint32(kb), stage, load_m, l1)
+        else:
+            if tid < 64:
+                for kb in cutlass.range(k_size // 128):
+                    iteration = data_iter + Uint32(kb)
+                    stage = iteration % self.stages
+                    if tid == 0 and iteration >= self.stages:
+                        cute.arch.mbarrier_wait(cute.recast_ptr(slab + self.empty_offset + stage * 8, dtype=Uint64), Uint32((iteration // self.stages - 1) % 2))
+                    sync_activation()
+                    self._stage_activation(base, slab, expert, start, valid, Uint32(kb), stage, load_m, l1)
+            else:
+                for weight_kb in cutlass.range(k_size // 128):
+                    weight_iter = data_iter + Uint32(weight_kb)
+                    weight_stage = weight_iter % self.stages
+                    if tid == 64 and weight_iter >= self.stages:
+                        cute.arch.mbarrier_wait(cute.recast_ptr(slab + self.empty_offset + weight_stage * 8, dtype=Uint64), Uint32((weight_iter // self.stages - 1) % 2))
+                    sync_weight()
+                    self._stage_weights(slab, expert, ntile, Uint32(weight_kb), weight_stage, weights, offsets, l1)
+        sync_loader()
+        return data_iter + Uint32(k_size // 128)
+
+    @cute.jit
+    def _produce_tasks(self, base: Uint64, slab: cute.Pointer, epoch: Uint32,
+                        w1: cute.Pointer, s1: cute.Pointer,
+                        w2: cute.Pointer, s2: cute.Pointer):
+        command = cute.make_tensor(cute.recast_ptr(slab + self.command_offset, dtype=Uint32), cute.make_layout((3,)))
+        is_l1, running = True, True
+        task_iter, data_iter = Uint32(0), Uint32(0)
+        while running:
+            self._claim_command(base, command, epoch, is_l1)
+            sync_loader()
+            if command[0] == 0:
+                if is_l1:
+                    is_l1 = False
+                else:
+                    running = False
+            else:
+                expert = Uint32(command[1])
+                ntile = Uint32(command[2])
+                count = cell(base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)[0]
+                for start in cutlass.range(0, count, self.max_m):
+                    valid = cute.math.min(Uint32(self.max_m), count - Uint32(start))
+                    last = Uint32(0)
+                    if Uint32(start) + valid == count:
+                        last = Uint32(1)
+                    phase = Uint32(1 if is_l1 else 2)
+                    self._publish_task(slab, task_iter, phase, expert, ntile,
+                                       Uint32(start), valid, last)
+                    task_iter += Uint32(1)
+                    if is_l1:
+                        data_iter = self._load_persistent_tile(base, slab, data_iter,
+                                      expert, ntile, Uint32(start), valid, w1, s1, True)
+                    else:
+                        data_iter = self._load_persistent_tile(base, slab, data_iter,
+                                      expert, ntile, Uint32(start), valid, w2, s2, False)
+        self._publish_task(slab, task_iter, Uint32(0), Uint32(0), Uint32(0),
+                           Uint32(0), Uint32(0), Uint32(0))
+
+    @cute.jit
+    def _math_persistent_tile(self, base: Uint64, peers: cute.Pointer, slab: cute.Pointer,
+                               data_iter: Uint32, expert: Uint32, ntile: Uint32,
+                               start: Uint32, valid: Uint32, secondary: cute.Pointer,
+                               clamp: Float32, n: cutlass.Constexpr, l1: cutlass.Constexpr):
+        tid, _, _ = cute.arch.thread_idx()
+        k_size = self.hidden if l1 else self.intermediate
+        epi_slab = slab + (self.full_offset + 1024)
+        math_tid = tid - 128
+        lane, warp = math_tid % 32, (math_tid // 32) % 4
+        wg = math_tid // 128
+        final = cute.make_rmem_tensor((2, n // 2), Float32)
+        final.fill(Float32(0))
+        secondary_value = cute.make_tensor(secondary, cute.make_layout((self.local,)))[expert]
+        row = Uint32(warp * 16 + lane // 4)
+        first_stage = Uint32(data_iter % self.stages)
+        if lane == 0:
+            cute.arch.mbarrier_wait(cute.recast_ptr(slab + self.full_offset + first_stage * 8, dtype=Uint64), Uint32((data_iter // self.stages) % 2))
+        cute.arch.sync_warp()
+        tma_store_fence()
+        initial_word = slab + first_stage * self.stage_bytes + Uint32(wg * 8192 + warp * 1024 + lane * 16)
+        initial_scale = slab + first_stage * self.stage_bytes + Uint32(16384 + wg * 512 + warp * 64 + (lane // 4) * 8)
+        frag0 = decode_fragment(initial_word, initial_scale)
+        for kb in cutlass.range(k_size // 128):
+            iteration = data_iter + Uint32(kb)
+            stage = Uint32(iteration % self.stages)
+            descriptor = smem_descriptor(slab + stage * self.stage_bytes + 17408)
+            raw0 = wgmma_rs_issue(frag0, descriptor, n)
+            word_ptr = slab + stage * self.stage_bytes + Uint32(wg * 8192 + warp * 1024 + lane * 16)
+            scale_ptr = slab + stage * self.stage_bytes + Uint32(16384 + wg * 512 + warp * 64 + (lane // 4) * 8)
+            frag1 = decode_fragment(word_ptr + 4096, scale_ptr + 256)
+            scales = cute.make_rmem_tensor((n // 4,), Float32)
+            for group in cutlass.range_constexpr(n // 8):
+                token = Uint32(group * 8 + 2 * (lane % 4))
+                raw_sf = load_scale_pair(slab + stage * self.stage_bytes + Uint32(self.sf_stage_offset) + token * 4)
+                scale0 = raw_sf[0] * secondary_value
+                scale1 = raw_sf[1] * secondary_value
+                scales[group * 2], scales[group * 2 + 1] = scale0, scale1
+            part0 = wgmma_rs_wait(raw0)
+            for group in cutlass.range_constexpr(n // 8):
+                final[0, group * 4] = cute.math.fma(part0[group * 4], scales[group * 2], final[0, group * 4])
+                final[0, group * 4 + 1] = cute.math.fma(part0[group * 4 + 1], scales[group * 2 + 1], final[0, group * 4 + 1])
+                final[0, group * 4 + 2] = cute.math.fma(part0[group * 4 + 2], scales[group * 2], final[0, group * 4 + 2])
+                final[0, group * 4 + 3] = cute.math.fma(part0[group * 4 + 3], scales[group * 2 + 1], final[0, group * 4 + 3])
+            raw1 = wgmma_rs_issue(frag1, descriptor, n)
+            if kb + 1 < k_size // 128:
+                next_stage = Uint32((iteration + 1) % self.stages)
+                if lane == 0:
+                    cute.arch.mbarrier_wait(cute.recast_ptr(slab + self.full_offset + next_stage * 8, dtype=Uint64), Uint32(((iteration + 1) // self.stages) % 2))
+                cute.arch.sync_warp()
+                tma_store_fence()
+                next_word = slab + next_stage * self.stage_bytes + Uint32(wg * 8192 + warp * 1024 + lane * 16)
+                next_scale = slab + next_stage * self.stage_bytes + Uint32(16384 + wg * 512 + warp * 64 + (lane // 4) * 8)
+                frag0 = decode_fragment(next_word, next_scale)
+            part1 = wgmma_rs_wait(raw1)
+            for group in cutlass.range_constexpr(n // 8):
+                final[1, group * 4] = cute.math.fma(part1[group * 4], scales[group * 2], final[1, group * 4])
+                final[1, group * 4 + 1] = cute.math.fma(part1[group * 4 + 1], scales[group * 2 + 1], final[1, group * 4 + 1])
+                final[1, group * 4 + 2] = cute.math.fma(part1[group * 4 + 2], scales[group * 2], final[1, group * 4 + 2])
+                final[1, group * 4 + 3] = cute.math.fma(part1[group * 4 + 3], scales[group * 2 + 1], final[1, group * 4 + 3])
+            tma_store_fence()
+            cute.arch.sync_warp()
+            if lane == 0:
+                cute.arch.mbarrier_arrive(cute.recast_ptr(slab + self.empty_offset + stage * 8, dtype=Uint64))
+        sync_math()
+        for h in cutlass.range_constexpr(2):
+            output_half = Uint32(wg * 2 + h)
+            for group in cutlass.range_constexpr(n // 8):
+                token = Uint32(group * 8 + 2 * (lane % 4))
+                row = Uint32(warp * 16 + lane // 4)
+                # XOR token-pair bits into columns, as in swizzled staging.
+                skew = Uint32((token % 8) // 2 * 8)
+                # L1 needs row XOR only; L2 also permutes vector chunks.
+                if cutlass.const_expr(l1):
+                    shared_cell(epi_slab, (token * 256 + ((output_half * 64 + row) ^ skew)) * 4, Float32)[0] = final[h, group * 4]
+                    shared_cell(epi_slab, ((token + 1) * 256 + ((output_half * 64 + row) ^ skew)) * 4, Float32)[0] = final[h, group * 4 + 1]
+                    shared_cell(epi_slab, (token * 256 + ((output_half * 64 + row + 8) ^ skew)) * 4, Float32)[0] = final[h, group * 4 + 2]
+                    shared_cell(epi_slab, ((token + 1) * 256 + ((output_half * 64 + row + 8) ^ skew)) * 4, Float32)[0] = final[h, group * 4 + 3]
+                else:
+                    shared_cell(epi_slab, (token * 256 + ((output_half * 64 + row) ^ skew ^ (((output_half * 64 + row) & 32) >> 3))) * 4, Float32)[0] = final[h, group * 4]
+                    shared_cell(epi_slab, ((token + 1) * 256 + ((output_half * 64 + row) ^ skew ^ (((output_half * 64 + row) & 32) >> 3))) * 4, Float32)[0] = final[h, group * 4 + 1]
+                    shared_cell(epi_slab, (token * 256 + ((output_half * 64 + row + 8) ^ skew ^ (((output_half * 64 + row + 8) & 32) >> 3))) * 4, Float32)[0] = final[h, group * 4 + 2]
+                    shared_cell(epi_slab, ((token + 1) * 256 + ((output_half * 64 + row + 8) ^ skew ^ (((output_half * 64 + row + 8) & 32) >> 3))) * 4, Float32)[0] = final[h, group * 4 + 3]
+        sync_math()
+        if cutlass.const_expr(l1):
+            for ep_token in cutlass.range(math_tid // 32, valid, 8):
+                values = cute.make_rmem_tensor((4,), Float32)
+                amax = Float32(0)
+                weight = cell(base, Uint64(self.off_route_weight) + (Uint64(expert) * self.rows + start + ep_token) * 4, Float32)[0]
+                skew = Uint32((ep_token % 8) // 2 * 8)
+                raw = load_shared_8(epi_slab + ep_token * 1024 + ((lane * 4) ^ skew) * 4, True)
+                for ep_j in cutlass.range_constexpr(4):
+                    gate = cute.math.min(raw[ep_j], clamp)
+                    up = cute.math.min(cute.math.max(raw[ep_j + 4], -clamp), clamp)
+                    sigmoid = cute.math.rcp(Float32(1) + cute.math.exp(-gate, fastmath=self.fast_math))
+                    values[ep_j] = gate * sigmoid * up * weight
+                    amax = cute.math.max(amax, abs_f32(values[ep_j]))
+                for shift in cutlass.range_constexpr(5):
+                    amax = cute.math.max(amax, cute.arch.shuffle_sync_bfly(amax, 16 >> shift))
+                scale = cute.math.max(amax, Float32(1e-10)) * Float32(1.0 / 448.0)
+                inverse = cute.math.rcp(scale)
+                if lane == 0:
+                    activation_scale_out = cell(base, Uint64(self.off_l2_acts_sf) + ((Uint64(expert) * (self.intermediate // 128) + ntile) * self.rows + start + ep_token) * 4, Float32)
+                    activation_scale_out[0] = scale * Float32(64)
+                low = f32x2_to_e4m3x2_bits(values[0] * inverse, values[1] * inverse)
+                high = f32x2_to_e4m3x2_bits(values[2] * inverse, values[3] * inverse)
+                activation_out = cell(base, Uint64(self.off_l2_acts) + (Uint64(expert) * self.rows + start + ep_token) * self.intermediate + ntile * 128 + lane * 4, Uint32)
+                activation_out[0] = Uint32(low) | (Uint32(high) << 16)
+        else:
+            peer_table = cute.make_tensor(peers, cute.make_layout((self.ranks,)))
+            for ep_j in cutlass.range(math_tid, valid * 32, 256):
+                ep_token, ep_col = ep_j // 32, (ep_j % 32) * 8
+                meta = Uint64(self.off_route_meta) + (Uint64(expert) * self.rows + start + ep_token) * 12
+                source = cell(base, meta, Uint32)[0]
+                source_token = cell(base, meta + 4, Uint32)[0]
+                slot = cell(base, meta + 8, Uint32)[0]
+                remote = Uint64(peer_table[source])
+                skew = Uint32((ep_token % 8) // 2 * 8)
+                # DeepGEMM-style column-bit swizzle: address each LDS128
+                # independently; the logical eight values and STG128 stay intact.
+                values_lo = load_shared_4(epi_slab + ep_token * 1024 + (ep_col ^ skew ^ ((ep_col & 32) >> 3)) * 4)
+                values_hi = load_shared_4(epi_slab + ep_token * 1024 + ((ep_col + 4) ^ skew ^ (((ep_col + 4) & 32) >> 3)) * 4)
+                values8 = (*values_lo, *values_hi)
+                destination = remote + Uint64(self.off_combine) + ((Uint64(source_token) * self.topk + slot) * self.hidden + ntile * 256 + ep_col) * 2
+                store_bf16_8(destination, values8)
+        sync_math()
+        return data_iter + Uint32(k_size // 128)
+
+    @cute.jit
+    def _consume_tasks(self, base: Uint64, peers: cute.Pointer, slab: cute.Pointer,
+                        sec1: cute.Pointer, sec2: cute.Pointer, clamp: Float32):
+        tid, _, _ = cute.arch.thread_idx()
+        math_tid, lane = tid - 128, tid % 32
+        task_iter, data_iter = Uint32(0), Uint32(0)
+        running = True
+        while running:
+            slot = task_iter % 2
+            if lane == 0:
+                cute.arch.mbarrier_wait(cute.recast_ptr(slab + self.task_full_offset + slot * 8, dtype=Uint64), Uint32((task_iter // 2) % 2))
+            cute.arch.sync_warp()
+            record = slab + self.task_record_offset + slot * 32
+            phase = Uint32(shared_cell(record, Uint32(0), Uint32)[0])
+            expert = Uint32(shared_cell(record, Uint32(4), Uint32)[0])
+            ntile = Uint32(shared_cell(record, Uint32(8), Uint32)[0])
+            start = Uint32(shared_cell(record, Uint32(12), Uint32)[0])
+            valid = Uint32(shared_cell(record, Uint32(16), Uint32)[0])
+            last = Uint32(shared_cell(record, Uint32(20), Uint32)[0])
+            sync_math()
+            if math_tid == 0:
+                cute.arch.mbarrier_arrive(cute.recast_ptr(slab + self.task_empty_offset + slot * 8, dtype=Uint64))
+            task_iter += Uint32(1)
+            if phase == 0:
+                running = False
+            else:
+                if phase == 1:
+                    data_iter = self._select_persistent_tile(base, peers, slab, data_iter,
+                                     expert, ntile, start, valid, sec1, clamp, True)
+                else:
+                    data_iter = self._select_persistent_tile(base, peers, slab, data_iter,
+                                     expert, ntile, start, valid, sec2, clamp, False)
+                fence_gpu()
+                sync_math()
+                if math_tid == 0 and phase == 1 and last != 0:
+                    atom_release_gpu_add_u32(self._field(base, 'l1_done', Uint32) + expert, Uint32(1))
+
+    @cute.jit
+    def _select_persistent_tile(self, base: Uint64, peers: cute.Pointer, slab: cute.Pointer,
+                                 data_iter: Uint32, expert: Uint32, ntile: Uint32,
+                                 start: Uint32, valid: Uint32, secondary: cute.Pointer,
+                                 clamp: Float32, l1: cutlass.Constexpr):
+        result = Uint32(data_iter)
+        if cutlass.const_expr(self.max_m == 8):
+            result = self._math_persistent_tile(base, peers, slab, data_iter, expert, ntile, start, valid, secondary, clamp, 8, l1)
+        elif cutlass.const_expr(self.max_m == 16):
+            if valid <= 8:
+                result = self._math_persistent_tile(base, peers, slab, data_iter, expert, ntile, start, valid, secondary, clamp, 8, l1)
+            else:
+                result = self._math_persistent_tile(base, peers, slab, data_iter, expert, ntile, start, valid, secondary, clamp, 16, l1)
+        elif cutlass.const_expr(self.max_m == 32):
+            if valid <= 8:
+                result = self._math_persistent_tile(base, peers, slab, data_iter, expert, ntile, start, valid, secondary, clamp, 8, l1)
+            elif valid <= 16:
+                result = self._math_persistent_tile(base, peers, slab, data_iter, expert, ntile, start, valid, secondary, clamp, 16, l1)
+            else:
+                result = self._math_persistent_tile(base, peers, slab, data_iter, expert, ntile, start, valid, secondary, clamp, 32, l1)
+        else:
+            if valid <= 8:
+                result = self._math_persistent_tile(base, peers, slab, data_iter, expert, ntile, start, valid, secondary, clamp, 8, l1)
+            elif valid <= 16:
+                result = self._math_persistent_tile(base, peers, slab, data_iter, expert, ntile, start, valid, secondary, clamp, 16, l1)
+            elif valid <= 32:
+                result = self._math_persistent_tile(base, peers, slab, data_iter, expert, ntile, start, valid, secondary, clamp, 32, l1)
+            elif valid <= 40:
+                result = self._math_persistent_tile(base, peers, slab, data_iter, expert, ntile, start, valid, secondary, clamp, 40, l1)
+            elif valid <= 48:
+                result = self._math_persistent_tile(base, peers, slab, data_iter, expert, ntile, start, valid, secondary, clamp, 48, l1)
+            else:
+                result = self._math_persistent_tile(base, peers, slab, data_iter, expert, ntile, start, valid, secondary, clamp, 64, l1)
+        return result
+
+    @cute.jit
+    def _compute_persistent(self, base: Uint64, peers: cute.Pointer, w1: cute.Pointer,
+                             s1: cute.Pointer, sec1: cute.Pointer, w2: cute.Pointer,
+                             s2: cute.Pointer, sec2: cute.Pointer, clamp: Float32):
+        tid, _, _ = cute.arch.thread_idx()
+        alloc = cutlass.utils.SmemAllocator()
+        slab = cute.recast_ptr(alloc.allocate(self.smem, 1024), dtype=Uint8)
+        if tid < self.stages:
+            cute.arch.mbarrier_init(cute.recast_ptr(slab + self.full_offset + tid * 8, dtype=Uint64), 129 if self.max_m == 64 else 65)
+            cute.arch.mbarrier_init(cute.recast_ptr(slab + self.empty_offset + tid * 8, dtype=Uint64), 8)
+        if tid < 2:
+            cute.arch.mbarrier_init(cute.recast_ptr(slab + self.task_full_offset + tid * 8, dtype=Uint64), 1)
+            cute.arch.mbarrier_init(cute.recast_ptr(slab + self.task_empty_offset + tid * 8, dtype=Uint64), 1)
+        cute.arch.sync_threads()
+        cute.arch.mbarrier_init_fence()
+        epoch = ld_acquire_gpu_u32(self._field(base, 'header', Uint32))
+        if tid < 128:
+            cute.arch.setmaxregister_decrease(32 if self.max_m <= 32 else 64)
+            self._produce_tasks(base, slab, epoch, w1, s1, w2, s2)
+            fence_sys()
+            sync_tile()
+        else:
+            cute.arch.setmaxregister_increase(104 if self.max_m <= 32 else 216)
+            self._consume_tasks(base, peers, slab, sec1, sec2, clamp)
+            fence_sys()
+            sync_tile()
+
+    @cute.jit
+    def _compute_sync(self, base: Uint64, peers: cute.Pointer, w1: cute.Pointer,
+                  s1: cute.Pointer, sec1: cute.Pointer, w2: cute.Pointer,
+                  s2: cute.Pointer, sec2: cute.Pointer, clamp: Float32):
+        tid, _, _ = cute.arch.thread_idx()
+        alloc = cutlass.utils.SmemAllocator()
+        slab = cute.recast_ptr(alloc.allocate(self.smem, 1024), dtype=Uint8)
+        command = cute.make_tensor(cute.recast_ptr(slab + self.smem - 96, dtype=Uint32), cute.make_layout((3,)))
+        head = self._field(base, 'header', Uint32)
+        epoch = ld_acquire_gpu_u32(head)
+        # Dispatch publishes only nonempty experts. Reserved queue entries
+        # have an epoch flag so a consumer never reads an unpublished expert.
+        # Exhaust L1 claims before any L2 wait: every dependency is in flight.
+        is_l1 = True
+        running = True
+        while running:
+            self._claim_command(base, command, epoch, is_l1)
+            cute.arch.sync_threads()
+            if command[0] == 0:
+                if is_l1:
+                    is_l1 = False
+                else:
+                    running = False
+            else:
+                expert = Uint32(command[1])
+                ntile = Uint32(command[2])
+                count = cell(base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)[0]
+                for start in cutlass.range(0, count, self.max_m):
+                    valid = cute.math.min(Uint32(self.max_m), count - Uint32(start))
+                    if is_l1:
+                        self._bucket_tile(base, peers, slab, expert, ntile, Uint32(start), valid,
+                                          w1, s1, sec1, clamp, True)
+                    else:
+                        self._bucket_tile(base, peers, slab, expert, ntile, Uint32(start), valid,
+                                          w2, s2, sec2, clamp, False)
+                fence_gpu()
+                cute.arch.sync_threads()
+                if is_l1 and tid == 0:
+                    atom_release_gpu_add_u32(self._field(base, 'l1_done', Uint32) + expert, Uint32(self.routed_n_factor))
+                cute.arch.sync_threads()
+        fence_sys()
+
+    @cute.jit
+    def _compute(self, base: Uint64, peers: cute.Pointer, w1: cute.Pointer,
+                  s1: cute.Pointer, sec1: cute.Pointer, w2: cute.Pointer,
+                  s2: cute.Pointer, sec2: cute.Pointer, clamp: Float32):
+        if cutlass.const_expr(self.warp_specialized):
+            self._compute_persistent(base, peers, w1, s1, sec1, w2, s2, sec2, clamp)
+        else:
+            self._compute_sync(base, peers, w1, s1, sec1, w2, s2, sec2, clamp)
+
+    @cute.jit
+    def _shared_stage(self, base: Uint64, slab: cute.Pointer, weights: cute.Pointer,
+                      scales: cute.Pointer, ntile: Uint32, start: Uint32,
+                      valid: Uint32, kb: Uint32, bar: cute.Pointer,
+                      n: cutlass.Constexpr, l1: cutlass.Constexpr):
+        """Issue exact W/SF TMA and X/SF cp.async copies, without waiting."""
+        tid, _, _ = cute.arch.thread_idx()
+        k_size = self.hidden if l1 else self.shared_i
+        input_offset = self.off_shared_l1_acts if l1 else self.off_shared_l2_acts
+        sf_offset = self.off_shared_l1_acts_sf if l1 else self.off_shared_l2_acts_sf
+        activation_offset = 36864
+        sf_stage = activation_offset + n * 128
+        if tid == 0:
+            cute.arch.mbarrier_arrive_and_expect_tx(bar, 36864)
+            tile = Uint64(ntile) * (k_size // 128) + kb
+            bulk_g2s_1d(slab, weights + tile * 32768, Uint32(32768), bar)
+            bulk_g2s_1d(slab + 32768, cute.recast_ptr(scales, dtype=Uint8) + tile * 4096, Uint32(4096), bar)
+        for j in cutlass.range(tid, n * 8, self.threads):
+            row, col = Uint32(j // 8), Uint32(j % 8) * 16
+            size = Uint32(16) if row < valid else Uint32(0)
+            address = base + Uint64(input_offset) + Uint64(start + row) * k_size + kb * 128 + col
+            copy_async_16(slab + activation_offset + canonical_offset(row, col),
+                          cute.make_ptr(Uint8, address, cute.AddressSpace.gmem, assumed_align=16), size)
+        for j in cutlass.range(tid, n * 4, self.threads):
+            row, kg = Uint32(j % n), Uint32(j // n)
+            size = Uint32(4) if row < valid else Uint32(0)
+            address = base + Uint64(sf_offset) + (Uint64(start + row) * (k_size // 32) + kb * 4 + kg) * 4
+            copy_async_4(slab + sf_stage + Uint32(j) * 4,
+                         cute.make_ptr(Uint8, address, cute.AddressSpace.gmem, assumed_align=4), size)
+        copy_commit()
+
+    @cute.jit
+    def _shared_tile(self, base: Uint64, slab: cute.Pointer, weights: cute.Pointer,
+                     scales: cute.Pointer, ntile: Uint32, start: Uint32,
+                     valid: Uint32, clamp: Float32, n: cutlass.Constexpr,
+                     l1: cutlass.Constexpr):
+        """Native dense FP8 SE tile in the shared compute role, with separate row/K32 scales.
+
+        A K128 stage has 32768B FP8 W, 4096B FP32 W SF, n*128B X,
+        and n*16B X SF. Persistent CTAs prefetch the next of two stages
+        during current-stage math in the independent shared role.
+        The end-of-stage CTA barrier retires all readers before slot reuse;
+        each slot has its own mbarrier, with parity advancing on every reuse.
+        """
+        tid, _, _ = cute.arch.thread_idx()
+        math_tid = tid
+        lane, warp = math_tid % 32, (math_tid // 32) % 4
+        wg = math_tid // 128
+        k_size = self.hidden if l1 else self.shared_i
+        activation_offset = 36864
+        sf_stage = activation_offset + n * 128
+        bar = cute.recast_ptr(slab + self.smem - 128, dtype=Uint64)
+        # The effective Role4 launch reserves both dense stages independently
+        # of the routed geometry and its shared-memory budget.
+        stage_stride = (36864 + n * 144 + 1023) // 1024 * 1024
+        if tid < 2:
+            cute.arch.mbarrier_init(bar + tid, 1)
+        cute.arch.sync_threads()
+        cute.arch.mbarrier_init_fence()
+        final = cute.make_rmem_tensor((2, n // 2), Float32)
+        final.fill(Float32(0))
+        self._shared_stage(base, slab, weights, scales, ntile, start, valid,
+                           Uint32(0), bar, n, l1)
+        for kb in cutlass.range(k_size // 128):
+            tile_slab = slab + Uint32(kb % 2) * stage_stride
+            copy_wait()
+            if tid == 0:
+                cute.arch.mbarrier_wait(bar + Uint32(kb % 2), Uint32((kb // 2) % 2))
+            cute.arch.sync_threads()
+            tma_store_fence()
+            if kb + 1 < k_size // 128:
+                next_slot = Uint32((kb + 1) % 2)
+                self._shared_stage(base, slab + next_slot * stage_stride,
+                                   weights, scales, ntile, start, valid,
+                                   Uint32(kb + 1), bar + next_slot, n, l1)
+            for h in cutlass.range_constexpr(2):
+                half = Uint32(wg * 2 + h)
+                row = Uint32(warp * 16 + lane // 4)
+                for pair in cutlass.range_constexpr(2):
+                    fragment0 = load_shared_u32x4(tile_slab + ((half * 4 + pair * 2) * 128 + Uint32(math_tid % 128)) * 16)
+                    fragment1 = load_shared_u32x4(tile_slab + ((half * 4 + pair * 2 + 1) * 128 + Uint32(math_tid % 128)) * 16)
+                    descriptor = smem_descriptor(tile_slab + activation_offset) + Uint64(pair * 4)
+                    parts = wgmma_rs_k32_pair(
+                        fragment0, fragment1, descriptor, n)
+                    for bank in cutlass.range_constexpr(2):
+                        kg = pair * 2 + bank
+                        part = tuple(parts[bank * (n // 2) + i] for i in range(n // 2))
+                        sw0 = shared_cell(tile_slab, Uint32(32768) + (half * 256 + row * 4 + kg) * 4, Float32)[0]
+                        sw1 = shared_cell(tile_slab, Uint32(32768) + (half * 256 + (row + 8) * 4 + kg) * 4, Float32)[0]
+                        for group in cutlass.range_constexpr(n // 8):
+                            token = Uint32(group * 8 + 2 * (lane % 4))
+                            sa = load_scale_pair(tile_slab + sf_stage + Uint32(kg * n) * 4 + token * 4)
+                            final[h, group * 4] = cute.math.fma(part[group * 4], sw0 * sa[0], final[h, group * 4])
+                            final[h, group * 4 + 1] = cute.math.fma(part[group * 4 + 1], sw0 * sa[1], final[h, group * 4 + 1])
+                            final[h, group * 4 + 2] = cute.math.fma(part[group * 4 + 2], sw1 * sa[0], final[h, group * 4 + 2])
+                            final[h, group * 4 + 3] = cute.math.fma(part[group * 4 + 3], sw1 * sa[1], final[h, group * 4 + 3])
+            cute.arch.sync_threads()
+        for h in cutlass.range_constexpr(2):
+            half = Uint32(wg * 2 + h)
+            row = Uint32(warp * 16 + lane // 4)
+            for group in cutlass.range_constexpr(n // 8):
+                token = Uint32(group * 8 + 2 * (lane % 4))
+                skew = Uint32((token % 8) // 2 * 8)
+                for r in cutlass.range_constexpr(2):
+                    for t in cutlass.range_constexpr(2):
+                        col = half * 64 + row + r * 8
+                        if cutlass.const_expr(l1):
+                            ep_smem_offset = (token + t) * 1024 + (col ^ skew) * 4
+                        else:
+                            ep_smem_offset = (token + t) * 1024 + (col ^ skew ^ ((col & 32) >> 3)) * 4
+                        shared_cell(slab, ep_smem_offset, Float32)[0] = final[h, group * 4 + r * 2 + t]
+        cute.arch.sync_threads()
+        if cutlass.const_expr(l1):
+            for ep_token in cutlass.range(math_tid // 32, valid, 8):
+                skew = Uint32((ep_token % 8) // 2 * 8)
+                raw = load_shared_8(slab + ep_token * 1024 + ((lane * 4) ^ skew) * 4, True)
+                values = cute.make_rmem_tensor((4,), Float32)
+                amax = Float32(0)
+                for j in cutlass.range_constexpr(4):
+                    # Match standalone DeepGEMM BF16 GEMM1 output rounding.
+                    gate = cute.math.min(round_bf16_f32(raw[j]), clamp)
+                    up = cute.math.min(cute.math.max(round_bf16_f32(raw[j + 4]), -clamp), clamp)
+                    values[j] = gate * cute.math.rcp(Float32(1) + cute.math.exp(-gate, fastmath=self.fast_math)) * up
+                    amax = cute.math.max(amax, abs_f32(values[j]))
+                for shift in cutlass.range_constexpr(3):
+                    amax = cute.math.max(amax, cute.arch.shuffle_sync_bfly(amax, 4 >> shift))
+                exponent = ue8m0_fp8_scale_exp(amax)
+                inverse = ue8m0_fp8_inv(exponent)
+                if lane % 8 == 0:
+                    sf = cell(base, Uint64(self.off_shared_l2_acts_sf) + (Uint64(start + ep_token) * (self.shared_i // 32) + ntile * 4 + lane // 8) * 4, Float32)
+                    sf[0] = bits_float(exponent << 23)
+                lo = f32x2_to_e4m3x2_bits(values[0] * inverse, values[1] * inverse)
+                hi = f32x2_to_e4m3x2_bits(values[2] * inverse, values[3] * inverse)
+                out = cell(base, Uint64(self.off_shared_l2_acts) + Uint64(start + ep_token) * self.shared_i + ntile * 128 + lane * 4, Uint32)
+                out[0] = Uint32(lo) | (Uint32(hi) << 16)
+        else:
+            for j in cutlass.range(math_tid, valid * 32, 256):
+                token, col = Uint32(j // 32), Uint32(j % 32) * 8
+                skew = Uint32((token % 8) // 2 * 8)
+                lo = load_shared_4(slab + token * 1024 + (col ^ skew ^ ((col & 32) >> 3)) * 4)
+                hi = load_shared_4(slab + token * 1024 + ((col + 4) ^ skew ^ (((col + 4) & 32) >> 3)) * 4)
+                ep_global_address = base + Uint64(self.off_shared_y) + (Uint64(start + token) * self.hidden + ntile * 256 + col) * 2
+                store_bf16_8(ep_global_address, (*lo, *hi))
+        cute.arch.sync_threads()
+
+    @cute.jit
+    def _shared_select(self, base: Uint64, slab: cute.Pointer, weights: cute.Pointer,
+                       scales: cute.Pointer, ntile: Uint32, start: Uint32,
+                       valid: Uint32, clamp: Float32, l1: cutlass.Constexpr):
+        if cutlass.const_expr(self.max_m == 8):
+            self._shared_tile(base, slab, weights, scales, ntile, start, valid, clamp, 8, l1)
+        elif cutlass.const_expr(self.max_m == 16):
+            self._shared_tile(base, slab, weights, scales, ntile, start, valid, clamp, 16, l1)
+        elif cutlass.const_expr(self.max_m == 32):
+            self._shared_tile(base, slab, weights, scales, ntile, start, valid, clamp, 32, l1)
+        else:
+            self._shared_tile(base, slab, weights, scales, ntile, start, valid, clamp, 64, l1)
+
+    @cute.jit
+    def _compute_shared(self, base: Uint64, slab: cute.Pointer, tokens: Uint32, w1: cute.Pointer,
+                        s1: cute.Pointer, w2: cute.Pointer, s2: cute.Pointer,
+                        clamp: Float32):
+        # Replicated local-token branch, independently queued from routed experts.
+        # L1 ticket exhaustion precedes L2 waits, so no CTA can wait on an
+        # unclaimed L1 dependency. T0 claims no shared tasks.
+        tid, _, _ = cute.arch.thread_idx()
+        command = cute.make_tensor(cute.recast_ptr(slab + self.smem - 96, dtype=Uint32), cute.make_layout((1,)))
+        head = self._field(base, 'header', Uint32)
+        blocks = (tokens + self.max_m - 1) // self.max_m
+        for phase in cutlass.range_constexpr(2):
+            tiles = self.shared_i // 128 if phase == 0 else self.hidden // 256
+            running = True
+            while running:
+                if tid == 0:
+                    command[0] = claim_sm90_task(head + 20 + phase)
+                cute.arch.sync_threads()
+                task = Uint32(command[0])
+                if task >= blocks * tiles:
+                    running = False
+                else:
+                    block, ntile = task // tiles, task % tiles
+                    start = block * self.max_m
+                    valid = cute.math.min(Uint32(self.max_m), tokens - start)
+                    if cutlass.const_expr(phase == 0):
+                        self._shared_select(base, slab, w1, s1, ntile, start, valid, clamp, True)
+                        fence_gpu()
+                        cute.arch.sync_threads()
+                        if tid == 0:
+                            atom_release_gpu_add_u32(self._field(base, 'shared_l1_done', Uint32) + block, Uint32(1))
+                    else:
+                        if tid == 0:
+                            wait_count(self._field(base, 'shared_l1_done', Uint32) + block, Uint32(self.shared_i // 128))
+                        cute.arch.sync_threads()
+                        self._shared_select(base, slab, w2, s2, ntile, start, valid, clamp, False)
+                cute.arch.sync_threads()
+        fence_sys()
+
+    @cute.jit
+    def _combine(self, base: Uint64, peers: cute.Pointer, y: cute.Pointer, rank: Uint32, tokens: Uint32):
+        tid, _, _ = cute.arch.thread_idx()
+        block, _, _ = cute.arch.block_idx()
+        head = self._field(base, 'header', Uint32)
+        epoch = ld_acquire_gpu_u32(head)
+        table = cute.make_tensor(peers, cute.make_layout((self.ranks,)))
+        cute.arch.sync_threads()
+        if tid < 128:
+            # Local Role1/2 graph predecessors have retired. These fields
+            # have ONLY local readers; cleanup may overlap peer scatter wait
+            # and complete FP32 slot combine in the other 256 threads.
+            if block == 0 and tid < self.ranks:
+                # Push completion to each peer; consumers acquire local flags.
+                st_release_u32(self._field(Uint64(table[tid]), 'compute_ready', Uint32) + rank, epoch, True)
+            for expert in cutlass.range(block * 128 + tid, self.local, self.grid * 128):
+                flag_out = cell(base, Uint64(self.off_active_ready) + Uint64(expert) * 4, Uint32)
+                flag_out[0] = epoch
+                done_out = cell(base, Uint64(self.off_l1_done) + Uint64(expert) * 4, Uint32)
+                done_out[0] = Uint32(0)
+            if block == 0 and tid == 0:
+                for c in cutlass.range_constexpr(8 if self.shared_experts > 0 else 6):
+                    counter_out = cell(base, Uint64((3, 7, 8, 10, 11, 13, 20, 21)[c] * 4), Uint32)
+                    counter_out[0] = Uint32(0)
+                if cutlass.const_expr(self.eco):
+                    # [ECO-SM90] Clear both plan handshake words for the next
+                    # call. The plan waits on eco_ready[0] == epoch + 1 and the
+                    # replica pull on eco_ready[1] == epoch + 1, so a stale
+                    # value from the previous call would let a rank skip its
+                    # wait (and read last call's quotas).
+                    eco_rd = self._field(base, 'eco_ready', Uint32)
+                    eco_rd[0] = Uint32(0)
+                    eco_rd[1] = Uint32(0)
+            if cutlass.const_expr(self.shared_experts > 0):
+                for block_m in cutlass.range(block * 128 + tid, (self.capacity + 7) // 8, self.grid * 128):
+                    out = cell(base, Uint64(self.off_shared_l1_done) + Uint64(block_m) * 4, Uint32)
+                    out[0] = Uint32(0)
+            # Retain peer-readable send_count/source_index through this call.
+            # The all-peer compute_ready rendezvous below retires their old readers
+            # before any rank may begin its next dispatch initialization.
+            fence_gpu()
+            sync_loader()
+            if tid == 0:
+                if cutlass.const_expr(self.cleanup_grids == 1):
+                    if block == 0:
+                        st_release_u32(head + 19, epoch, False)
+                else:
+                    if block < self.cleanup_grids:
+                        arrived = atom_acq_rel_add_u32(head + 18, Uint32(1))
+                        if arrived == self.cleanup_grids - 1:
+                            st_release_u32(head + 19, epoch, False)
+                    if block == 0:
+                        wait_epoch(head + 19, epoch, False)
+            sync_loader()
+        else:
+            math_tid = tid - 128
+            if math_tid < self.ranks:
+                wait_epoch(self._field(base, 'compute_ready', Uint32) + math_tid, epoch, True)
+            sync_math()
+            for index in cutlass.range(block * 256 + math_tid, tokens * (self.hidden // 8), self.grid * 256):
+                token, col = index // (self.hidden // 8), (index % (self.hidden // 8)) * 8
+                total = cute.make_rmem_tensor((8,), Float32)
+                total.fill(Float32(0))
+                for slot in cutlass.range_constexpr(self.topk):
+                    expert = cell(base, Uint64(self.off_topk_idx) + Uint64(token * self.topk + slot) * 8, Int64)[0]
+                    if expert >= 0:
+                        address = base + Uint64(self.off_combine) + (Uint64(token * self.topk + slot) * self.hidden + col) * 2
+                        values8 = load_bf16_8(address)
+                        for i in cutlass.range_constexpr(8):
+                            total[i] += values8[i]
+                if cutlass.const_expr(self.shared_experts > 0):
+                    shared = load_bf16_8(base + Uint64(self.off_shared_y) + Uint64(index) * 16)
+                    for i in cutlass.range_constexpr(8):
+                        total[i] = round_bf16_f32(total[i]) + shared[i]
+                store_bf16_8(Uint64(y.toint()) + Uint64(index) * 16, tuple(total[i] for i in range(8)))
+            fence_sys()
+            sync_math()
+            if math_tid == 0:
+                st_release_u32(self._field(base, 'combine_block_done', Uint32) + block, epoch, False)
+            if block == 0:
+                for other_block in cutlass.range(math_tid, self.grid, 256):
+                    wait_epoch(self._field(base, 'combine_block_done', Uint32) + other_block, epoch, False)
+                sync_math()
+                # Refresh EVERY unused flag after all old readers retire.
+                # This prevents stale zero from aliasing epoch FFFFFFFF->0,
+                # including when successive calls use different grid sizes.
+                for flag in cutlass.range(math_tid, self.finalize_flags, 256):
+                    flag_out = cell(base, Uint64(self.off_combine_block_done) + Uint64(flag) * 4, Uint32)
+                    flag_out[0] = epoch
+                fence_gpu()
+                sync_math()
+        # Retire every LOCAL combine/cleanup group before the successor.
+        # A next-call scatter cannot overwrite a peer's old combine slots:
+        # both dispatch paths await every peer's next input_ready before
+        # publishing any expert_ready, so that peer has finished this call.
+        # The earlier all-peer compute_ready wait also retires all old source readers.
+        # This removes a redundant all-rank exit wait, including for T0.
+        sync_tile()
+        if block == 0 and tid == 0:
+            final_out = cell(base, Uint64(16), Uint32)
+            final_out[0] = Uint32(0)
+            cleanup_out = cell(base, Uint64(18 * 4), Uint32)
+            cleanup_out[0] = Uint32(0)
+            st_release_u32(head, epoch + Uint32(1), False)
+
+    @cute.kernel
+    def kernel(self, workspace: cute.Pointer, peers: cute.Pointer, y: cute.Pointer,
+                w1: cute.Pointer, s1: cute.Pointer, sec1: cute.Pointer,
+                w2: cute.Pointer, s2: cute.Pointer, sec2: cute.Pointer,
+                stats: cute.Pointer, sw1: cute.Pointer, ss1: cute.Pointer,
+                sw2: cute.Pointer, ss2: cute.Pointer, rank: Uint32, tokens: Uint32, clamp: Float32):
+        base = Uint64(workspace.toint())
+        if cutlass.const_expr(self.role == 1):
+            if cutlass.const_expr(self.direct_route_scan):
+                self._dispatch_direct(base, peers, rank, tokens, stats)
+            else:
+                self._dispatch(base, peers, rank, tokens, stats)
+        elif cutlass.const_expr(self.role == 2):
+            self._compute(base, peers, w1, s1, sec1, w2, s2, sec2, clamp)
+        elif cutlass.const_expr(self.role == 4):
+            alloc = cutlass.utils.SmemAllocator()
+            slab = cute.recast_ptr(alloc.allocate(self.smem, 1024), dtype=Uint8)
+            self._compute_shared(base, slab, tokens, sw1, ss1, sw2, ss2, clamp)
+        elif cutlass.const_expr(self.role == 5):
+            # [ECO-SM90] one CTA per rank computes the identical plan
+            alloc = cutlass.utils.SmemAllocator()
+            slab = cute.recast_ptr(alloc.allocate(self.eco_smem, 1024), dtype=Uint8)
+            self._eco_plan(base, peers, rank, tokens, slab)
+        else:
+            self._combine(base, peers, y, rank, tokens)
+
+    @cute.jit
+    def __call__(self, workspace: cute.Pointer, peers: cute.Pointer, y: cute.Pointer,
+                  w1: cute.Pointer, s1: cute.Pointer, sec1: cute.Pointer,
+                  w2: cute.Pointer, s2: cute.Pointer, sec2: cute.Pointer,
+                  stats: cute.Pointer, sw1: cute.Pointer, ss1: cute.Pointer,
+                  sw2: cute.Pointer, ss2: cute.Pointer, rank: Uint32, tokens: Uint32, clamp: Float32):
+        self.kernel(workspace, peers, y, w1, s1, sec1, w2, s2, sec2,
+                    stats, sw1, ss1, sw2, ss2, rank, tokens, clamp).launch(
+            # [ECO-SM90] role 5 is a single CTA with its own smem budget.
+            grid=((1 if self.role == 5 else self.grid), 1, 1),
+            block=(self.threads, 1, 1),
+            max_number_threads=(self.threads, 1, 1),
+            min_blocks_per_mp=(4 if self.role == 3 else ((8 if self.threads == 128 else 4) if self.role == 1 else ((3 if self.max_m == 8 else 2) if self.role in (2, 4) and not self.warp_specialized else (2 if self.role in (2, 4) and self.max_m <= 32 else 1)))))
