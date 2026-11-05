@@ -15,13 +15,30 @@ logs/          运行日志
 
 ## source/ 的基线
 
-`source/` = `gc_moe_compare_20261104/gc_moe_eco_repo`，其上游是
-`Bruce-Lee-LY/gc-moe` 的 `3d520f2`，再叠加：
+`source/` 源自 [Bruce-Lee-LY/gc-moe](https://github.com/Bruce-Lee-LY/gc-moe)
+（commit `3d520f2`，MIT，Copyright (c) 2026 Bruce-Lee-LY；许可证原样保留在
+`source/LICENSE`）。
 
-1. **eco 分支**（`Natureal/gc-moe:eco`）：sm100/Blackwell 的 ECO，sm90 路径未使用
-2. **EPLB（B 臂方案）**：从 `eplb_deepinfer_isolated_20261022/source/rtp_llm/eplb/deepinfer_periodic/` 移植
+> **本仓库与上游没有任何 git 关系**：没有 fork、没有 remote、没有上游
+> commit 历史（`source/.git` 已剔除，本仓库只有一条自己的提交）。
+> 上游的代码在这里只是一份**快照**，改动的归属与合并都只发生在本仓库内，
+> 上游看不到本仓库，本仓库也不会向上游推任何东西。
+>
+> 说明：ECO 的**参考实现**（`eco/unit_ref.py` 等，算法权威）来自
+> `Natureal/gc-moe` 的 `eco` 分支，那个分支不是 `Bruce-Lee-LY/gc-moe`
+> main 的内容。因此本仓库同时 courtesy-of 标注两处来源，见 README。
 
-## 与原始 GC MoE 的 kernel 差异（完整清单）
+在此基础上本仓库包含：
+
+1. **ECO 的 SM90 移植**（本次工作）：参考 SM100 的 `eco/unit_ref.py` 逐行翻译
+2. **EPLB 放置 + 重排**：DeepSeek 的 `replicate_experts` + `balanced_packing`
+   （按 EPLB 算法自行实现于 `source/gc_moe/layout/eplb_placement.py`）与
+   `WeightShuffler` 风格的权重交换（`source/gc_moe/eplb/deepinfer_periodic/`）
+
+## 与原始 GC MoE 的 kernel 差异（EPLB 放置层，上一轮）
+
+> 本节描述的是**上一轮**（EPLB 放置 + host RR）的改动。
+> 本轮 ECO 的改动清单见 `docs/ECO_SM90_PORT.md`。
 
 `gc_moe/impls/sm90_fp8_fp4_gc_moe.py` —— **只有一处实质改动**：
 

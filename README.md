@@ -1,9 +1,24 @@
 # GC MoE on SM90 — ECO (EPLB-placed Capped Online split)
 
-**This repository follows and builds on [Bruce-Lee-LY/gc-moe](https://github.com/Bruce-Lee-LY/gc-moe).**
-The `source/` tree is that project (MIT, © 2026 Bruce-Lee-LY) with an additional
-SM90 implementation of the **ECO** online token-split plan; every change of ours is
-marked with an `[ECO-SM90]` comment.
+**This is a follow-up work of [Bruce-Lee-LY/gc-moe](https://github.com/Bruce-Lee-LY/gc-moe).**
+
+`source/` is a **snapshot** of that project (MIT, © 2026 Bruce-Lee-LY — its
+`LICENSE` is kept verbatim in `source/LICENSE`), plus an SM90 implementation of
+the **ECO** online token-split plan. Every change of ours carries an
+`[ECO-SM90]` comment.
+
+> **Relationship to upstream: attribution only.**
+> This is *not* a fork. There is no git remote, no upstream commit history
+> (the upstream `.git` was dropped; this repository has a single commit of its
+> own) and nothing here is ever pushed upstream. Upstream cannot see this
+> repository and cannot be affected by it; the snapshot exists purely so the
+> baseline of the comparison is reproducible.
+>
+> Courtesy-of: the ECO **reference implementation** (`eco/unit_ref.py`, the
+> authoritative algorithm this port translates line by line) and the SM100 ECO
+> work live on the `eco` branch of
+> [Natureal/gc-moe](https://github.com/Natureal/gc-moe), which is not part of
+> `Bruce-Lee-LY/gc-moe`'s `main`. Both are credited here for provenance only.
 
 This is a self-contained experiment directory: pinned kernel source, the vLLM
 backend, the CPU/GPU verification harnesses, and the raw result JSON of the runs
@@ -148,9 +163,14 @@ SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100 GC_MOE_EPLB_REDUNDANCY=0.25 \
   mis-computed in the first pass and are retracted there; the measuring code is
   fixed and covered by `tests/test_metrics_cpu.py`.
 
-## License
+## License & attribution
 
-`source/` is [Bruce-Lee-LY/gc-moe](https://github.com/Bruce-Lee-LY/gc-moe),
-MIT, © 2026 Bruce-Lee-LY — its `LICENSE` is kept verbatim in `source/LICENSE`.
-The port, harnesses and documents added here are released under the same MIT
-terms.
+* `source/` is [Bruce-Lee-LY/gc-moe](https://github.com/Bruce-Lee-LY/gc-moe),
+  MIT, © 2026 Bruce-Lee-LY — `source/LICENSE` is kept verbatim.
+* The ECO algorithm reference (`eco/unit_ref.py`) is courtesy of
+  [Natureal/gc-moe](https://github.com/Natureal/gc-moe) (`eco` branch).
+* The port, harnesses and documents added here are released under the same MIT
+  terms.
+
+Attribution only: this repository is not a fork and has no git relationship
+with either upstream (no remotes, no shared history, no upstream pushes).
