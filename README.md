@@ -44,9 +44,47 @@ cold-warm 5.9 / auction 5.9 / 发布 2.7）、`push 8.6`、`pull_norep 69.9`、`
 
 正确性：`verify_eco_ep8.py` 在 8 卡上 **cos=1.00000000 / rel=0 / 逐位相同**、quota 守恒。
 
-### 待测
+### batch 规模扫描（BS=32 / 64 / 128）
 
-BS=64（8×8 seq/rank）与 BS=128（8×16 seq/rank）：把上面的 `SEQS_PER_RANK` 换成 8 / 16。
+配置不变：每 rank 4 副本（`P=416`），`wb=260, wa=111`，100 步统计 + 100 步测量。
+
+| BS | 臂 | ms/step | IR | 极差 | 块/步 |
+|---:|---|---:|---:|---:|---:|
+| **32** | gcmoe + random + rr | 21.46 | 1.1360 | 41786 | 15 |
+| | gcmoe + eplb + rr | 20.97 | 1.1054 | 15538 | 17 |
+| | **gcmoe + eplb + eco** | **20.41** | **1.0262** | **4971** | 15 |
+| **64** | gcmoe + random + rr | 31.46 | 1.1399 | 84800 | 28 |
+| | **gcmoe + eplb + rr** | **30.49** | **1.0302** | 15075 | 30 |
+| | gcmoe + eplb + eco | 30.93 | 1.0439 | 14782 | 28 |
+| **128** | gcmoe + random + rr | 49.93 | 1.1293 | 162848 | 39 |
+| | **gcmoe + eplb + rr** | **47.26** | 1.0264 | 22891 | 41 |
+| | gcmoe + eplb + eco | 47.41 | **1.0171** | **19943** | 34 |
+
+**EPLB 放置的收益随 batch 放大**（random → eplb+rr）：
+
+| BS | ms | IR |
+|---:|---:|---|
+| 32 | −2.31% | 1.1360 → 1.1054 |
+| 64 | −3.08% | 1.1399 → **1.0302** |
+| 128 | **−5.36%** | 1.1293 → 1.0264 |
+
+**ECO 的分发在 BS=32 最优，大 batch 下与 rr 持平**：
+BS=32 时 eco 比 rr 快 2.66% 且 IR 更好（1.0262 vs 1.1054）；
+BS=128 时 eco 的 IR 最好（1.0171）但 ms 慢 0.3%。
+
+逐段耗时随 batch 的变化（µs/层调用，8 rank 平均）：`pull_norep` 是绝对瓶颈且线性增长
+（BS=32/64/128 → **69 / 115 / 187 µs**），而 `plan_exec` 稳定在 37–44 µs，
+占比从 33% 降到 20%。ECO 的 plan 已经完全不是瓶颈。
+
+复现：
+
+```bash
+./scripts/run_matrix.sh M          # 12 个实验串行，约 65 分钟
+python3 scripts/agg_eco_stages.py runs/M_32_eco.json   # 时间轴
+```
+
+`GC_MOE_ECO_TRACE=1` 现在对**所有臂**生效（dispatch 侧的 plan_wake / push / pull
+列相同），所以 RR 和 random 臂也能 dump 同一张表。
 
 ## 权威规格
 

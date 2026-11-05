@@ -109,7 +109,7 @@ class SM90GCMoERoleKernel:
         self.eco_wa = int(getattr(config, 'eco_wa', 0))
         self.eco_rounds = int(getattr(config, 'eco_rounds', 1))
         self.eco_cold_rounds = int(getattr(config, 'eco_cold_rounds', 6))
-        self.eco_max_copies = int(getattr(config, 'eco_max_copies', 4))
+        self.eco_max_copies = int(getattr(config, 'eco_max_copies', 8))
         self.eco_hop2_rounds = int(getattr(config, 'eco_hop2_rounds', 0))
         # [ECO-SM90] GC_MOE_ECO_DEBUG dumps the cold-start intermediates so a
         # GPU run can be diffed against the CPU reference.
@@ -124,7 +124,11 @@ class SM90GCMoERoleKernel:
         self.eco_no_auction = bool(getattr(config, 'eco_no_auction', False))
         # [ECO-MEAS] timeline trace: COMPILE-TIME off unless requested, so the
         # default build carries no clock read at all.
-        self.eco_trace = _os.environ.get('GC_MOE_ECO_TRACE') == '1'
+        # [ECO-TRACE] Derived from the LAYOUT, not the env: the timeline table
+        # only exists when the buffer was built with `trace=True`, and a kernel
+        # that wrote it otherwise would touch an offset that was never
+        # reserved (that is exactly how `off_eco_tl_ctr` went missing).
+        self.eco_trace = 'eco_tl' in getattr(layout, 'views', {})
         # [PULL-TRACE] Independent of ECO: measures the pull phase on the
         # plain (no-replica) path too, which had no instrumentation before.
         self.pull_trace = _os.environ.get('GC_MOE_PULL_TRACE') == '1'
@@ -1143,7 +1147,7 @@ class SM90GCMoERoleKernel:
         Microseconds, not nanoseconds: raw `globaltimer` ns does not fit int32
         past ~2.1 s of device uptime.
         """
-        if cutlass.const_expr(self.eco_trace and self.eco):
+        if cutlass.const_expr(self.eco_trace):
             tl = self._field(base, 'eco_tl', Uint32)
             # [ECO-TRACE] The row is the caller's OWN epoch, never a shared
             # gmem counter. Since the plan is woken BEFORE the push, call N's
@@ -1172,11 +1176,16 @@ class SM90GCMoERoleKernel:
     def _pull_tl_write(self, base: Uint64, epoch: Uint32,
                        slot: cutlass.Constexpr, ts: Uint64):
         """One cell of `pull_tl[epoch % 256][slot]`, in microseconds."""
-        if cutlass.const_expr(self.pull_trace):
-            tl = self._field(base, 'pull_tl', Uint32)
-            row = Uint32(epoch) % Uint32(self.PULL_TL_STEPS)
-            tl[row * Uint32(self.PULL_TL_SLOTS) + Uint32(slot)] = \
-                Uint32(ts // Uint64(1000))
+        if cutlass.const_expr(self.pull_trace or self.eco_trace):
+            if cutlass.const_expr(self.pull_trace):
+                tl = self._field(base, 'pull_tl', Uint32)
+                row = Uint32(epoch) % Uint32(self.PULL_TL_STEPS)
+                tl[row * Uint32(self.PULL_TL_SLOTS) + Uint32(slot)] = \
+                    Uint32(ts // Uint64(1000))
+            # [ECO-TRACE] Mirror into the shared timeline so a NON-ECO arm
+            # produces the same columns as ECO (10/12/13 are the pull slots).
+            if cutlass.const_expr(self.eco_trace):
+                self._eco_tl_write(base, epoch, (10, 12, 13)[slot - 3], ts)
 
     @cute.jit
     def _eco_key_set(self, slab: cute.Pointer, s: Uint32, v: Uint64):
@@ -1234,7 +1243,7 @@ class SM90GCMoERoleKernel:
     @cute.jit
     def _eco_tl_write_tag(self, base: Uint64, step: Uint32, tag: Uint32):
         """[ECO-TRACE] Store the raw epoch as this row's tag (not a timestamp)."""
-        if cutlass.const_expr(self.eco_trace and self.eco):
+        if cutlass.const_expr(self.eco_trace):
             tl = self._field(base, 'eco_tl', Uint32)
             # Same rule as `_eco_tl_write`: the row is this call's own epoch.
             row = Uint32(step) % Uint32(self.ECO_TL_STEPS)

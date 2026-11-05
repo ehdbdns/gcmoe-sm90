@@ -104,7 +104,12 @@ def validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,
                           int(buffer.physical or 0),
                           bool(getattr(buffer, 'eco', False)),
                           int(getattr(buffer, 'eco_logical', 0) or 0),
-                          int(os.environ.get('GC_MOE_ECO_MAX_COPIES', '4')),
+                          # [ECO-SM90] Must be >= the largest copy count the
+                          # placement produces. With 25% redundancy the hot
+                          # expert reached 5-6 copies, so the old default of 4
+                          # silently dropped copies (their tokens were pulled by
+                          # nobody). EcoMeta holds 32 int16 per expert.
+                          int(os.environ.get('GC_MOE_ECO_MAX_COPIES', '8')),
                           int(os.environ.get('GC_MOE_ECO_WB', '0')),
                           int(os.environ.get('GC_MOE_ECO_WA', '0')),
                           int(os.environ.get('GC_MOE_ECO_ROUNDS', '1')),

@@ -32,6 +32,10 @@ class SM90GCBufferLayout:
     physical: int = 0
     # [ECO-SM90] reserve the ECO region (quota / counts / EcoMeta / state).
     eco: bool = False
+    # [ECO-TRACE] reserve the per-step timeline for ANY arm. The dispatch-side
+    # rows (plan_wake / push / pull) are identical for RR and ECO, so tracing
+    # RR uses the same table and the two can be compared column by column.
+    trace: bool = False
 
     def __post_init__(self):
         ranks, experts, capacity, topk = self.ranks, self.experts, self.capacity, self.topk
@@ -101,25 +105,6 @@ class SM90GCBufferLayout:
             # sequence (each plan would have to wait for its own predecessor
             # to be completely done, in the same CTA).
             reserve('eco_counts', (2 * ranks * physical,), 'int32', 4)
-            # [ECO-TRACE] Per-step, per-rank RAW timeline. Deliberately NOT
-            # reduced: every call writes its own row of ECO_TL_SLOTS int32
-            # values (microseconds since boot), every rank keeps its own copy,
-            # and the host dumps all rows so the analysis can average over
-            # steps afterwards. 256 steps x 16 slots x 4 B = 16 KB per rank.
-            # Microseconds, not nanoseconds: a raw ns value overflows int32
-            # after ~2.1 s of uptime.
-            reserve('eco_tl', (256 * 18,), 'int32', 4)
-            # [ECO-TRACE] first/last-writer counters for the timeline (one word
-            # each, cleared per call). Kept out of `header` on purpose: that
-            # array's numbering is already dense and sharing a slot with the
-            # task queue / cleanup counters caused a deadlock once.
-            reserve('eco_tl_ctr', (16,), 'int32', 4)
-            # [ECO-TRACE] The authoritative row index for this call, written by
-            # dispatch BEFORE it wakes the plan. The plan must not derive the
-            # row from its own `epoch` read: once the wake moves in front of the
-            # push, the plan may read `header[0]` before this call bumped it and
-            # land on the previous row.
-            reserve('eco_tl_step', (1,), 'int32', 4)
             reserve('eco_meta', (16 + experts * 16 + physical + ranks,), 'int32', 4)
             reserve('eco_state', (2 * physical,), 'int32', 4)
             # [ECO-MEAS] ECO timeline trace: 32 slots x 8B of globaltimer ns.
@@ -130,6 +115,17 @@ class SM90GCBufferLayout:
             #   [31]    auction rounds this call
             # Only reserved when ECO is on, so the plain path is byte-identical.
             reserve('eco_trace', (40,), 'int64', 8)
+
+        # [ECO-TRACE] Per-step, per-rank RAW timeline, available to EVERY arm.
+        # The dispatch-side rows (plan_wake / push / pull) are identical for RR
+        # and ECO, so tracing RR uses this same table and the two can be
+        # compared column by column. Deliberately NOT reduced: every call keeps
+        # its own row, every rank its own copy, and the host averages over
+        # steps afterwards. Microseconds, not nanoseconds (int32 overflows ~36min).
+        if self.trace:
+            reserve('eco_tl', (256 * 18,), 'int32', 4)
+            reserve('eco_tl_ctr', (16,), 'int32', 4)
+            reserve('eco_tl_step', (1,), 'int32', 4)
 
         # [PULL-TRACE] Pull-phase timing for EVERY arm, including the plain
         # (no replicas, no ECO) path -- the ECO trace above only exists when

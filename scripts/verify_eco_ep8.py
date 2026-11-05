@@ -111,7 +111,8 @@ def main():
     buf2 = gc_moe.get_symm_buffer_for_gc_moe_sm90(group, E, CAP, TOPK, H, I,
                                                   activation='swiglu',
                                                   physical=lay.physical,
-                                                  eco=True)
+                                                  eco=True,
+                                                  trace=True)
     plan, slots_of = sm90_gc.install_eplb_plan(buf2, list(lay.phy2log))
     from gc_moe.eco.meta_sm90 import build_eco_meta
     meta = build_eco_meta(list(lay.phy2log), R, E)

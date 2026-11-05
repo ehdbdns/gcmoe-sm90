@@ -999,6 +999,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                # for the other redundancy.
                _eplb_extra_per_rank(),
                _slot_placement(),
+               os.environ.get('GC_MOE_ECO_TRACE') == '1',
                _eplb_enabled() and _eco_enabled())
         # Every layer of this model has identical expert shapes, so one
         # process-wide buffer serves all of them (calls are serialized).
@@ -1020,7 +1021,10 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                 # [SME-EPLB] only the slot count changes for EPLB.
                 physical=physical,
                 # [ECO-SM90] reserve the plan region + quota/counts views.
-                eco=_eplb_enabled() and _eco_enabled())
+                eco=_eplb_enabled() and _eco_enabled(),
+                # [ECO-TRACE] timeline for EVERY arm (see layout `trace`).
+                trace=os.environ.get('GC_MOE_ECO_TRACE') == '1'
+                      or os.environ.get('GC_MOE_PULL_TRACE') == '1')
             self._buffer_key = key
             _SHARED_BUFFER['buf'] = self._buffer
             _SHARED_BUFFER['key'] = key

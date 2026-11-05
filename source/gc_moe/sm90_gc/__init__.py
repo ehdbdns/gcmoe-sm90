@@ -11,7 +11,7 @@ class SM90GCSymmBuffer:
     """Own symmetric SM90 workspace. Serialize calls and retire graphs before destroy."""
     def __init__(self, group, num_experts, num_max_tokens_per_rank, num_topk,
                  hidden, intermediate_hidden, activation='swiglu', num_shared_experts=0,
-                 physical=0, eco=False):
+                 physical=0, eco=False, trace=False):
         ranks = group.size()
         if torch.cuda.get_device_capability()[0] != 9:
             raise ValueError('SM90 GC requires Hopper')
@@ -35,9 +35,12 @@ class SM90GCSymmBuffer:
         # Logical expert count for the plan (equals num_experts: EPLB replicates
         # physical slots, it does not add logical experts).
         self.eco_logical = int(num_experts) if eco else 0
+        # [ECO-TRACE] `trace` reserves the per-step timeline even when ECO is
+        # off, so the RR arm can be measured with the same columns.
+        self.trace = bool(trace)
         self.layout = SM90GCBufferLayout(ranks, num_experts, self.num_max_tokens_per_rank,
                                          num_topk, hidden, intermediate_hidden, num_shared_experts,
-                                         self.physical, self.eco)
+                                         self.physical, self.eco, self.trace)
         allocator = torch if ranks == 1 else symm_mem
         self.buffer = allocator.empty(self.layout.nbytes, dtype=torch.int8, device='cuda')
         self.handle = (types.SimpleNamespace(buffer_ptrs=[self.buffer.data_ptr()]) if ranks == 1
@@ -202,11 +205,11 @@ def gather_slot_weights_from_slots(pair, buffer, source_slot, plan, group, out=N
 def get_symm_buffer_for_gc_moe_sm90(group, num_experts, num_max_tokens_per_rank,
                                   num_topk, hidden, intermediate_hidden,
                                   activation='swiglu', num_shared_experts=0, physical=0,
-                                  eco=False):
+                                  eco=False, trace=False):
     # [ECO-SM90] `eco=True` reserves the ECO plan/quota/counts region.
     return SM90GCSymmBuffer(group, num_experts, num_max_tokens_per_rank, num_topk,
                            hidden, intermediate_hidden, activation, num_shared_experts,
-                           physical, eco)
+                           physical, eco, trace)
 
 
 # Exact Humming code-space round-downscale mapping, including .25 -> .5.
