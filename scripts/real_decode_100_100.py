@@ -262,7 +262,10 @@ def main():
     # 30-slot timeline plus the per-step x per-rank rows. Averaging happens
     # here, in Python, so the kernel never reduces away "which rank was slow".
     eco_trace = {}
-    if os.environ.get('GC_MOE_ECO') == '1' and os.environ.get('GC_MOE_ECO_TRACE') == '1':
+    # [PULL-TRACE] Also dump for the plain arms: GC_MOE_PULL_TRACE measures the
+    # pull phase on every path, including no-replica / no-ECO.
+    if (os.environ.get('GC_MOE_ECO') == '1' and os.environ.get('GC_MOE_ECO_TRACE') == '1') \
+            or os.environ.get('GC_MOE_PULL_TRACE') == '1':
         try:
             trs = engine.collective_rpc('_gc_moe_eco_trace_dump')
             eco_trace = {'ranks': [x for x in trs if isinstance(x, dict) and x.get('ok')]}

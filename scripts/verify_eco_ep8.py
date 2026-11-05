@@ -137,7 +137,10 @@ def main():
         # [ECO-CHK] the panel the plan sums: per-expert D_e from eco_counts
         _qall = [torch.zeros(lay.physical, dtype=torch.int64, device=dev) for _ in range(R)]
         dist.all_gather(_qall, _q, group=group)
-        _ec = buf2.eco_counts.view(R, lay.physical)
+        # [ECO-DBUF] eco_counts holds TWO panels indexed by `epoch & 1`; the
+        # plan that just ran used the half selected by the current epoch.
+        _gen = int(buf2.header[0].item()) & 1
+        _ec = buf2.eco_counts.view(2, R, lay.physical)[_gen]
         _de = torch.zeros(E, dtype=torch.int64, device=dev)
         if rank == 0:
             _phy_t = torch.tensor(list(lay.phy2log), device=dev)

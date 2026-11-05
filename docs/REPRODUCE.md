@@ -5,7 +5,7 @@
 ```bash
 # NAS（重启后失效）
 sudo mount -t nfs -o vers=4,minorversion=0,noresvport \
-  954af48778-koo23.cn-zhangjiakou.nas.aliyuncs.com:/ $DATA_DIR
+  954af48778-koo23.$NAS_MOUNT $DATA_DIR
 ls $MODEL_DIR
 
 cd /home/admin/workspace/aop_lab/app_source/gcmoe_exp/gcmoe_eco-auction_20261105

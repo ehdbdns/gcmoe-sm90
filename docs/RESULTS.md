@@ -207,3 +207,76 @@ SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100 GC_MOE_EPLB_REDUNDANCY=0.25 \
   ./scripts/run_arm_eco.sh 1 1 E_eco_v3
 python3 scripts/agg_eco_stages.py runs/E_eco_v3.json
 ```
+
+---
+
+# 追加：BS=32 三臂 + 计数搬入 plan + 双缓冲（2026-11-06）
+
+## 架构改动（对齐 SM100 `eco_unit_kernel.cu`）
+
+ECO 的**计数与广播不再在 dispatch 里**，而是搬进 plan kernel：
+
+```
+dispatch:  wake plan ─→ push ─→ pull(单副本槽)          ← 关键路径只剩这些
+plan CTA:  静态表 ─→ count+broadcast ─→ 跨rank栅栏 ─→ D_e ─→ cold/warm ─→ auction
+```
+
+旧实现把 `_eco_count_local` + `P×R` 次广播 + 4 个 grid 会合 + 1 个跨 rank 栅栏
+放在 push **之前**，全部落在无副本槽 pull 的前面（测出 `push_end→pull_begin` 之前
+有约 20 µs 的额外阶段）。
+
+对齐 SM100 的两个关键点：
+
+| SM100 | 本实现 |
+|---|---|
+| `gen = epoch & 1`（L124），面板双份 | `eco_counts` 扩到 `2*ranks*physical`，按 `gen` 索引 |
+| 无"上一轮读完"等待 | 删掉 `eco_ready[2]` 令牌（单缓冲时才需要，且它死锁了） |
+| warp 1..15 计数 / warp 0 静态表并行 | 静态表先跑，跨 rank 栅栏在静态表已完成时才阻塞 |
+
+`eco_ready` 现在只有两个语义：`[0]` 唤醒 plan，`[1]` plan 已发布。
+
+## 三臂结果
+
+配置：`P=416`（每 rank 4 冗余），`wb=260, wa=0`，100 步统计 + 100 步测量，
+BS=32（8 rank × 4 seq/rank）。
+
+| 臂 | 放置 | 分发 | ms/step | IR | range | ir_slot | 块/步 |
+|---|---|---|---:|---:|---:|---:|---:|
+| A2 | random | host RR | 21.39 | 1.1366 | 41545 | 2.0419 | 18 |
+| B2 | EPLB | host RR | 20.98 | 1.0697 | 13497 | 1.8463 | 20 |
+| **C2** | EPLB | **kernel plan** | **20.82** | **1.0551** | 15662 | 1.9035 | 16 |
+
+* 放置贡献 0.41 ms（A2→B2）
+* 分发贡献 0.16 ms（B2→C2），ECO 首次快于 RR
+* 与旧架构对比：`D_eco_wa0` 21.02 → `C2_eco` 20.82（−0.20 ms）
+
+## ECO 时间轴（µs / 层调用，8 rank 平均）
+
+| 段 | C2（新） | D（旧，计数在 dispatch） |
+|---|---:|---:|
+| `plan_wait` | **6.9** | 24.8 |
+| `plan_static` | 14.0 | 2.4 |
+| `plan_coldwarm` | 5.9 | 6.2 |
+| `plan_auction` | 5.9 | 5.3 |
+| `plan_publish` | 2.7 | 2.5 |
+| **`plan_exec`** | **35.4** | 41.3 |
+| `push` | 8.6 | 7.2 |
+| `pull_norep` | 69.9 | 67.3 |
+| `pull_rep` | 39.6 | 34.3 |
+| `plan_end − push_begin` | +29.7 | +16.8 |
+
+`plan_static` 变大不是退化：静态表被提前到原来的 `wait` 窗口里，与跨 rank 栅栏重叠
+（SM100 就是这么做的，只是它用 warp 分工，这里用顺序换同样的重叠）。
+
+## 饥饿
+
+逐 rank 检查 `first_rep_pull`（第一个副本槽拉完）与 `starve_first`（消费者第一次
+空转）：8 rank × 256 层调用，**副本数据总是先到**，最坏情况早 22 µs。
+`pull_rep_end` 的 p50 是 32–53 µs，远早于 `pull_norep_end`（71–79 µs）。
+
+两类 pull **同时开始**（`pull_rep_begin − pull_norep_begin = 0.1~0.4 µs`），
+单副本段是长尾（48 槽 vs 4 槽）。
+
+## 待测
+
+BS=64（`SEQS_PER_RANK=8`）、BS=128（`SEQS_PER_RANK=16`）。

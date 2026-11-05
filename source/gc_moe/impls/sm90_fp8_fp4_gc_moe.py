@@ -125,6 +125,9 @@ class SM90GCMoERoleKernel:
         # [ECO-MEAS] timeline trace: COMPILE-TIME off unless requested, so the
         # default build carries no clock read at all.
         self.eco_trace = _os.environ.get('GC_MOE_ECO_TRACE') == '1'
+        # [PULL-TRACE] Independent of ECO: measures the pull phase on the
+        # plain (no-replica) path too, which had no instrumentation before.
+        self.pull_trace = _os.environ.get('GC_MOE_PULL_TRACE') == '1'
         # [ECO-MEAS] triage: GC_MOE_ECO_TRACE_RESET=0 keeps the trace points but
         # skips the per-call window clear, to separate "the instrument's writes
         # perturb the run" from "the trace points themselves".
@@ -916,6 +919,19 @@ class SM90GCMoERoleKernel:
             self._eco_trace(base, 4)   # (older view) counts seen
             self._eco_tl_write(base, epoch, 3, read_globaltimer())     # counts_seen
 
+        # ══════════════════════════════════════════════════════════════════
+        # [ECO-MOVE] Order mirrors SM100's `eco_unit_kernel.cu`:
+        #
+        #   warp 0 + index warps -> static tables + warm start   (starts first)
+        #   warp 1..15           -> counts + broadcast + peer wait (overlapped)
+        #   plan_sync()          -> the single join point
+        #
+        # SM100 gets that overlap from warp specialisation inside one CTA. This
+        # plan CTA cannot split warps with a partial barrier (the DSL has no
+        # named barrier with a count), so the overlap is obtained structurally:
+        # the STATIC TABLES run first, and the cross-rank wait that follows now
+        # blocks with them already finished instead of doing them afterwards.
+        # ══════════════════════════════════════════════════════════════════
         # ---- 2. static tables: phy[slot] and act[slot] ---------------------
         # `act` marks the copies the plan may split an expert over; the passive
         # duplicates a rank holds are never planned (unit_ref L36).
@@ -931,6 +947,31 @@ class SM90GCMoERoleKernel:
             self._eco_set(slab, self.eco_act_off, s, act)
         cute.arch.sync_threads()
 
+        # ---- 1b. [ECO-MOVE] build + broadcast the demand, then wait for it --
+        # This is the work that used to sit in dispatch, in front of the
+        # single-copy slots' pull. It runs here, concurrently with the push and
+        # that pull.
+        #
+        # [ECO-DBUF] No "previous call finished" wait: `eco_counts` is double
+        # buffered by `epoch & 1` (SM100 eco_unit_kernel.cu L124), so this
+        # call writes one half while a still-running previous call reads the
+        # other. A single buffer needed such a token, and it deadlocked: the
+        # plan CTA is resident, so waiting for its own predecessor starves the
+        # very call that would release it.
+        gen = epoch & Uint32(1)
+        self._eco_count_and_broadcast(base, peers, rank, tokens, tid, gen)
+        # One cross-rank barrier: every peer's row must be visible before D_e
+        # is summed below. `header[24]` is the same token dispatch used.
+        head = self._field(base, 'header', Uint32)
+        if tid == 0:
+            st_release_u32(head + Uint32(24), epoch, True)
+        cute.arch.sync_threads()
+        peer_table = cute.make_tensor(peers, cute.make_layout((self.ranks,)))
+        if tid < self.ranks:
+            wait_epoch(self._field(Uint64(peer_table[tid]), 'header', Uint32)
+                       + Uint32(24), epoch, True)
+        cute.arch.sync_threads()
+
         # ---- 3. demand per logical expert, summed over ALL ranks -----------
         # Every active copy of an expert receives that expert's complete route
         # stream, so one copy's per-source histogram sums to D_e. Reading only
@@ -943,19 +984,14 @@ class SM90GCMoERoleKernel:
             if s0 != Uint32(0x7FFF):
                 slot = s0 & Uint32(0x7FFF)
                 for r in cutlass.range_constexpr(R):
-                    running += self._field(base, 'eco_counts', Uint32)[r * P + slot]
+                    # [ECO-DBUF] only this call's half of the double buffer
+                    running += self._field(base, 'eco_counts', Uint32)[
+                        gen * Uint32(R * P) + r * P + slot]
             self._eco_set(slab, self.eco_n_off, e, running)
         cute.arch.sync_threads()
         if tid == 0:
             self._eco_trace(base, 17)  # [ECO-MEAS] static tables + D_e done
             self._eco_tl_write(base, epoch, 4, read_globaltimer())     # static_done
-            # [ECO-SM90] "counts consumed". The panel is broadcast-written into
-            # EVERY rank's buffer, so the next call must not rewrite a row this
-            # plan is still reading. Publishing here (right after D_e, before
-            # the long auction) bounds that exposure to a few microseconds
-            # instead of the whole plan.
-            st_release_u32(self._field(base, 'eco_ready', Uint32) + Uint32(2),
-                           epoch, False)
 
         # ---- 4'. NULL PLAN gate [ECO-MEAS] ---------------------------------
         # Cost decomposition only: keep step 1-3 (wait / static tables / D_e)
@@ -995,6 +1031,10 @@ class SM90GCMoERoleKernel:
             cute.arch.sync_threads()
             fence_sys()
             if tid == 0:
+                # [ECO-DBUF] No "counts consumed" token any more: the panel is
+                # double buffered, so there is nothing for the next call to
+                # wait on. `eco_ready[1]` is still the plan-published token the
+                # replica slots wait for.
                 st_release_u32(ready + Uint32(1), epoch + Uint32(1), False)
             return
 
@@ -1118,6 +1158,24 @@ class SM90GCMoERoleKernel:
             # per-call and race-free.
             row = Uint32(step) % Uint32(self.ECO_TL_STEPS)
             tl[row * Uint32(self.ECO_TL_SLOTS) + Uint32(slot)] = \
+                Uint32(ts // Uint64(1000))
+
+    # [PULL-TRACE] Pull-phase timing for every arm (ECO or not).
+    PULL_TL_STEPS = 256
+    PULL_TL_SLOTS = 8
+
+    @cute.jit
+    def _pull_trace_on(self):
+        return cutlass.const_expr(self.pull_trace)
+
+    @cute.jit
+    def _pull_tl_write(self, base: Uint64, epoch: Uint32,
+                       slot: cutlass.Constexpr, ts: Uint64):
+        """One cell of `pull_tl[epoch % 256][slot]`, in microseconds."""
+        if cutlass.const_expr(self.pull_trace):
+            tl = self._field(base, 'pull_tl', Uint32)
+            row = Uint32(epoch) % Uint32(self.PULL_TL_STEPS)
+            tl[row * Uint32(self.PULL_TL_SLOTS) + Uint32(slot)] = \
                 Uint32(ts // Uint64(1000))
 
     @cute.jit
@@ -1283,39 +1341,69 @@ class SM90GCMoERoleKernel:
         return active
 
     @cute.jit
-    def _eco_count_local(self, base: Uint64, head: cute.Pointer, epoch: Uint32,
-                         tokens: Uint32, block: Uint32, tid: Uint32):
-        """[ECO-SM90] Build this rank's per-LOGICAL-expert histogram.
+    def _eco_count_and_broadcast(self, base: Uint64, peers: cute.Pointer,
+                                 rank: Uint32, tokens: Uint32, tid: Uint32,
+                                 gen: Uint32):
+        """[ECO-MOVE] Build this rank's route histogram and broadcast it.
 
-        SM100 equivalent: `eco_unit_kernel.cu` L278-283 -- the plan's demand is
-        derived from the route table directly, not from the push's side effect.
-        That is what lets the plan start before (and overlap) the push.
+        Runs inside the PLAN kernel (role 5, one CTA), not in dispatch. It used
+        to run in dispatch, where it sat in front of the single-copy slots'
+        pull for no reason: those slots need neither the histogram nor the
+        plan. Moving it here means dispatch goes
 
-        Uses the DEDICATED `eco_hist` array. It must NOT reuse `send_count`:
-        that one is the push's slot allocator and has to march from zero, so
-        sharing one array for both jobs needs an extra clear + grid barrier per
-        call, and that variant deadlocked under repeated calls.
+            wake plan -> push -> pull(single-copy slots)
+
+        and the ECO-only work happens while the push and the single-copy pull
+        are already running.
+
+        SM100 does the same thing in one kernel
+        (`eco_unit_kernel.cu` L278-283 count -> L293 broadcast -> L304-341 read
+        back), which is possible because everything there is in one CTA. Here
+        the plan owns a whole CTA with `self.threads` threads, so the count is
+        parallel across all of them and the clear needs only a CTA-local
+        `sync_threads()` -- no grid rendezvous, which is exactly the cost this
+        change removes from the critical path.
         """
-        # Bind the pointers BEFORE the dynamic loops: a `self._field(...)`
-        # expression inside a staged `for` makes the DSL try to stage the
-        # kernel object itself (same trap as elsewhere in this file).
         hist = self._field(base, 'eco_hist', Uint32)
-        for e in cutlass.range(block * self.threads + tid, self.eco_logical,
-                               self.grid * self.threads):
+        for e in cutlass.range(tid, self.eco_logical, self.threads):
             hist[e] = Uint32(0)
-        # [ECO-SM90] The clear is sharded across ALL 24 CTAs, so a block-local
-        # `sync_threads()` is NOT enough: another CTA could still be clearing a
-        # lane when this one starts counting into it, and that token would be
-        # lost (measured: eco_counts summing to 1533 instead of 1536, which then
-        # produced quota_sum 1498-1533 -- the plan was right, its input was not).
-        # A whole-grid rendezvous orders clear-before-count.
-        self._dispatch_grid(head, epoch, 31, 23, False)
-        for route in cutlass.range(block * self.threads + tid, tokens * self.topk,
-                                   self.grid * self.threads):
+        # CTA-local barrier: this CTA is the only writer of `eco_hist`.
+        cute.arch.sync_threads()
+        for route in cutlass.range(tid, tokens * self.topk, self.threads):
             expert_id = cell(base, Uint64(self.off_topk_idx) + Uint64(route) * 8,
                              Int64)[0]
             if expert_id >= 0 and expert_id < Int64(self.eco_logical):
                 atom_add_u32(hist + Uint32(expert_id), Uint32(1))
+        cute.arch.sync_threads()
+        # Broadcast into every peer's `eco_counts[rank][*]` row, then wait for
+        # every peer to have done the same. This is ONE cross-rank barrier
+        # instead of the two dispatch used to need.
+        counts_out = self._field(base, 'eco_counts', Uint32)
+        peer_table = cute.make_tensor(peers, cute.make_layout((self.ranks,)))
+        # [ECO-DBUF] This call's half of the panel (SM100 `gen * kR * kP`).
+        gen_off = Uint64(gen) * Uint64(self.ranks) * Uint64(self.physical)
+        base_off = (gen_off + Uint64(rank) * Uint64(self.physical))
+        # Bind the raw addresses BEFORE the dynamic loop. A `self._field(...)`
+        # / `cute.make_ptr(...)` expression built from a loop variable is
+        # evaluated once by the DSL front end and the loop then reads a stale
+        # value (the same trap the rest of this file warns about); the observed
+        # symptom was `conserved=False` from the very first call.
+        local_row = counts_out + base_off
+        local_row_off = Uint64(self.off_eco_counts) + base_off * 4
+        for shard in cutlass.range(tid, self.physical, self.threads):
+            value = hist[self._eco_phy(base, shard)]
+            local_row[Uint64(shard)] = value
+            # Use the same `cell(...)` helper `_eco_publish_count` uses: it is a
+            # frozen function, so the DSL emits one store per peer. Building a
+            # `make_ptr` from the loop variable instead made the front end
+            # hoist a single address and only some peers got the row
+            # (measured: rows 3..7 stayed zero while 0..2 were right).
+            for r in cutlass.range_constexpr(self.ranks):
+                if r != rank:
+                    cell(Uint64(peer_table[r]), local_row_off + Uint64(shard) * 4,
+                         Uint32)[0] = value
+        fence_sys()
+        cute.arch.sync_threads()
 
     @cute.jit
     def _eco_publish_count(self, base: Uint64, peers: cute.Pointer, rank: Uint32,
@@ -1429,56 +1517,21 @@ class SM90GCMoERoleKernel:
         # of it.
         # ══════════════════════════════════════════════════════════════════
         if cutlass.const_expr(self.eco):
-            # [ECO-SM90] Before overwriting the broadcast panel, wait until the
-            # PREVIOUS call's plan has consumed it. Without this the next call's
-            # broadcast can rewrite a row the previous plan is still reading
-            # (measured: quota_sum 1260-1432 instead of 1536, while the pulled
-            # token count stayed correct -- a pure reader/writer race).
-            # The wait is on THIS rank's flag and is normally already satisfied
-            # by the time dispatch restarts, so it costs one load.
-            if tid == 0:
-                if epoch >= Uint32(2):
-                    wait_epoch(self._field(base, 'eco_ready', Uint32) + Uint32(2),
-                               epoch - Uint32(1), False)
-            cute.arch.sync_threads()
-            self._eco_count_local(base, head, epoch, tokens, block, tid)
-            # the histogram is written by every CTA into one array, so a
-            # whole-grid (device-local, no peer traffic) rendezvous is needed
-            # before it is copied out
-            self._dispatch_grid(head, epoch, 25, 26, False)
-            for shard in cutlass.range(block * self.threads + tid, self.physical,
-                                       self.grid * self.threads):
-                self._eco_publish_count(base, peers, rank, shard)
-            # [ECO-SM90] ALL 24 CTAs take part in the broadcast, so header[24]
-            # must be released only after a GRID-wide rendezvous. A block-local
-            # fence_sys orders this thread's stores only: without the grid
-            # rendezvous the plan could be woken and read a peer row while
-            # another CTA on this rank was still writing it. Measured symptom:
-            # quota_sum 1517/1522 instead of 1536 on calls 2 and 3.
-            self._dispatch_grid(head, epoch, 29, 30, False)
-            fence_sys()
-            if block == 0 and tid == 0:
-                st_release_u32(head + Uint32(24), epoch, True)
-            if cutlass.const_expr(self.eco_trace and self.eco):
-                if block == 0 and tid == 0:
-                    self._eco_trace(base, 2, 0)   # slot 2: counts released
-            if tid < self.ranks:
-                wait_epoch(self._field(Uint64(peer_table[tid]), 'header', Uint32)
-                           + Uint32(24), epoch, True)
-            cute.arch.sync_threads()
             # ══════════════════════════════════════════════════════════════
-            # [ECO-SM90] Wake the plan HERE, not after the push.
+            # [ECO-MOVE] The counting and broadcasting that used to live here
+            # now run inside the PLAN kernel (role 5), because they are
+            # ECO-only work and had no business sitting on the critical path
+            # of the single-copy slots. What remains here is one release: the
+            # plan CTA is resident and only needs to be told "this call's
+            # topk_idx is valid".
             #
-            # Safe because:
-            #  1. the plan reads only `eco_counts`, and the header[24]
-            #     rendezvous above has just made every rank's row visible
-            #     globally;
-            #  2. the plan does NOT touch `source_index` / `send_count` /
-            #     `topk_idx` -- its demand histogram comes from `eco_hist`,
-            #     filled by `_eco_count_local` before the broadcast;
-            #  3. `eco_ready[0]` keeps its epoch semantics (`epoch + 1`).
-            # The push below therefore runs concurrently with the plan instead
-            # of in front of it.
+            # Ordering: `topk_idx` is written by vLLM *before* the kernel
+            # launches (host-side copy), and the push loop below only reads
+            # it, so waking the plan first is safe. The plan reads the SAME
+            # array to build its own histogram, exactly like SM100
+            # (eco_unit_kernel.cu L128-129).
+            #
+            # `eco_ready[0]` keeps its epoch token semantics (`epoch + 1`).
             # ══════════════════════════════════════════════════════════════
             if block == 0 and tid == 0:
                 self._eco_tl_write(base, epoch, 1, read_globaltimer())  # plan_wake
@@ -1528,6 +1581,8 @@ class SM90GCMoERoleKernel:
         self._dispatch_grid(head, epoch, 13, 14, True)
         if block == 0 and tid == 0:
             self._eco_tl_write(base, epoch, 9, read_globaltimer())      # push_end
+            # [PULL-TRACE] push end, every arm
+            self._pull_tl_write(base, epoch, 3, read_globaltimer())
         # [ECO-SM90] The plan was already woken before the push; nothing to do
         # here any more.
         if tid < self.ranks:
@@ -1543,6 +1598,10 @@ class SM90GCMoERoleKernel:
         # the plan published their quotas, so its slice is [quota_start,
         # quota_start + quota]. Single-copy slots keep the whole stream and are
         # never blocked on the plan, which is what lets them overlap.
+        # [PULL-TRACE] pull start: every CTA has passed the cross-rank wait and
+        # is about to touch the first local slot.
+        if block == 0 and tid == 0:
+            self._pull_tl_write(base, epoch, 4, read_globaltimer())
         # [ECO-SM90] Blocks grid-stride over the local slots exactly like the
         # plain path. A replica slot blocks here until the plan has published
         # its quota (the two-phase split of spec §5.3 without growing the grid,
@@ -1740,6 +1799,8 @@ class SM90GCMoERoleKernel:
                 finished = atom_release_gpu_add_u32(head + 8, Uint32(1))
                 if finished == self.local - 1:
                     st_release_u32(head + 9, epoch, False)
+                    # [PULL-TRACE] pull end: the LAST local slot finished.
+                    self._pull_tl_write(base, epoch, 5, read_globaltimer())
             if cutlass.const_expr(self.eco_trace and self.eco):
                 if tid == 0:
                     self._eco_trace(base, 8, 2)   # slot 8: role-1 CTA exits

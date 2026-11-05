@@ -64,7 +64,14 @@ _ACTIVE_HDR = {'last': None, 'samples': [], 'counts': None}
 _MEAS = {'on': False, 'steps_done': 0, 'has_stats': False,
          'table': None, 'vanilla_idx': {},
          'measure': os.environ.get('GC_MEASURE_LOAD', '1') == '1'}
-_IR = {'on': False, 'steps': []}
+_IR = {'on': False, 'steps': [], 'ir': -1.0}
+# [RR-FIX] `eplb_logic` sits next to this module (integration/), which is
+# already on sys.path when the driver imports us.
+try:
+    from eplb_logic import rr_pick
+except Exception:  # pragma: no cover - only if integration/ is absent
+    rr_pick = None
+    rr_scratch_for = None
 
 
 def _eplb_enabled() -> bool:
@@ -74,6 +81,57 @@ def _eplb_enabled() -> bool:
 
 def _eplb_redundancy() -> float:
     return float(os.environ.get('GC_MOE_EPLB_REDUNDANCY', '0.10'))
+
+
+def _slot_placement() -> str:
+    """[SME-EPLB] Which static slot->expert map to install, EPLB or not.
+
+    ``identity`` (default) keeps upstream behaviour: without EPLB logical id ==
+    physical id, with EPLB the DeepInfer `initial_layout` is used.
+
+    ``random`` scatters the same multiset of experts over the same slots with a
+    fixed seed. That is the CONTROL arm: routing, slot count and the RR key all
+    stay identical, so any difference in rank balance comes purely from WHICH
+    experts share a rank.
+
+    ``eplb`` forces the DeepInfer initial layout even when GC_MOE_EPLB is off.
+    """
+    v = os.environ.get('GC_MOE_SLOT_PLACEMENT', '').strip().lower()
+    if v in ('identity', 'random', 'eplb'):
+        return v
+    return 'random' if _eplb_random_layout() else 'identity'
+
+
+def _eplb_random_layout() -> bool:
+    """[SME-EPLB] Use a RANDOM placement instead of the identity layout.
+
+    ``GC_MOE_EPLB_RANDOM=1`` permutes the slot -> logical-expert map with a
+    fixed seed, so every rank still holds `physical // ranks` slots but the
+    experts they serve are scattered instead of contiguous. This is the
+    control arm for "does the PLACEMENT matter at all?" -- with the same
+    slot count, the same routing and the same RR key, the only difference to
+    the identity arm is which experts share a rank.
+
+    The seed is pinned so the arm is reproducible and every process builds
+    the same layout (the placement must be identical on all ranks).
+    """
+    return os.environ.get('GC_MOE_EPLB_RANDOM') == '1'
+
+
+def _eplb_random_seed() -> int:
+    return int(os.environ.get('GC_MOE_EPLB_RANDOM_SEED', '0'))
+
+
+def _eplb_extra_per_rank() -> int:
+    """[SME-EPLB] Redundant slots PER RANK; overrides the fraction knob.
+
+    ``GC_MOE_EPLB_EXTRA_PER_RANK=4`` means every rank holds
+    ``experts // ranks + 4`` slots (EP8, 384 experts -> 52 slots/rank, P=416).
+    The fraction knob cannot express that exactly: it rounds to a multiple of
+    `ranks`, so 0.0833 also lands on 32 extras but is fragile to expert-count
+    changes. -1 (default) keeps the fraction behaviour.
+    """
+    return int(os.environ.get('GC_MOE_EPLB_EXTRA_PER_RANK', '-1'))
 
 
 def _eco_enabled() -> bool:
@@ -110,6 +168,9 @@ def _eplb_extra_floor(experts: int) -> int:
     experts (DEEPINFER_OVERRIDE_NUM_EXTRA_EXPERTS); we keep the fraction knob
     but convert it the same way.
     """
+    per_rank = _eplb_extra_per_rank()
+    if per_rank >= 0:
+        return max(1, per_rank * 8)
     return max(1, int(round(experts * _eplb_redundancy())))
 
 
@@ -117,9 +178,13 @@ def _physical_slots(experts: int) -> int:
     """Physical slot count: experts + a ~redundancy share, divisible by ranks.
 
     EPLB needs `physical > experts` so some experts get a second copy; the
-    kernel walks exactly this many slots per rank.
+    kernel walks exactly this many slots per rank. `GC_MOE_EPLB_EXTRA_PER_RANK`
+    takes precedence and expresses the share directly per rank.
     """
     ranks = 8
+    per_rank = _eplb_extra_per_rank()
+    if per_rank >= 0:
+        return experts + per_rank * ranks
     want = int(experts * _eplb_redundancy())
     return experts + want + (-(experts + want)) % ranks
 
@@ -413,7 +478,9 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         # weights; all EPLB work happens once, from the model-level hook, after
         # every layer of every rank is loaded.
         layer.w13_weight._gc_packed = packed
-        if _eplb_enabled():
+        # [SME-EPLB] Also stash when a placement override is active (e.g. the
+        # random control arm), otherwise `_install_eplb` never sees any layer.
+        if _eplb_enabled() or _slot_placement() != 'identity':
             self._pending_eplb.append((layer, packed))
         del w13, w2, s13, s2
         # NOTE: `torch.cuda.empty_cache()` used to be called here. With
@@ -573,8 +640,21 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             torch.index_select(e['slot_table'], 0, gather_idx.reshape(-1),
                                out=cand2.view(-1))
             pick = self._scratch(buf, 'pick', n, torch.int64)[:n]
-            torch.remainder(torch.arange(n, device=ids.device), e['count'][ids],
-                            out=pick)
+            # [RR-DEEPINFER] Replica choice is EXACTLY DeepInfer's gate line
+            # (deepseek-ai/TileKernels,
+            #  tile_kernels/moe/moe_topk_gate_forward_cuda.py:283):
+            #
+            #     num_duplicates = logical_count[logical_expert_idx]
+            #     duplicate_idx  = (ep_rank + global_token_idx * 23333) % num_duplicates
+            #     topk_idx_var   = to_physical_map[logical_expert_idx, duplicate_idx]
+            #
+            # The key is the TOKEN index inside this rank's batch, scaled by
+            # the large prime the kernel uses ("Keep the same with the old
+            # implementation") and phase-shifted by ep_rank. It is NOT the
+            # route's position in the flattened list, and NOT a per-expert
+            # occurrence counter.
+            rr_pick(ids, e['count'], ep_rank=int(buf.rank_idx),
+                    topk=int(buf.num_topk), out=pick)
             slots = self._scratch(buf, 'slots', n, torch.int32)[:n]
             torch.gather(cand2, 1, pick.unsqueeze(-1), out=slots.unsqueeze(-1))
             buf.topk_idx[:tokens].copy_(slots.view(tokens, -1))
@@ -798,7 +878,21 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         # logical experts, then the extra slots duplicate experts 0..extra-1.
         extra = resolve_num_extra_experts(experts, _eplb_extra_floor(experts),
                                           ranks)
-        plan_list = initial_layout(experts, extra)
+        mode = _slot_placement()
+        if mode == 'random':
+            # [SME-EPLB] Control arm: same multiset of experts over the same
+            # slots, scattered with a fixed seed. `extra` copies are drawn at
+            # random so the redundancy level is unchanged too.
+            g = torch.Generator(device='cpu').manual_seed(_eplb_random_seed())
+            base = torch.randperm(experts, generator=g)
+            if extra:
+                base = torch.cat([base, torch.randint(0, experts, (extra,),
+                                                     generator=g)])
+            plan_list = base.tolist()
+        else:
+            # `identity`/`eplb` both start from DeepInfer's initial layout:
+            # identity experts first, then `extra` duplicates of 0..extra-1.
+            plan_list = initial_layout(experts, extra)
         if len(plan_list) != buf.physical:
             raise RuntimeError(
                 f'initial layout has {len(plan_list)} slots, buffer has '
@@ -899,6 +993,12 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         cap = int(os.environ.get('GC_MOE_CAPACITY', 0)) or self.moe_config.max_num_tokens
         key = (self.moe_config.num_experts, cap, self.moe_config.experts_per_token,
                _eplb_enabled(), _eplb_redundancy(),
+               # [SME-EPLB] the per-rank override changes `physical`, so it has
+               # to key the buffer too -- otherwise a run that switched
+               # GC_MOE_EPLB_EXTRA_PER_RANK would silently reuse a buffer sized
+               # for the other redundancy.
+               _eplb_extra_per_rank(),
+               _slot_placement(),
                _eplb_enabled() and _eco_enabled())
         # Every layer of this model has identical expert shapes, so one
         # process-wide buffer serves all of them (calls are serialized).
@@ -907,7 +1007,10 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             self._buffer_key = key
             return self._buffer
         if self._buffer is None or self._buffer_key != key:
-            physical = _physical_slots(key[0]) if _eplb_enabled() else 0
+            # [SME-EPLB] A placement override (the random control arm) also
+            # needs the larger slot count, even with EPLB itself switched off.
+            need_slots = _eplb_enabled() or _slot_placement() != 'identity'
+            physical = _physical_slots(key[0]) if need_slots else 0
             self._buffer = self._gc.get_symm_buffer_for_gc_moe_sm90(
                 dist.group.WORLD, num_experts=key[0],
                 num_max_tokens_per_rank=key[1], num_topk=key[2],
@@ -946,7 +1049,7 @@ def _run_eplb_replication(model) -> None:
     live = [m for m in _EXPERT_REGISTRY if m._pending_eplb]
     print(f'[eplb-dbg] hook reached eplb={_eplb_enabled()} '
           f'registry={len(_EXPERT_REGISTRY)} pending={len(live)}', flush=True)
-    if not _eplb_enabled():
+    if not _eplb_enabled() and _slot_placement() == 'identity':
         return
     # One collective pass for every layer this rank holds.
     if live:
@@ -1261,7 +1364,21 @@ def meas_end() -> dict:
                 m_blocks_step=r['blocks_step'],
                 # window-wide "slot ever used" (not occupancy)
                 active_ever_median=r['active_ever_median'],
-                ir_window=r['ir'],
+                # [METRIC-FIX] three DIFFERENT imbalance ratios, never mixed:
+                #   ir_layer = max(per-layer tokens)/mean   -> placement has no
+                #              effect on it (routing is unchanged), so it must be
+                #              identical across arms
+                #   ir_slot  = max(per-slot tokens)/mean    -> how evenly THIS
+                #              rank's slots are used; directly comparable only
+                #              between arms with the same slot count
+                #   ir_rank  = max(per-RANK tokens)/mean    -> the run json's
+                #              top-level `ir`, from ir_end():
+                #              max(tokens_per_rank)/mean(tokens_per_rank)
+                ir_window=r['ir_layer'],
+                ir_layer=r['ir_layer'],
+                ir_slot=r['ir_slot'],
+                per_slot_token_sum=r['per_slot_tokens'],
+                ir_rank=_IR.get('ir', -1.0),
                 slots_per_rank=_slot_count(),
                 per_layer_median_tokens=r['tokens'],
                 per_layer_median_blocks=r['blocks'],
@@ -1328,7 +1445,8 @@ def ir_end(buf=None) -> dict:
     loads = [float(x.item()) for x in gathered]
 
     mean = sum(loads) / len(loads)
-    return {'ir': (max(loads) / mean) if mean > 0 else -1.0,
+    _IR['ir'] = (max(loads) / mean) if mean > 0 else -1.0
+    return {'ir': _IR['ir'],
             'max_rank_tokens': max(loads), 'min_rank_tokens': min(loads),
             'mean_rank_tokens': mean,
             'tokens_per_rank': [int(x) for x in loads],
@@ -1448,6 +1566,9 @@ def _install_worker_rpc() -> None:
             if tr is not None:
                 torch.cuda.synchronize()
                 out['slots'] = [int(v) for v in tr.cpu().tolist()]
+            ptl = getattr(buf, 'pull_tl', None)
+            if ptl is not None:
+                out['pull_rows'] = ptl.view(256, 8).cpu().tolist()
             tl = getattr(buf, 'eco_tl', None)
             if tl is not None:
                 rows = tl.view(256, 18).cpu().tolist()

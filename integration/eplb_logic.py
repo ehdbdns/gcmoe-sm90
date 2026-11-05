@@ -39,6 +39,59 @@ def demand_from_stats(stats, layout, rank_idx, per_rank, experts):
     return demand
 
 
+DEEPINFER_LARGE_PRIME = 23333
+
+
+def rr_pick(ids, copies, ep_rank=0, topk=1, out=None):
+    """Copy index per route, EXACTLY as DeepInfer's gate does it.
+
+    Source: `deepseek-ai/TileKernels`, `tile_kernels/moe/moe_topk_gate_forward_cuda.py`
+
+        logical_expert_idx = topk_idx_var
+        num_duplicates     = logical_count[logical_expert_idx]
+        duplicate_idx      = (ep_rank + global_token_idx * large_prime_number) % num_duplicates
+        topk_idx_var       = to_physical_map[logical_expert_idx, duplicate_idx]
+
+    with ``large_prime_number = 23333`` (the comment there says "Keep the same
+    with the old implementation"; the Ascend kernel uses the same constant).
+
+    Three details that matter, and that a naive `arange(n) % m` gets wrong:
+
+    1. the key is the **token index**, not the route index -- all ``topk``
+       routes of one token share... no: each route has its OWN expert, so the
+       key must be per token and the modulus is that route's own copy count;
+    2. multiplying by a large prime decorrelates neighbouring tokens, so two
+       experts whose copy counts share a factor do not lock phase;
+    3. adding ``ep_rank`` shifts each rank's phase, so the ranks do not all
+       hammer copy 0 at the same time.
+
+    Args:
+        ids: ``[n]`` logical expert id per route, laid out as
+            ``token-major`` (``topk_ids.view(-1)``), so ``n = tokens * topk``.
+        copies: ``[experts]`` number of copies of each expert.
+        ep_rank: this rank's EP rank (the `ep_rank` kernel argument).
+        topk: routes per token; must divide ``n``.
+        out: optional preallocated ``[n]`` int64 output.
+
+    Returns:
+        ``[n]`` int64 copy index in ``[0, copies[id])``.
+    """
+    n = int(ids.numel())
+    if n == 0:
+        return out if out is not None else ids.to(torch.int64)
+    tokens = n // max(1, int(topk))
+    m = copies[ids].clamp_min(1).to(torch.int64)
+    # `global_token_idx` is the row index inside THIS rank's batch, so the
+    # flattened token-major route list gives it as `i // topk`.
+    tok = torch.arange(n, device=ids.device, dtype=torch.int64) // int(topk)
+    key = int(ep_rank) + tok * DEEPINFER_LARGE_PRIME
+    res = torch.remainder(key, m)
+    if out is not None:
+        out.copy_(res)
+        return out
+    return res
+
+
 def build_layer_index(packed_payloads):
     """Map ``id(payload tensor)`` -> layer row index.
 
@@ -132,12 +185,33 @@ def aggregate_load(stats, block_m, steps, world):
         active_ever_median=float(ever_active.median()),
         active_ever_min=float(ever_active.min()),
         active_ever_max=float(ever_active.max()),
-        # IR must use the per-step average load, not a single sample.
-        ir=(float(tok.max()) / mean) if mean else -1.0,
+        # [METRIC-FIX] `ir` is a LAYER-间 ratio: tok is [layers], so this is
+        # max(layer)/mean(layer). It contains NO rank information and therefore
+        # CANNOT judge EPLB (which only changes placement, not routing). Report
+        # it as `ir_layer` and give the real rank-间 ratio separately.
+        ir_layer=(float(tok.max()) / mean) if mean else -1.0,
+        # True rank-间 imbalance: sum over LAYERS for each rank.
+        ir_slot=_ir_slot(per_step),
+        per_slot_tokens=per_step.sum(dim=0).tolist(),
         notes=('tokens/blocks are per-step averages over the window; '
                'active_ever counts slots that saw at least one token in the '
                'whole window (not per-step occupancy)'),
     )
+
+
+def _ir_slot(per_step):
+    """max(slot) / mean(slot) over tokens per PHYSICAL SLOT, summed over layers.
+
+    NOT a rank ratio! `stats` is ``[layers, per_rank_slots]`` where the columns
+    are the physical slots THIS rank owns (48 without EPLB, 60 with), so
+    ``sum(dim=0)`` gives one value per slot and the ratio describes how evenly
+    the traffic is spread over slots. A rank-level ratio needs a cross-rank
+    reduction, which only `deepep_compare.ir_end()` can do -- see `ir_rank`
+    in the run json, computed by all-gathering one scalar per rank.
+    """
+    per_slot = per_step.sum(dim=0)
+    mean = float(per_slot.mean())
+    return (float(per_slot.max()) / mean) if mean else -1.0
 
 
 def aggregate_with_sample(stats, block_m, steps, world, sample=None,

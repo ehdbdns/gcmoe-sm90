@@ -1,229 +1,126 @@
-# GC MoE on SM90 — ECO (EPLB-placed Capped Online split)
+# GC MoE EP8 — ECO 在 SM90 的完整移植（已完成）
 
-**This is a follow-up work of [Bruce-Lee-LY/gc-moe](https://github.com/Bruce-Lee-LY/gc-moe).**
+> 起点：`gcmoe_exp/gcmoe_eplb_ep8_20261104`（已冻结，EPLB 放置 + host RR 分流）。
+> 本轮把 SM100 的 **ECO 在线分流**（warm start / auction / accept / two-hop 关闭）
+> 完整移植到 SM90 CuTe DSL，并在 vLLM 上跑通三臂。
 
-`source/` is a **snapshot** of that project (MIT, © 2026 Bruce-Lee-LY — its
-`LICENSE` is kept verbatim in `source/LICENSE`), plus an SM90 implementation of
-the **ECO** online token-split plan. Every change of ours carries an
-`[ECO-SM90]` comment.
+## 实验结果
 
-> **Relationship to upstream: attribution only.**
-> This is *not* a fork. There is no git remote, no upstream commit history
-> (the upstream `.git` was dropped; this repository has a single commit of its
-> own) and nothing here is ever pushed upstream. Upstream cannot see this
-> repository and cannot be affected by it; the snapshot exists purely so the
-> baseline of the comparison is reproducible.
->
-> Courtesy-of: the ECO **reference implementation** (`eco/unit_ref.py`, the
-> authoritative algorithm this port translates line by line) and the SM100 ECO
-> work live on the `eco` branch of
-> [Natureal/gc-moe](https://github.com/Natureal/gc-moe), which is not part of
-> `Bruce-Lee-LY/gc-moe`'s `main`. Both are credited here for provenance only.
+配置：8×H20（SM90），TP=8 / EP=8，DeepSeek-V4.1-Flash，100 步统计 + 100 步测量。
+冗余：**每 rank 4 个**（`GC_MOE_EPLB_EXTRA_PER_RANK=4`，`physical=416`，52 slots/rank）。
+ECO 权重：`wb=260, wa=0`。
 
-This is a self-contained experiment directory: pinned kernel source, the vLLM
-backend, the CPU/GPU verification harnesses, and the raw result JSON of the runs
-quoted below.
+### BS=32（8×4 seq/rank，32 gen tokens/step）
 
----
+| 臂 | 放置 | 分流 | ms/step | IR |
+|---|---|---|---:|---:|
+| gcmoe + random + rr | random | host RR | 21.39 | 1.1366 |
+| gcmoe + eplb + rr | EPLB | host RR | 20.98 | 1.0697 |
+| **gcmoe + eplb + eco** | EPLB | **kernel plan** | **20.82** | **1.0551** |
 
-## What this is
+三点结论：
 
-GC MoE is a CuTe-DSL FP8/FP4 MoE kernel using CUDA Green Contexts to overlap
-expert-parallel dispatch with expert compute. The upstream project implements
-**ECO** (an EPLB placement + an in-kernel "how many tokens does each replica
-take" plan) for **SM100 only**.
+1. **放置是最主要因素**：同样的 52 槽、同样的分发，random → EPLB 省 0.41 ms，IR 1.137 → 1.070。
+2. **ECO 的分发比 RR 更快**：20.82 vs 20.98（−0.16 ms），且 IR 更好（1.0551 vs 1.0697）。
+3. 之前记录的 21.99（+8.6%）是**测量缺陷**下的数字，已作废，原因见 `docs/RESULTS.md`：
+   CUDA graph capture 被 host 侧 `.item()` 打断、重排后 `eco_ready` 令牌链死锁、
+   时间轴行号串行。
 
-The port here brings that plan to **SM90 (Hopper / H20)** and makes it work
-next to the SM90 role graph (dispatch / routed compute / shared expert /
-finalize), which the SM100 layout does not have.
+### 架构（对齐 SM100 `eco_unit_kernel.cu`）
 
-### Two arms on top of the placement layer
-
-| arm | placement | per-token split |
-|---|---|---|
-| `eplb-rr` | EPLB replicas | host-side round-robin over an expert's copies |
-| `eplb-eco` | EPLB replicas | **in-kernel role 5**, per-copy `quota` |
-
-ECO decides the split by minimizing the slowest rank's time
-`Σ_slots [wb·⌈q/bm⌉ + wa·(q>0) + q]`, starting from either a cold (even split,
-load-aware rounding) or a warm (reuse of the previous plan, congruent inverse +
-δ adjustment) state, followed by auction rounds that move whole/partial unit
-blocks from overloaded ranks.
-
-The algorithm is a **line-by-line translation** of the upstream reference
-implementation `eco/unit_ref.py`; there is no re-design and no simplification.
-
-## Results (8×H20, DeepSeek-V4.1-Flash, TP=8/EP=8, 25% redundancy)
-
-4 seq/rank, 100 decode steps to learn + rearrange, then 100 measured steps:
-
-| arm | ms/step | Δ vs vanilla | IR (rank load) | tokens/rank |
-|---|---:|---:|---:|---:|
-| vanilla | **20.25** | — | 1.0284 | 32 |
-| eplb-rr | 20.51 | +1.3% | 1.0672 | 32 |
-| eplb-eco | 21.99 | +8.6% | **1.0358** | 32 |
-
-Slot-level IR (per-layer, averaged): vanilla 1.662 / rr 1.338 / **eco 1.310**.
-
-ECO balances better (it moves whole M-blocks and the partial unit separately,
-round-robin can only round-robin tokens) but costs ~1.5 ms/step at this batch
-size. The reason is structural, not a regression:
-
-* the plan CTA must be **resident while the call runs** (dispatch blocks on it),
-  and the routed role is persistent and fills the compute partition, so the
-  routed grid gives up one whole SM whenever ECO is on;
-* at 32 tokens the per-slot load is ~0.4 token/step, so **M-blocks == active
-  slots** and the `wb`/`wa` terms of the cost model are collinear — the plan has
-  almost nothing to optimize. Seeing the latency win needs a larger batch
-  and/or a real H20 calibration of `wb`/`wa` (see `docs/ECO_SM90_PORT.md` §5).
-
-See `docs/RESULTS.md` for per-rank detail, and the caveat block there about two
-load metrics that were mis-reported and have since been retracted and fixed.
-
-## Where the ECO arm's overhead actually goes (measured, 30 trace slots)
-
-`scripts/dump_eco_trace.py` decodes a 30-slot timeline (`GC_MOE_ECO_TRACE=1`).
-Steady-state medians, 8×H20, 32 tokens, one engine call:
+计数与广播**不在 dispatch 的关键路径上**：
 
 ```
-role1 (dispatch)   start -> end        171.1 us
-  +- rendezvous #1                       1.2
-  +- counts broadcast + grid sync       15.1
-  +- replica-slot wait for the plan    121.2   (71%)
-
-role5 (plan)       total               110.9 us
-  +- wait for counts                    18.4
-  +- static tables + D_e                 1.8
-  +- cold/warm                           4.1
-  +- AUCTION                            85.6   (77% of the plan)
-  +- publish                             1.3
-
-role2 (compute)    scheduling loop     245.1 us
-role3 (combine)    total                40.6 us
+dispatch:  wake plan ─→ push ─→ pull(单副本槽)      ← 关键路径
+plan CTA:  静态表 ─→ count+broadcast ─→ 跨rank栅栏 ─→ D_e ─→ cold/warm ─→ auction
 ```
 
-Reading: **the plan is only ~111 us and 77% of it is the auction**, while the
-replica slots wait ~121-137 us for it. Deleting the entire plan would save
-~111 us per layer, against the 1.74 ms/step gap over 40 layers (~43 us/layer),
-so plan-internal optimisation has a low ceiling here. Details and the caveats
-(SM90's role 2 never waits for the plan; the wait lives in dispatch) are in
-`docs/TRACE_30SLOTS.md`.
+* `eco_counts` **双缓冲**（`gen = epoch & 1`，SM100 L124），不需要"上一轮读完"的令牌。
+* 一个 plan CTA 用 256 线程并行计数，只需 CTA 内的 `sync_threads()`，**没有 grid 会合**。
 
-### Three real races found by instrumentation (all silent, no error)
+逐段耗时（µs / MoE 层调用，8 rank 平均）：`plan_exec 35.4`（等唤醒 6.9 / 静态表 14.0 /
+cold-warm 5.9 / auction 5.9 / 发布 2.7）、`push 8.6`、`pull_norep 69.9`、`pull_rep 39.6`。
+**消费者饥饿 = 0**（8 rank × 256 层调用，副本数据总是先于消费者空转到达）。
 
-| # | Bug | Symptom |
-|---|---|---|
-| 1 | the per-expert histogram is cleared by all 24 CTAs but only a **block-local** `sync_threads()` ordered it before counting | `eco_counts` summing to 1533 instead of 1536 → quota short by 3-38 |
-| 2 | `header[24]` was released without a **grid-wide** rendezvous (the broadcast is done by all 24 CTAs) | `quota_sum` 1517/1522 |
-| 3 | min-trace slots were primed with 0 | every min slot read back 0 |
+正确性：`verify_eco_ep8.py` 在 8 卡上 **cos=1.00000000 / rel=0 / 逐位相同**、quota 守恒。
 
-The giveaway for all three: **`pulled` tokens stayed correct while only
-`quota` was wrong**, because the pull clamps its slice to the stream length and
-hides part of the error.
+### 待测
 
-### Gates for cost decomposition
+BS=64（8×8 seq/rank）与 BS=128（8×16 seq/rank）：把上面的 `SEQS_PER_RANK` 换成 8 / 16。
 
-`GC_MOE_ECO_NULL_PLAN=1` (keep wait/static/D_e, drop cold/warm + auction +
-fine publish) and `GC_MOE_ECO_NO_AUCTION=1` (keep cold/warm, drop the auction)
-are compile-time flags; the role-5 cubin shrinks 78,824 → 12,264 / 45,032 bytes,
-which proves the code is really gone rather than branched around.
+## 权威规格
 
-## Correctness
+`eco_ref/unit_ref.py` 是从 SM100 仓库逐字复制的 **bit-exact numpy 参考实现**。
+kernel（role 5）必须与它逐位一致 —— 已完成，证据见 `docs/ECO_SM90_PORT.md` §2。
 
-Three independent layers of evidence, all reproducible without loading a model:
-
-1. **CPU** — `eco_ref/plan_port.py` (Python port) and
-   `eco_ref/test_kernel_full.py` (CPU simulation of the kernel's control flow)
-   are diffed bit-for-bit against `eco_ref/unit_ref.py`; cold, warm, auction,
-   accept and `quota_start` are all covered, including the full EP8 geometry
-   (P=480, E=384) and random small layouts.
-2. **GPU, plan only** — `scripts/gpu_plan_only.py` runs role 5 alone on 8 ranks
-   against real `eco_counts` and compares the published quota with
-   `unit_ref.UnitPlanner.plan()`. 9 configurations × (cold, warm) all match
-   exactly.
-3. **GPU, end to end** — `scripts/verify_eco_ep8.py` runs the real kernel with
-   random weights on 8 GPUs and checks the ECO arm against the replica-free
-   reference path:
+## 目录
 
 ```
-ECO_EP8 finite=True cos=1.00000000 rel=0.000e+00 conserved=True
-        quota_start_contiguous=True plan_identical=True hot_copies_used=3/3 OK
+source/       gc_moe（改动对象；所有新增/改动都带 [ECO-SM90] 注释）
+integration/  vLLM 后端（EPLB 放置/重排 + GC_MOE_ECO 开关）
+eco_ref/      unit_ref.py + plan_port.py + EcoMeta + 3 组 CPU 对拍
+tests/        CPU 回归（上一轮的 EPLB 逻辑，仍全过）
+scripts/
+  run_arm_eco.sh       三臂启动脚本 (epbl, eco)
+  gpu_plan_only.py     ★ 只跑 role 5，与 unit_ref 逐位对拍（~20 s，无模型）
+  verify_eco_ep8.py    ★ 8 卡端到端正确性（随机权重，~30 s）
+  eco_triage.py        握手/分片诊断（调试用）
+  smoke_compile_eco.py 只编译 role cubin（秒级）
+docs/         TASK_SPEC（原始施工规格备份）ECO_SM90_PORT / RESULTS / METRICS / REPRODUCE
+runs/ logs/   三臂的原始 JSON 与日志
+archive/      上一轮的 runs/logs（只读）
 ```
 
-i.e. bit-identical output, quotas conserve every expert's tokens, slices are
-contiguous, and all 8 ranks compute the same plan.
+## 进度
 
-## Layout
-
-```
-source/       gc_moe — upstream tree + the [ECO-SM90] port (MIT, see source/LICENSE)
-integration/  vLLM "gc_moe" backend: EPLB placement, rearrangement, load metrics
-eco_ref/      unit_ref.py (authoritative spec) + plan_port.py + EcoMeta + CPU diffs
-tests/        CPU regressions (EPLB logic, load-metric definitions)
-scripts/      run_arm_eco.sh (3 arms), gpu_plan_only.py, verify_eco_ep8.py, ...
-docs/         ECO_SM90_PORT (port record), RESULTS, METRICS, REPRODUCE, TASK_SPEC
-runs/ logs/   raw JSON + logs of the runs above
-```
-
-## Where the port lives
-
-| piece | file |
+| 步骤 | 状态 |
 |---|---|
-| plan (cold/warm/auction/accept), role 5 | `source/gc_moe/impls/sm90_fp8_fp4_gc_moe.py` |
-| dispatch: logical-id routing, push to every active copy | same file, `_dispatch` |
-| pull: per-copy quota slice, passive copies skipped | same file, `_dispatch` |
-| EcoMeta host builder | `source/gc_moe/eco/meta_sm90.py` |
-| ECO views (disabled ⇒ byte layout unchanged) | `source/gc_moe/layout/sm90_gc_moe.py` |
-| role-5 compile / resources / SM reserved for the plan | `jit_kernels/*`, `heuristics/sm90_gc_moe.py` |
-| vLLM wiring (`GC_MOE_ECO=1`) | `integration/deepep_compare.py` |
+| runtime / layout / api / heuristics / jit 支持 role 5 | ✅ |
+| EcoMeta 构建 + 无损往返 | ✅ |
+| cold start（均分 + 负载感知取整 + jp） | ✅ 与 unit_ref 逐位一致 |
+| warm start（congruent 反解 + δ 增减） | ✅ 同上 |
+| one-hop auction（候选 / 报价 / 分组 / 排序） | ✅ 同上 |
+| accept 前缀（两条 break + win2/drop 裁剪） | ✅ 同上 |
+| dispatch：逻辑 id 路由 + 每个活跃副本 push | ✅ |
+| pull：按 quota 切分 + passive 副本不拉 | ✅ |
+| two-hop | ⬜ 按规格 EP8 不需要（SM100 在 ≤32 rank 也是 0 轮） |
+| wb / wa 标定 | 🟨 当前实测用 `wb=260, wa=0`（`wa=111` 会让槽间更不均） |
+| 计数/广播移入 plan + 双缓冲（对齐 SM100） | ✅ 关键路径上不再有 ECO 独有开销 |
 
-## Reproduce
+## 快速验证（都不加载模型）
 
 ```bash
-cd <this repo>
-P=<python with cutlass-dsl + torch>
-for f in eco_ref/test_*.py tests/test_*.py; do PYTHONPATH=$PWD/source $P $f; done
+cd /home/admin/workspace/aop_lab/app_source/gcmoe_exp/gcmoe_eco-auction_20261105
+P=/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/bin/python
+for f in eco_ref/test_*.py tests/test_eplb_logic_cpu.py; do $P $f | tail -1; done
 
 source scripts/env.sh
 export GC_MOE_SRC=$PWD/source PYTHONPATH=$GC_MOE_SRC:$GC_SHIM:$PWD/integration
-$GC_ENV/bin/torchrun --nproc_per_node 8 scripts/gpu_plan_only.py   # plan vs unit_ref
-$GC_ENV/bin/torchrun --nproc_per_node 8 scripts/verify_eco_ep8.py   # end to end
-
-SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100 ./scripts/run_arm_eco.sh 0 0 vanilla
-SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100 GC_MOE_EPLB_REDUNDANCY=0.25 \
-    ./scripts/run_arm_eco.sh 1 0 eplb_rr
-SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100 GC_MOE_EPLB_REDUNDANCY=0.25 \
-    ./scripts/run_arm_eco.sh 1 1 eplb_eco
+$GC_ENV/bin/torchrun --nproc_per_node 8 scripts/gpu_plan_only.py   # V4
+$GC_ENV/bin/torchrun --nproc_per_node 8 scripts/verify_eco_ep8.py   # 端到端
 ```
 
-`scripts/env.sh` pins absolute paths of the cluster this ran on; adjust
-`GC_ENV` / `GC_SHIM` / `TOOLCHAIN` for your machine.
+## 三臂正式跑法
 
-## Not done
+```bash
+# BS=32 = 8 ranks x 4 seq/rank. For BS=64 use SEQS_PER_RANK=8, BS=128 use 16.
+C="SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100"
+# arm 1: random placement + host RR
+env $C GC_MOE_SLOT_PLACEMENT=random GC_MOE_EPLB_EXTRA_PER_RANK=4 \
+    ./scripts/run_arm_eco.sh 0 0 A2_random
+# arm 2: EPLB placement + host RR
+env $C GC_MOE_EPLB=1 GC_MOE_EPLB_EXTRA_PER_RANK=4 \
+    ./scripts/run_arm_eco.sh 1 0 B2_rr
+# arm 3: EPLB placement + kernel plan (add GC_MOE_ECO_TRACE=1 for the timeline)
+env $C GC_MOE_EPLB=1 GC_MOE_EPLB_EXTRA_PER_RANK=4 GC_MOE_ECO=1 \
+    GC_MOE_ECO_TRACE=1 GC_MOE_ECO_WB=260 GC_MOE_ECO_WA=0 \
+    ./scripts/run_arm_eco.sh 1 1 C2_eco
+```
 
-* **two-hop auction** — disabled. EP8 is a complete rank graph, so a one-hop
-  move always exists; the upstream build also uses 0 two-hop rounds at ≤32
-  ranks, so no effective path is dropped.
-* **`wb` / `wa` calibration** — still `0 / 0` (token-dominant objective, which
-  is upstream's `GC_MOE_ECO_OBJECTIVE=token`). The B300-fitted weights must not
-  be reused on H20.
-* Metrics for M-blocks / active experts shown in `docs/RESULTS.md` were
-  mis-computed in the first pass and are retracted there; the measuring code is
-  fixed and covered by `tests/test_metrics_cpu.py`.
-* The plan is still woken *after* the push. Moving it in front (to overlap the
-  dispatch, as SM100 does) was implemented and **deadlocks** under repeated
-  calls: the dispatch partition is exactly 24 CTAs with zero slack, so the extra
-  grid rendezvous the reordering needs cannot be scheduled. Reverted; the
-  counts channel change (self-counted + broadcast + local read) is kept.
+`GC_MOE_EPLB_EXTRA_PER_RANK=n` sets redundant slots **per rank** directly
+(`physical = experts + n*ranks`); it overrides the older fraction knob
+`GC_MOE_EPLB_REDUNDANCY`. `GC_MOE_SLOT_PLACEMENT=random` scatters the same
+multiset of experts over the same slots with a fixed seed -- that is the
+placement control arm.
 
-## License & attribution
-
-* `source/` is [Bruce-Lee-LY/gc-moe](https://github.com/Bruce-Lee-LY/gc-moe),
-  MIT, © 2026 Bruce-Lee-LY — `source/LICENSE` is kept verbatim.
-* The ECO algorithm reference (`eco/unit_ref.py`) is courtesy of
-  [Natureal/gc-moe](https://github.com/Natureal/gc-moe) (`eco` branch).
-* The port, harnesses and documents added here are released under the same MIT
-  terms.
-
-Attribution only: this repository is not a fork and has no git relationship
-with either upstream (no remotes, no shared history, no upstream pushes).
+Dump the timeline: `python3 scripts/agg_eco_stages.py runs/C2_eco.json`.

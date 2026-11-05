@@ -1,4 +1,5 @@
 """SM90-owned workspace ABI, independent of the SM100 ring layout."""
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 from types import MappingProxyType
@@ -78,7 +79,10 @@ class SM90GCBufferLayout:
         # byte layout. Sizes use PHYSICAL slots (physical = ranks*local).
         # [ECO-SM90]
         if self.eco:
-            reserve('eco_ready', (3,), 'int32', 4)          # [0]=counts [1]=plan [2]=consumed
+            # [ECO-DBUF] two tokens only: [0]=counts, [1]=plan. The old
+            # [2]="counts consumed" is unused since `eco_counts` became
+            # double buffered (SM100's `gen = epoch & 1`).
+            reserve('eco_ready', (3,), 'int32', 4)          # [0]=counts [1]=plan
             # [ECO-SM90] Dedicated per-LOGICAL-expert histogram for the plan.
             # SM100 keeps this in shared memory (`route_count[kE]`); on SM90 the
             # plan is a separate CTA, so it lives in gmem. Deliberately NOT
@@ -88,7 +92,15 @@ class SM90GCBufferLayout:
             reserve('eco_hist', (experts,), 'int32', 4)
             reserve('eco_quota', (physical,), 'int32', 4)
             reserve('eco_quota_start', (physical,), 'int32', 4)
-            reserve('eco_counts', (ranks * physical,), 'int32', 4)
+            # [ECO-DBUF] TWO copies of the counts panel, indexed by
+            # `epoch & 1` (SM100 eco_unit_kernel.cu L124 `gen = epoch & 1`).
+            # Double buffering is what lets a plan write this call's panel
+            # while the previous call's plan may still be reading the other
+            # half, so no "previous call finished" token is needed. A single
+            # buffer forced such a token and deadlocked on the 40-layer
+            # sequence (each plan would have to wait for its own predecessor
+            # to be completely done, in the same CTA).
+            reserve('eco_counts', (2 * ranks * physical,), 'int32', 4)
             # [ECO-TRACE] Per-step, per-rank RAW timeline. Deliberately NOT
             # reduced: every call writes its own row of ECO_TL_SLOTS int32
             # values (microseconds since boot), every rank keeps its own copy,
@@ -118,6 +130,17 @@ class SM90GCBufferLayout:
             #   [31]    auction rounds this call
             # Only reserved when ECO is on, so the plain path is byte-identical.
             reserve('eco_trace', (40,), 'int64', 8)
+
+        # [PULL-TRACE] Pull-phase timing for EVERY arm, including the plain
+        # (no replicas, no ECO) path -- the ECO trace above only exists when
+        # `eco` is on, so the vanilla arm had no pull measurement at all.
+        # Rows are keyed by the dispatch epoch modulo 256, exactly like eco_tl:
+        #   [0] epoch tag   [1] wake    [2] push start
+        #   [3] push end    [4] pull start  [5] pull end (all local slots done)
+        #   [6] count of single-copy slots  [7] count of replica slots
+        # 256 x 8 x 4 B = 8 KB per rank, and only when the env switch is on.
+        if os.environ.get('GC_MOE_PULL_TRACE') == '1':
+            reserve('pull_tl', (256 * 8,), 'int32', 4)
 
         reserve('x', (capacity, hidden), 'float8_e4m3fn', 1)
         reserve('x_sf', (capacity, hidden // 128), 'float32', 4)
