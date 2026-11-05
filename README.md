@@ -80,6 +80,54 @@ size. The reason is structural, not a regression:
 See `docs/RESULTS.md` for per-rank detail, and the caveat block there about two
 load metrics that were mis-reported and have since been retracted and fixed.
 
+## Where the ECO arm's overhead actually goes (measured, 30 trace slots)
+
+`scripts/dump_eco_trace.py` decodes a 30-slot timeline (`GC_MOE_ECO_TRACE=1`).
+Steady-state medians, 8×H20, 32 tokens, one engine call:
+
+```
+role1 (dispatch)   start -> end        171.1 us
+  +- rendezvous #1                       1.2
+  +- counts broadcast + grid sync       15.1
+  +- replica-slot wait for the plan    121.2   (71%)
+
+role5 (plan)       total               110.9 us
+  +- wait for counts                    18.4
+  +- static tables + D_e                 1.8
+  +- cold/warm                           4.1
+  +- AUCTION                            85.6   (77% of the plan)
+  +- publish                             1.3
+
+role2 (compute)    scheduling loop     245.1 us
+role3 (combine)    total                40.6 us
+```
+
+Reading: **the plan is only ~111 us and 77% of it is the auction**, while the
+replica slots wait ~121-137 us for it. Deleting the entire plan would save
+~111 us per layer, against the 1.74 ms/step gap over 40 layers (~43 us/layer),
+so plan-internal optimisation has a low ceiling here. Details and the caveats
+(SM90's role 2 never waits for the plan; the wait lives in dispatch) are in
+`docs/TRACE_30SLOTS.md`.
+
+### Three real races found by instrumentation (all silent, no error)
+
+| # | Bug | Symptom |
+|---|---|---|
+| 1 | the per-expert histogram is cleared by all 24 CTAs but only a **block-local** `sync_threads()` ordered it before counting | `eco_counts` summing to 1533 instead of 1536 → quota short by 3-38 |
+| 2 | `header[24]` was released without a **grid-wide** rendezvous (the broadcast is done by all 24 CTAs) | `quota_sum` 1517/1522 |
+| 3 | min-trace slots were primed with 0 | every min slot read back 0 |
+
+The giveaway for all three: **`pulled` tokens stayed correct while only
+`quota` was wrong**, because the pull clamps its slice to the stream length and
+hides part of the error.
+
+### Gates for cost decomposition
+
+`GC_MOE_ECO_NULL_PLAN=1` (keep wait/static/D_e, drop cold/warm + auction +
+fine publish) and `GC_MOE_ECO_NO_AUCTION=1` (keep cold/warm, drop the auction)
+are compile-time flags; the role-5 cubin shrinks 78,824 → 12,264 / 45,032 bytes,
+which proves the code is really gone rather than branched around.
+
 ## Correctness
 
 Three independent layers of evidence, all reproducible without loading a model:
@@ -162,6 +210,11 @@ SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100 GC_MOE_EPLB_REDUNDANCY=0.25 \
 * Metrics for M-blocks / active experts shown in `docs/RESULTS.md` were
   mis-computed in the first pass and are retracted there; the measuring code is
   fixed and covered by `tests/test_metrics_cpu.py`.
+* The plan is still woken *after* the push. Moving it in front (to overlap the
+  dispatch, as SM100 does) was implemented and **deadlocks** under repeated
+  calls: the dispatch partition is exactly 24 CTAs with zero slack, so the extra
+  grid rendezvous the reordering needs cannot be scheduled. Reverted; the
+  counts channel change (self-counted + broadcast + local read) is kept.
 
 ## License & attribution
 

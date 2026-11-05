@@ -11,10 +11,13 @@ Verifies, on real GPUs with the real kernel:
 
 Usage: torchrun --nproc_per_node 8 scripts/verify_eco_ep8.py
 """
-import os, sys
+import json, os, sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
+# [ECO-MEAS] collected per-call traces (rank 0 only), written to a JSON file
+_TRACE_OUT = []
 sys.path.insert(0, os.environ['GC_SHIM'])
 sys.path.insert(0, os.path.join(_HERE, '..', 'integration'))
+sys.path.insert(0, _HERE)   # [ECO-MEAS] dump_eco_trace lives here
 import torch, torch.distributed as dist
 import gc_ptxas_override  # noqa: F401
 import gc_moe
@@ -118,7 +121,41 @@ def main():
     w1b, w2b = sm90_gc.gather_slot_weights((w1, w2), buf2, plan, group)
 
     out.zero_()
-    run(out, w1b, w2b, buf2, xq, xsf, ti, weights)
+    # [ECO-MEAS] Run a few calls and report the steady-state path. The FIRST
+    # call is cold by definition (eco_state is zero on a fresh buffer), so a
+    # single call would measure the cold path (6 auction rounds) and wrongly
+    # suggest that is what every step costs.
+    nrep = int(os.environ.get('ECO_REPEAT', '1'))
+    for _i in range(max(1, nrep)):
+        run(out, w1b, w2b, buf2, xq, xsf, ti, weights)
+        # [ECO-CHK] per-call conservation, right after the call (before the
+        # next one can overwrite eco_quota). This separates "the plan computed
+        # a bad quota" from "a later call overwrote it before we read".
+        _q = buf2.eco_quota[:lay.physical].to(torch.int64)
+        _qr = torch.zeros(lay.physical, dtype=torch.int64, device=dev)
+        dist.all_gather(_qr.view(1, -1), _q.view(1, -1) if False else _q[:1].expand(1), group=group) if False else None
+        # [ECO-CHK] the panel the plan sums: per-expert D_e from eco_counts
+        _qall = [torch.zeros(lay.physical, dtype=torch.int64, device=dev) for _ in range(R)]
+        dist.all_gather(_qall, _q, group=group)
+        _ec = buf2.eco_counts.view(R, lay.physical)
+        _de = torch.zeros(E, dtype=torch.int64, device=dev)
+        if rank == 0:
+            _phy_t = torch.tensor(list(lay.phy2log), device=dev)
+            for e in range(E):
+                g = int((_phy_t == e).nonzero()[0].item())
+                _de[e] = _ec[:, g].sum()
+            _dem = torch.bincount(ti.reshape(-1), minlength=E)
+            print(f'[chk] call{_i} quota_sum={int(_q.sum())} '
+                  f'eco_counts_sum={int(_de.sum())} demand={int(_dem.sum())} '
+                  f'panel_ok={bool(torch.equal(_de, _dem))}', flush=True)
+        if os.environ.get('GC_MOE_ECO_TRACE') == '1' and rank == 0:
+            try:
+                from dump_eco_trace import report as _tr
+                _o = _tr(buf2, calls=_i + 1, steps=1, label=f'rank0/call{_i}')
+                if _o is not None:
+                    _TRACE_OUT.append({'call': _i, **_o})
+            except Exception as _e:  # noqa: BLE001
+                print(f'[eco-trace] rank{rank} call{_i} unavailable: {_e}', flush=True)
     torch.cuda.synchronize()
 
     finite = bool(torch.isfinite(out.float()).all())
@@ -172,15 +209,8 @@ def main():
     ec = buf2.expert_count[:lay.per_rank].to(torch.int64)
     rows = [torch.zeros(lay.per_rank, dtype=torch.int64, device=dev) for _ in range(R)]
     dist.all_gather(rows, ec, group=group)
-    if os.environ.get('GC_MOE_ECO_DEBUG') == '1':
-        tot_d = buf.eco_dbg[6 * lay.physical:6 * lay.physical + lay.physical].cpu().numpy()
-        own_d = buf.eco_dbg[7 * lay.physical:7 * lay.physical + lay.physical].cpu().numpy()
-        if rank == 0:
-            print(f'  [dbg] rows total sum={int(tot_d.sum())} owned sum={int(own_d.sum())}')
-            nz = (own_d > 0).sum()
-            print(f'  [dbg] slots with owned>0: {nz}/{lay.physical}')
-            print(f'  [dbg] total[:12]={tot_d[:12].tolist()}')
-            print(f'  [dbg] owned[:12]={own_d[:12].tolist()}')
+    # (the old `eco_dbg` scratch view was removed once the gates replaced it;
+    #  per-slot accounting now comes from `expert_count` + `eco_quota` above)
     if rank == 0:
         print('  slot  phy  nc  quota  pulled  start', flush=True)
         shown = 0
@@ -215,6 +245,11 @@ def main():
         print(f'  totals: routed={int(demand_e.sum())} quota={int(quota.sum())} '
               f'counts_sum={int(counts.sum())}', flush=True)
         print(f'  hot expert {hot} quotas={[int(quota[h]) for h in hot_slots]}', flush=True)
+    if rank == 0 and _TRACE_OUT:
+        outp = os.environ.get('ECO_TRACE_JSON', '/tmp/eco_trace.json')
+        with open(outp, 'w') as fh:
+            json.dump(_TRACE_OUT, fh, indent=1)
+        print(f'[eco-trace] wrote {outp}', flush=True)
     bad = 0 if ok else 1
     bad_t = torch.tensor([bad], device=dev)
     dist.all_reduce(bad_t, group=group)

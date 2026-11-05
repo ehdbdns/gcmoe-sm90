@@ -69,7 +69,7 @@ def main():
 
     # --- plan launches: counts published, then role 5 ---------------------
     gen = torch.Generator(device=dev).manual_seed(int(os.environ.get('PLAN_SEED', '3')))
-    rounds_total = int(os.environ.get('PLAN_CALLS', '2'))
+    rounds_total = int(os.environ.get('PLAN_CALLS', '10'))
 
     def publish_counts(counts_np):
         """eco_counts row r = rank r's own share of each slot's stream."""

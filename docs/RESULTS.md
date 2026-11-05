@@ -71,7 +71,7 @@ M 块数和激活槽数（这才是 GEMM 的瓶颈），而不是只均 token。
 ## 复现
 
 ```bash
-cd /home/admin/workspace/aop_lab/app_source/gcmoe_exp/gcmoe_eco-auction_20261105
+cd <this-repo>
 for p in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader); do kill -9 $p; done
 
 SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100 ./scripts/run_arm_eco.sh 0 0 vanilla_100
@@ -83,3 +83,22 @@ SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100 GC_MOE_EPLB_REDUNDANCY=0.25 \
 
 原始 JSON：`runs/{vanilla_100,eplb_rr_100,eplb_eco_100}.json`；
 完整日志：`logs/real_{vanilla_100,eplb_rr_100,eplb_eco_100}.log`。
+
+
+## plan 成本分解（30-slot 埋点，见 `docs/TRACE_30SLOTS.md`）
+
+稳态（8×H20，32 token，call1-7 中位数）：
+
+| 阶段 | µs | 占比 |
+|---|---:|---:|
+| plan 总计 | 110.9 | — |
+| ├ 等 counts | 18.4 | 17% |
+| ├ 静态表 + D_e | 1.8 | 2% |
+| ├ cold/warm | 4.1 | 4% |
+| ├ **拍卖** | **85.6** | **77%** |
+| └ 发布 | 1.3 | 1% |
+| role1 中副本槽等 plan | 121.2 | — |
+
+结论：plan 本身仅 111 µs、其中拍卖 86 µs；把整个 plan 删掉每层也只省 111 µs，
+而 1.74 ms/step ÷ 40 层 ≈ 43 µs/层。**plan 内部优化的天花板很低**，
+瓶颈在别处（`routed` grid 让出一个 SM 的实际代价，尚未测）。

@@ -29,6 +29,11 @@ class ValidatedCall:
     eco_wa: int = 0
     eco_rounds: int = 1
     eco_cold_rounds: int = 6
+    # [ECO-MEAS] Cost-decomposition gates. Both are COMPILE-TIME constants, so
+    # turning them off leaves no branch behind. They exist only to attribute
+    # the ECO arm's overhead; neither changes the algorithm when false.
+    eco_null_plan: bool = False      # keep wait/static/D_e, skip cold/warm/auction/publish
+    eco_no_auction: bool = False     # keep cold/warm, skip the auction rounds
 
 
 def validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,
@@ -103,7 +108,9 @@ def validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,
                           int(os.environ.get('GC_MOE_ECO_WB', '0')),
                           int(os.environ.get('GC_MOE_ECO_WA', '0')),
                           int(os.environ.get('GC_MOE_ECO_ROUNDS', '1')),
-                          int(os.environ.get('GC_MOE_ECO_COLD_ROUNDS', '6')))
+                          int(os.environ.get('GC_MOE_ECO_COLD_ROUNDS', '6')),
+                          os.environ.get('GC_MOE_ECO_NULL_PLAN') == '1',
+                          os.environ.get('GC_MOE_ECO_NO_AUCTION') == '1')
 
 
 def sm90_fp8_fp4_gc_moe(y, w1, w2, buffer, stats, recipe, activation, clamp,

@@ -78,12 +78,27 @@ class SM90GCBufferLayout:
         # byte layout. Sizes use PHYSICAL slots (physical = ranks*local).
         # [ECO-SM90]
         if self.eco:
-            reserve('eco_ready', (2,), 'int32', 4)          # [0]=counts  [1]=plan
+            reserve('eco_ready', (3,), 'int32', 4)          # [0]=counts [1]=plan [2]=consumed
+            # [ECO-SM90] Dedicated per-LOGICAL-expert histogram for the plan.
+            # SM100 keeps this in shared memory (`route_count[kE]`); on SM90 the
+            # plan is a separate CTA, so it lives in gmem. Deliberately NOT
+            # `send_count`: that one is the push's slot allocator and has to
+            # march from 0, so sharing an array for both jobs needs an extra
+            # clear + grid barrier per call -- that variant deadlocked.
+            reserve('eco_hist', (experts,), 'int32', 4)
             reserve('eco_quota', (physical,), 'int32', 4)
             reserve('eco_quota_start', (physical,), 'int32', 4)
             reserve('eco_counts', (ranks * physical,), 'int32', 4)
             reserve('eco_meta', (16 + experts * 16 + physical + ranks,), 'int32', 4)
             reserve('eco_state', (2 * physical,), 'int32', 4)
+            # [ECO-MEAS] ECO timeline trace: 32 slots x 8B of globaltimer ns.
+            #   [0..5]  stage timestamps (store)
+            #   [24]    role-1 start of this call (graph-replay anchor)
+            #   [27]    accumulated "replica slot waited for the plan" ns
+            #   [30]    warm (1) / cold (0) this call
+            #   [31]    auction rounds this call
+            # Only reserved when ECO is on, so the plain path is byte-identical.
+            reserve('eco_trace', (32,), 'int64', 8)
 
         reserve('x', (capacity, hidden), 'float8_e4m3fn', 1)
         reserve('x_sf', (capacity, hidden // 128), 'float32', 4)

@@ -31,7 +31,11 @@ def main():
                            eco_logical_experts=(E if eco else 0),
                            eco_max_copies=4,
                            eco_wb=int(os.environ.get('SMOKE_ECO_WB', '64')),
-                           eco_wa=0, eco_rounds=1, eco_cold_rounds=6)
+                           eco_wa=0, eco_rounds=1, eco_cold_rounds=6,
+                           # [ECO-MEAS] gates, driven from the environment so
+                           # one smoke run can prove every variant compiles
+                           eco_null_plan=os.environ.get('SMOKE_NULL') == '1',
+                           eco_no_auction=os.environ.get('SMOKE_NOAUC') == '1')
     torch.cuda.init()
     torch.cuda.set_device(0)
     torch.zeros(1, device='cuda')
