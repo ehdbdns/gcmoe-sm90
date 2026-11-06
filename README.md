@@ -129,6 +129,28 @@ warp 1..15  -> counts + 广播     (bar.sync 2, 480)
 实测 `plan_exec` **37.6 → 34.3 µs**（`M_32_eco` vs `WS100`），但 `ms/step`
 20.41 → 20.72：plan 早已不是瓶颈，收益被 pull 的抖动掩盖。
 
+### TMA token 拉取（上游 SM90 的遗留瓶颈）
+
+上游 `Bruce-Lee-LY/gc-moe` 的 SM90 里，**token 拉取仍是 16 B 同步拷贝**
+（`copy_global_16`），而 SM100 用的是 TMA（`bulk_g2s_1d`）。权重两边都是 TMA ——
+也就是说 SM90 移植时把数据量最大的 token 路径漏掉了。
+
+实测该路径只有 **4.4 GB/s**。改成 SM100 的 TMA 结构后：
+
+| 臂 | TMA 前 | TMA 后 | 变化 |
+|---|---:|---:|---:|
+| random+rr | 81.76 | **71.33** | −12.8% |
+| eplb+rr | 73.28 | **66.56** | −9.2% |
+| eplb+eco | 75.55 | **66.47** | −12.0% |
+
+`pull_norep` 305 → 124 µs（−59%），`pull_rep` 373 → 142 µs（−62%），
+带宽 4.4 → **10.7 GB/s**。
+
+三个死锁级约束（都已解决）：dispatch 的 smem 必须 ≤ 58368 B 才能 4 CTA/SM 驻留
+（双缓冲 84864 B 会导致 grid 会合永远等不齐）；`mbarrier` 的 phase 必须存在
+shared memory（staged 循环里 Python 变量每次迭代都会重置）；`mbarrier_init_fence()`
+不可省。
+
 ### 全部 rank 级 trace
 
 `runs/rank_traces.json`（8.1 MB）：13 个实验 × 8 rank × 每 rank 256 行 × 18 个槽位。

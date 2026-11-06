@@ -418,3 +418,78 @@ warp 1..15 -> counts + 广播 + 等 peer  (bar.sync 2, 480)
 
 `runs/rank_traces.json`（7.8 MB）：13 个实验 × 8 rank × 每 rank 256 行 × 18 个槽位。
 
+---
+
+# 追加：TMA token 拉取（上游 SM90 是遗留的 16 B 同步实现）
+
+## 上游对照（`Bruce-Lee-LY/gc-moe`，clone 后逐行核对）
+
+| | 上游 SM100 | 上游 SM90 |
+|---|---|---|
+| **token 拉取** | ✅ TMA `bulk_g2s_1d`（L1008，`pull_bytes` 整块 + mbarrier） | ❌ **16 B 同步 `copy_global_16`**（L240 / L325） |
+| 权重拉取 | ✅ TMA | ✅ TMA（L366 / L507 / L996） |
+| 激活拉取 | — | `copy_async_16`（cp.async，异步但非 TMA） |
+
+上游 SM90 的 token 路径是**移植时遗留的简化实现**：权重和激活都异步化了，
+唯独数据量最大的 token 仍是 320 次 16 B 的 `ld.global.v4` / `st.global.v4`。
+
+实测后果：`pull_norep` 的**有效带宽只有 4.4 GB/s**（该 rank 每层搬 1.32 MB，
+耗时 305 µs），比 NVLink 峰值低约 90 倍。
+
+## 本轮的改动
+
+SM90 的 token 拉取改成与 SM100 相同的结构：
+
+```
+if elect_one_sync():
+    bulk_g2s_1d(smem_row, src, hidden, my_bar);     // 整行 5120 B
+    mbarrier_arrive_and_expect_tx(my_bar, hidden);
+    mbarrier_wait(my_bar, phase);
+    bulk_s2g_1d(dst, smem_row, hidden);             // 写回本地
+    cp_async_bulk_commit_group(); cp_async_bulk_wait_group(0);
+```
+
+**单缓冲**（不是双缓冲）：上游 SM100 也是
+`layout/gc_moe.py L76: reserve('pull', dispatch_warps * pull_bytes, 1024)`
+——每 warp 一份，靠把最后一次 `mbarrier_wait` 推迟到 weight/scale 工作之后来
+隐藏延迟，不需要第二块缓冲。
+
+## 三个必须同时满足的约束（都是死锁级）
+
+1. **smem 预算**：dispatch 角色做全 grid 会合（`_dispatch_grid`），所有 CTA
+   必须同时驻留；`min_blocks_per_mp=4` ⇒ 每 CTA 的 smem 上限是
+   `233472/4 = 58368 B`。双缓冲要 84864 B/CTA，只够 2 CTA/SM，
+   24 个 CTA 里 12 个启动不了 ⇒ **会合永远等不齐**。
+   单缓冲 43008 B ⇒ 5 CTA/SM，安全。
+2. **`mbarrier` phase 放进 shared memory**：`for expert in cutlass.range(...)`
+   是 staged（设备侧）循环，Python 侧变量在每次迭代重新初始化；phase 若存在
+   变量里，第二个槽就会从 0 重新开始而硬件已经翻转过 ⇒ **永远等不到**。
+3. **`mbarrier_init_fence()`** 必须有，且 barrier 区不能与 staging 重叠。
+
+## 结果（BS=256，P=448，`wb=260/wa=111`，100+100 步）
+
+| 臂 | TMA 前 | TMA 后 | 变化 |
+|---|---:|---:|---:|
+| eplb+rr | 73.28 | **66.56** | −9.2% |
+| eplb+eco | 75.55 | **66.47** | −12.0% |
+
+逐段耗时（µs/层调用，8 rank 平均）：
+
+| 段 | TMA 前 | TMA 后 | 变化 |
+|---|---:|---:|---:|
+| `plan_exec` | 38.0 | 40.1 | +2.1 |
+| `pull_norep` | **305.0** | **124.3** | **−59%** |
+| `pull_rep` | **373.3** | **142.0** | **−62%** |
+
+带宽 4.4 → **10.7 GB/s**（2.4 倍）。
+
+按 40 层折算 pull 省下约 16.5 ms，实测 step 改善 9.1 ms——差额是 pull 与
+GEMM/combine 的重叠部分。
+
+## 公平性说明
+
+`eplb+eco` 与 `eplb+rr` 的对比**不完全等价**：rr 臂在 host 侧多做了 4 个 GPU 操作
+（`index_select` + `rr_pick` 的 3~4 个 kernel + `gather` + 拷贝），eco 臂只做 1 次
+纯拷贝。这个开销计入了 rr 的 ms/step，所以 **eco 相对 rr 的优势被低估**。
+两者的实测差只有 0.09 ms，说明 host 映射本身很便宜，但严格来说这一项应当单独扣除。
+

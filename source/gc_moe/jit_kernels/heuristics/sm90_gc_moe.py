@@ -51,11 +51,31 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
     routed_grid = compute_sms * workers
     if getattr(config, 'eco_logical_experts', 0):
         routed_grid = max(1, compute_sms - 1)
+    # [ECO-PULL] The dispatch role stages each pulled token through shared
+    # memory so it can use TMA (`cp.async.bulk`) instead of a 16-byte
+    # `ld.global.v4`/`st.global.v4` pair. One token row is `hidden` bytes (fp8)
+    # plus its scales; one staging slot per warp with a double buffer covers
+    # `2 * warps` rows so a warp can have the next pull in flight.
+    # Falls back to the tiny barrier-only allocation when the window does not
+    # fit (the plain path never uses it).
+    _pull_row_bytes = ((config.hidden + (config.hidden // 128) * 4 + 15) // 16) * 16
+    _pull_warps = (256 if not direct_scan else 128) // 32
+    dispatch_smem = max(128, ((2 * config.ranks + 2) * 4 + 127) // 128 * 128)
+    # ONE buffer per warp, like SM100 (no double buffering there).
+    _want = _pull_warps * _pull_row_bytes + 256
+    if dispatch_smem + _want <= 200 * 1024:
+        # Round UP to 1024: the dispatch path hands the whole window to
+        # `SmemAllocator.allocate(size, 1024)`, and that alignment means a size
+        # like 84864 asks for 84992 bytes -- 128 B past the real limit. The
+        # barrier block at the top of the window then lands in the overflow and
+        # the TMA's arrive/expect never becomes visible (observed as a hang).
+        dispatch_smem = ((dispatch_smem + _want + 1023) // 1024) * 1024
+
     return SM90RoleConfig((dispatch_grid,
                            routed_grid, combine_grid),
                           tile_m=tile_m,
                           threads=(128 if direct_scan else 256, 384 if pipelined else 256, 384),
-                          smem=(max(128, ((2 * config.ranks + 2) * 4 + 127) // 128 * 128), compute_smem, 0))
+                          smem=(dispatch_smem, compute_smem, 0))
 
 
 def get_sm90_role_config(config, context):

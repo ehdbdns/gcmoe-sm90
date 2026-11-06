@@ -45,7 +45,7 @@ def dump(buf, path, rank, header=None):
     tl = getattr(buf, 'eco_tl', None)
     if tl is None:
         raise RuntimeError('buffer has no eco_tl view (GC_MOE_ECO=1 required)')
-    rows = tl.view(256, 18).cpu().tolist()
+    rows = tl.view(256, 21).cpu().tolist()
     with open(path, 'a', newline='') as fh:
         w = csv.writer(fh)
         if header:

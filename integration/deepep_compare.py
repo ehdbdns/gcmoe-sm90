@@ -1575,7 +1575,7 @@ def _install_worker_rpc() -> None:
                 out['pull_rows'] = ptl.view(256, 8).cpu().tolist()
             tl = getattr(buf, 'eco_tl', None)
             if tl is not None:
-                rows = tl.view(256, 18).cpu().tolist()
+                rows = tl.view(256, 21).cpu().tolist()
                 steps = getattr(buf, 'eco_tl_step', None)
                 out['tl_rows'] = rows
                 out['tl_step'] = int(steps.cpu().item()) if steps is not None else -1

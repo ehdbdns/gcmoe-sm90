@@ -123,7 +123,7 @@ class SM90GCBufferLayout:
         # its own row, every rank its own copy, and the host averages over
         # steps afterwards. Microseconds, not nanoseconds (int32 overflows ~36min).
         if self.trace:
-            reserve('eco_tl', (256 * 18,), 'int32', 4)
+            reserve('eco_tl', (256 * 21,), 'int32', 4)
             reserve('eco_tl_ctr', (16,), 'int32', 4)
             reserve('eco_tl_step', (1,), 'int32', 4)
 

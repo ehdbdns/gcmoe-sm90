@@ -22,12 +22,13 @@ from ..ptx.ld_st import (
     red_global_min_u64, red_global_max_u64,
 )
 from ..ptx.tma import (
-    bulk_g2s_1d, copy_arrive, copy_async_4, copy_async_16,
+    bulk_g2s_1d, bulk_s2g_1d, copy_arrive, copy_async_4, copy_async_16,
     copy_commit, copy_wait, tma_store_fence,
 )
 from ..ptx.utils import (
     fence_gpu, fence_sys, sync_loader, sync_math, sync_tile,
     sync_activation, sync_weight, read_globaltimer, sync_aligned,
+    elect_one_sync,
 )
 from ..scheduler.sm90_gc_moe import claim_sm90_task
 from ..layout.sm90_gc_moe import get_role_shared_layout
@@ -1129,7 +1130,7 @@ class SM90GCMoERoleKernel:
 
     # [ECO-TRACE] per-step x per-rank raw timeline geometry
     ECO_TL_STEPS = 256
-    ECO_TL_SLOTS = 18
+    ECO_TL_SLOTS = 21
 
     @cute.jit
     def _eco_tl_write(self, base: Uint64, step: Uint32,
@@ -1610,9 +1611,52 @@ class SM90GCMoERoleKernel:
         # [ECO-SM90] The counts row was broadcast BEFORE the push (phase A), so
         # the plan is already running here; nothing left to do for ECO.
         alloc = cutlass.utils.SmemAllocator()
-        counts = alloc.allocate_tensor(Uint32, cute.make_layout((self.ranks,)), 4)
-        prefix = alloc.allocate_tensor(Uint32, cute.make_layout((self.ranks + 1,)), 4)
-        total_shared = alloc.allocate_tensor(Uint32, cute.make_layout((2,)), 4)
+        # [ECO-PULL] TMA staging for the token copy. The old loop moved a token
+        # with 320 synchronous `ld.global.v4`/`st.global.v4` pairs of 16 bytes
+        # each (one per lane per 5120-byte row), which measured 4.4 GB/s --
+        # about 90x below NVLink. SM100 pulls through shared memory with
+        # `cp.async.bulk` instead (impls/sm100_fp8_fp4_gc_moe.py L1193-1200),
+        # and so do we now: one bulk g2s of the whole row, one bulk s2g out.
+        #
+        # ONE staging row per warp -- exactly what SM100 reserves
+        # (layout/gc_moe.py L76 `dispatch_warps * pull_bytes`; there is no
+        # double buffer there). SM100 hides the copy latency by deferring the
+        # `mbarrier_wait` of the last chunk to AFTER the weight/scale work
+        # (sm100_fp8_fp4_gc_moe.py L1184-1269), not by alternating buffers.
+        #
+        # The size MATTERS: the dispatch role does a whole-grid rendezvous
+        # (`_dispatch_grid`), so every CTA must be resident at once, and
+        # `min_blocks_per_mp=4` means the smem budget is 233472/4 = 58368 B.
+        # A second buffer (84864 B/CTA) only allows 2 CTAs/SM, so 12 of the 24
+        # CTAs never start and the rendezvous hangs -- that was every earlier
+        # TMA attempt's deadlock.
+        warp_row_bytes = ((self.hidden + (self.hidden // 128) * 4 + 15) // 16) * 16
+        n_warps = self.threads // 32
+        # Place the staging area at a FIXED offset from the top of the dynamic
+        # shared window instead of asking the allocator to continue from
+        # whatever `counts`/`prefix`/`total_shared` left behind: the window is
+        # 84864 B and the staging needs 84736 B, so 52 B of slack means an
+        # allocator bump in the wrong direction silently hands back an address
+        # outside the allocation and the TMA never lands (observed as a hang).
+        # Take the whole window ONCE and slice it by hand. Continuing the
+        # allocator from `counts`/`prefix`/`total_shared` leaves only 52 B of
+        # slack in an 84864 B window, and an alignment bump then hands back an
+        # address outside the allocation -- the TMA never lands and the kernel
+        # hangs. Everything below is placed explicitly.
+        pull_stage_bytes = n_warps * warp_row_bytes
+        win = cute.recast_ptr(alloc.allocate(self.smem, 1024), dtype=Uint8)
+        stage = win + Uint32(self.smem) - Uint32(pull_stage_bytes) - Uint32(384)
+        pull_bar = cute.recast_ptr(win + Uint32(self.smem) - Uint32(384), dtype=Uint64)
+        # the small shared arrays live at the bottom of the same window
+        counts = cute.recast_ptr(win, dtype=Uint32)
+        prefix = cute.recast_ptr(win + Uint32(4 * self.ranks), dtype=Uint32)
+        total_shared = cute.recast_ptr(win + Uint32(4 * (2 * self.ranks + 1)), dtype=Uint32)
+        if tid < Uint32(n_warps):
+            cute.arch.mbarrier_init(pull_bar + Uint64(tid), 1)
+        cute.arch.sync_threads()
+        # The barrier was just written; the fence makes the initialisation
+        # visible to the arriving TMA engine (same pattern as `_tile_sync`).
+        cute.arch.mbarrier_init_fence()
         # [ECO-SM90] A replica slot only knows how many tokens it owns after
         # the plan published their quotas, so its slice is [quota_start,
         # quota_start + quota]. Single-copy slots keep the whole stream and are
@@ -1626,6 +1670,24 @@ class SM90GCMoERoleKernel:
         # its quota (the two-phase split of spec §5.3 without growing the grid,
         # which the dispatch role's whole-grid rendezvous forbids), so
         # single-copy slots keep pulling while the plan runs.
+        # [ECO-PULL] mbarrier phase, hoisted ABOVE the slot loop. A barrier's
+        # phase flips on every arrive/complete and the same warp reuses the
+        # same barrier across slots, so resetting it per slot hangs the second
+        # slot onward (this was the TMA deadlock).
+        #
+        # [ECO-PULL] The mbarrier phase lives in SHARED memory, not in a
+        # Python-side variable. `for expert in cutlass.range(...)` is a staged
+        # (device-side) loop, so a variable assigned inside it is re-initialised
+        # on every iteration -- the phase would silently restart at 0 while the
+        # hardware barrier had already flipped, and the wait would hang. A
+        # shared word survives across iterations because it is real memory.
+        # placed just after the staging rows, before the 256 B barrier block,
+        # so it cannot collide with counts/prefix/total_shared at the bottom
+        pull_phase_smem = cute.recast_ptr(
+            win + Uint32(self.smem) - Uint32(128), dtype=Uint32)
+        if tid < Uint32(n_warps):
+            pull_phase_smem[tid] = Uint32(0)
+        cute.arch.sync_threads()
         for expert in cutlass.range(block, self.local, self.grid):
             # [ECO-SM90] per logical expert, because the copies of an expert
             # share one canonical order; without ECO the key is the global
@@ -1640,20 +1702,31 @@ class SM90GCMoERoleKernel:
                 # ECO's send_count is indexed by LOGICAL expert (one canonical
                 # stream per expert, shared by all of its copies).
                 key = slot_expert
-            if tid < self.ranks:
-                source_base = Uint64(peer_table[tid])
-                source_count = self._field(source_base, 'send_count', Uint32)
-                counts[tid] = ld_acquire_sys_u32(source_count + key)
-            cute.arch.sync_threads()
-            if tid == 0:
-                running_count = Uint32(0)
-                prefix[0] = Uint32(0)
-                for source in cutlass.range_constexpr(self.ranks):
-                    running_count += counts[source]
-                    prefix[source + 1] = running_count
-                total_shared[0] = running_count
-            cute.arch.sync_threads()
-            total = total_shared[0]
+            # [ECO-PULL] SM100 style (impls/sm100_fp8_fp4_gc_moe.py L1030-1060):
+            # warp 0 builds the per-source counts from its LANE registers, so
+            # there is no serial shared-memory walk and only ONE CTA barrier.
+            # The old version stored the counts in shared memory and had
+            # thread 0 walk them serially inside TWO CTA-wide `sync_threads()`;
+            # that pair of 256-thread barriers plus the 8-step serial loop was
+            # the fixed per-slot cost (~0.8 us/slot, 45 us over 56 slots).
+            if warp == Uint32(0):
+                my_count = Uint32(0)
+                if lane < Uint32(self.ranks):
+                    source_base = Uint64(peer_table[lane])
+                    source_count = self._field(source_base, 'send_count', Uint32)
+                    my_count = ld_acquire_sys_u32(source_count + key)
+                if lane < Uint32(self.ranks):
+                    counts[lane] = my_count
+                cute.arch.sync_warp()
+                if lane == Uint32(0):
+                    running_count = Uint32(0)
+                    prefix[0] = Uint32(0)
+                    for source in cutlass.range_constexpr(self.ranks):
+                        running_count += counts[source]
+                        prefix[source + 1] = running_count
+                    total_shared[0] = running_count
+            cute.arch.sync_threads()      # one barrier instead of two
+            total = Uint32(total_shared[0])
             # [ECO-SM90] replica slots: wait for the plan, then take our slice
             # [ECO-SM90] `replicated` is decided from EcoMeta (does this
             # slot's logical expert have more than one active copy?), not from
@@ -1769,18 +1842,62 @@ class SM90GCMoERoleKernel:
             cute.arch.sync_threads()
             # A warp retains one source/token pair while copying an entire
             # route, avoiding metadata reloads for every sixteen data bytes.
+            # [ECO-PULL] TMA copy, structurally identical to SM100
+            # (impls/sm100_fp8_fp4_gc_moe.py L1184-1200):
+            #
+            #     if (elect_one_sync()) {
+            #         bulk_g2s_1d(smem, src, N, bar);        // issue the TMA
+            #         mbarrier_arrive_and_expect_tx(bar, N); // THEN expect
+            #         mbarrier_wait(bar, phase);             // drain
+            #         phase ^= 1;
+            #         bulk_s2g_1d(dst, smem, N);             // write back
+            #         cp_async_bulk_commit_group();
+            #         cp_async_bulk_wait_group(0);
+            #     }
+            #
+            # The old loop moved a token with 320 synchronous
+            # `ld.global.v4`/`st.global.v4` pairs of 16 bytes (one per lane per
+            # row) and measured 4.4 GB/s -- about 90x below NVLink.
+            #
+            # Order matters: the arrive/expect goes AFTER the bulk issue, and
+            # `elect_one_sync()` pins the work to one lane so `pull_phase`
+            # (hoisted above the slot loop, as in SM100 L1072) advances once
+            # per row.
+            warp_row = Uint32(warp) * Uint32(warp_row_bytes)
             for pull_row in cutlass.range(lo + warp, hi, self.threads // 32):
                 local_row = Uint32(pull_row) - lo
                 source_rank = cell(base, meta_base + Uint64(local_row * 3) * 4, Uint32)[0]
                 token = cell(base, meta_base + Uint64(local_row * 3 + 1) * 4, Uint32)[0]
                 remote = Uint64(peer_table[source_rank])
                 src = remote + Uint64(self.off_x) + Uint64(token) * self.hidden
-                dst = base + Uint64(self.off_l1_acts) + (Uint64(expert) * self.rows + Uint64(local_row)) * self.hidden
-                for k in cutlass.range(lane, self.hidden // 16, 32):
-                    copy_global_16(dst + Uint64(k) * 16, src + Uint64(k) * 16)
+                dst = base + Uint64(self.off_l1_acts) + \
+                    (Uint64(expert) * self.rows + Uint64(local_row)) * self.hidden
+                smem_row = stage + warp_row
+                my_bar = pull_bar + Uint64(warp)
+                if elect_one_sync():
+                    bulk_g2s_1d(smem_row,
+                                cute.make_ptr(Uint8, src, cute.AddressSpace.gmem,
+                                              assumed_align=16),
+                                Uint32(self.hidden), my_bar)
+                    cute.arch.mbarrier_arrive_and_expect_tx(
+                        my_bar, Uint32(self.hidden))
+                    ph = pull_phase_smem[warp]
+                    cute.arch.mbarrier_wait(my_bar, ph)
+                    pull_phase_smem[warp] = ph ^ Uint32(1)
+                    bulk_s2g_1d(cute.make_ptr(Uint8, dst, cute.AddressSpace.gmem,
+                                              assumed_align=16),
+                                smem_row, Uint32(self.hidden))
+                    cute.arch.cp_async_bulk_commit_group()
+                    cute.arch.cp_async_bulk_wait_group(0)
+                cute.arch.sync_warp()
+                # scales: 160 B per token, small enough to keep the direct path
+                remote_sf = remote + Uint64(self.off_x_sf) + \
+                    Uint64(token) * Uint64(self.hidden // 128 * 4)
                 for sf_k in cutlass.range(lane, self.hidden // 128, 32):
-                    sf_value = cell(remote, Uint64(self.off_x_sf) + (Uint64(token) * (self.hidden // 128) + Uint32(sf_k)) * 4, Float32)[0]
-                    sf_out = cell(base, Uint64(self.off_l1_acts_sf) + ((Uint64(expert) * (self.hidden // 128) + Uint32(sf_k)) * self.rows + Uint64(local_row)) * 4, Float32)
+                    sf_value = cell(Uint64(remote_sf), Uint64(sf_k) * 4, Float32)[0]
+                    sf_out = cell(base, Uint64(self.off_l1_acts_sf) +
+                                  ((Uint64(expert) * (self.hidden // 128) + Uint32(sf_k))
+                                   * self.rows + Uint64(local_row)) * 4, Float32)
                     sf_out[0] = sf_value * Float32(64)
             fence_gpu()
             cute.arch.sync_threads()
@@ -1801,6 +1918,11 @@ class SM90GCMoERoleKernel:
                     if n_rep > Uint32(0):
                         self._eco_tl_mark(base, epoch, 2, n_rep, 13, False)
                 else:
+                    # [ECO-TRACE] slot 18 = FIRST single-copy slot finished
+                    # pulling. The counterpart of slot 17 (first replica). The
+                    # difference 18-10 is how long the fastest single-copy slot
+                    # took, and 11-18 is the spread across the single-copy set.
+                    self._eco_tl_mark(base, epoch, 9, Uint32(0), 18, True)
                     if n_fixed > Uint32(0):
                         self._eco_tl_mark(base, epoch, 3, n_fixed, 11, False)
             if tid == 0:
@@ -2176,8 +2298,15 @@ class SM90GCMoERoleKernel:
                 # (epoch-gated: a resident CTA may reach this for the next call)
                 self._eco_tl_mark_epoch(base, epoch, 5, 15)
                 wait_epoch(active_ptr + active_slot, epoch, False)
+                # [ECO-TRACE] slot 19 = a role-2 CTA got its first SLOT
+                # (active_ready seen). Compare with 15: 19-15 is how long the
+                # consumer actually blocked before it could start.
+                self._eco_tl_mark_epoch(base, epoch, 10, 19)
                 expert = cell(base, Uint64(self.off_active_expert) + Uint64(active_slot) * 4, Uint32)[0]
                 wait_epoch(expert_ptr + expert, epoch, False)
+                # [ECO-TRACE] slot 20 = data for that expert is readable, i.e.
+                # the first GEMM can start.
+                self._eco_tl_mark_epoch(base, epoch, 11, 20)
                 if not is_l1:
                     wait_count(l1_ptr + expert, Uint32(self.intermediate // 128))
                 command[0] = Uint32(1)
