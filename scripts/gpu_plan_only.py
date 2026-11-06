@@ -199,16 +199,15 @@ def main():
         # [dbg] every rank reports its OWN row, so a rank that never ran the
         # counter stands out instead of being averaged away.
         if call < 2:
-            own = int(buf.eco_counts[buf.rank_idx * lay.physical:
-                                     (buf.rank_idx + 1) * lay.physical].sum())
+            own = int(buf.eco_counts.view(2, R, lay.physical)[0, buf.rank_idx].sum())
             print(f'   [call {call}] [rank {buf.rank_idx}] own_row_sum={own} '
                   f'epoch_now={int(buf.header[0].item())} '
                   f'ready={buf.eco_ready.tolist()}', flush=True)
         if buf.rank_idx == 0:
             if call < 2 or os.environ.get('PLAN_DBG') == '1':
-                ec = buf.eco_counts[:lay.physical].to(torch.int64).cpu().numpy()
+                _p = buf.eco_counts.view(2, R, lay.physical)[0]
                 print(f'   [dbg] eco_counts sum(r0..r7)='
-                      f'{[int(buf.eco_counts[r*lay.physical:(r+1)*lay.physical].sum()) for r in range(R)]} '
+                      f'{[int(_p[r].sum()) for r in range(R)]} '
                       f'expected total={int(counts.sum())} '
                       f'quota_sum={int(got.sum())}', flush=True)
                 if call == 1:

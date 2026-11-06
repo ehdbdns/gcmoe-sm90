@@ -1,280 +1,240 @@
-"""EP8 ECO correctness check: no model needed (random weights, tiny batch).
+"""Run ONLY the SM90 ECO plan role (role 5) on the GPU and diff it vs unit_ref.
 
-Verifies, on real GPUs with the real kernel:
-  * role 5 compiles and runs without deadlocking,
-  * the plan conserves every expert's tokens:
-        sum over a logical expert's copies of quota == its routed count,
-  * the two copies of an expert split its stream (both get work when the
-    expert is hot), and quota_start is contiguous,
-  * all ranks compute the SAME plan,
-  * with ECO on, the output matches the replica-free reference run.
+No model, no dispatch, no compute: this isolates the plan algorithm and is the
+GPU counterpart of the CPU V4 test. Takes a few seconds.
 
-Usage: torchrun --nproc_per_node 8 scripts/verify_eco_ep8.py
+Usage: torchrun --nproc_per_node 8 scripts/gpu_plan_only.py
 """
-import json, os, sys
+import os, sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
-# [ECO-MEAS] collected per-call traces (rank 0 only), written to a JSON file
-_TRACE_OUT = []
 sys.path.insert(0, os.environ['GC_SHIM'])
+sys.path.insert(0, os.path.join(_HERE, '..', 'source'))
 sys.path.insert(0, os.path.join(_HERE, '..', 'integration'))
-sys.path.insert(0, _HERE)   # [ECO-MEAS] dump_eco_trace / dump_eco_tl live here
+sys.path.insert(0, os.path.join(_HERE, '..', 'eco_ref'))
+
+import ctypes
+import numpy as np
 import torch, torch.distributed as dist
 import gc_ptxas_override  # noqa: F401
 import gc_moe
 import gc_moe.sm90_gc as sm90_gc
-from deep_gemm.utils import per_token_cast_to_fp4, per_token_cast_to_fp8
+from gc_moe.apis.sm90_gc_moe import ValidatedCall
+from gc_moe.runtime.sm90_gc_moe import get_context
+from gc_moe.jit_kernels.heuristics.sm90_gc_moe import get_sm90_role_config
+from gc_moe.jit_kernels.impls.sm90_fp8_fp4_gc_moe import _role_specs, _get_or_compile_binaries, _binary_key, _compiler_identity
+from gc_moe.eco.meta_sm90 import build_eco_meta
+from unit_ref import UnitPlanner
 
-H, I, E, TOPK, CAP, BATCH, B = 5120, 2304, 384, 6, 64, 32, 32
+H, I, E, TOPK, CAP = 5120, 2304, 384, 6, 64
+R = 8
 REDUNDANCY = float(os.environ.get('EPLB_REDUNDANCY', '0.25'))
-ECO_WB = int(os.environ.get('GC_MOE_ECO_WB', '64'))
-ECO_WA = int(os.environ.get('GC_MOE_ECO_WA', '0'))
-
-
-def cast_grouped(shape, gen, dev):
-    g, n, k = shape
-    q = torch.empty((g, n, k // 2), dtype=torch.int8, device=dev)
-    s = torch.empty((g, n, k // B), dtype=torch.float32, device=dev)
-    for e in range(g):
-        raw = torch.randn((n, k), dtype=torch.bfloat16, device=dev, generator=gen) * 0.05
-        q[e], s[e] = per_token_cast_to_fp4(raw, use_ue8m0=True, gran_k=B)
-    return q, s
-
-
-def make_weights(local_rows, gen, dev):
-    w1 = cast_grouped((local_rows, 2 * I, H), gen, dev)
-    w2 = cast_grouped((local_rows, H, I), gen, dev)
-    return gc_moe.transform_weights_for_gc_moe_sm90(w1, w2)
-
-
-def run(out, w1, w2, buf, xq, xsf, ids, weights):
-    n = xq.shape[0]
-    buf.x[:n].copy_(xq)
-    buf.x_sf[:n].copy_(xsf)
-    buf.topk_idx[:n].copy_(ids.to(torch.int64))
-    buf.topk_weights[:n].copy_(weights)
-    torch.cuda.synchronize()
-    gc_moe.sm90_fp8_fp4_gc_moe(out, w1, w2, buf, recipe=(1, 1, 32),
-                               activation='swiglu', activation_clamp=10.0,
-                               fast_math=True, num_tokens_bound=CAP)
-    torch.cuda.synchronize()
+WB = int(os.environ.get('GC_MOE_ECO_WB', '64'))
+WA = int(os.environ.get('GC_MOE_ECO_WA', '0'))
+ROUNDS = int(os.environ.get('GC_MOE_ECO_ROUNDS', '1'))
+COLD = int(os.environ.get('GC_MOE_ECO_COLD_ROUNDS', '6'))
 
 
 def main():
     lr = int(os.environ['LOCAL_RANK'])
     torch.cuda.set_device(lr)
     dev = torch.device(f'cuda:{lr}')
-    dist.init_process_group('gloo', init_method='env://', rank=lr, world_size=8)
-    group = dist.new_group(list(range(8)), backend='nccl')
-    t = torch.ones(1, dtype=torch.int32, device=dev)
-    dist.all_reduce(t, group=group)
+    dist.init_process_group('gloo', init_method='env://', rank=lr, world_size=R)
+    group = dist.new_group(list(range(R)), backend='nccl')
     torch.cuda.synchronize()
-    rank = dist.get_rank(group)
-    R = 8
-    localE = E // R
-    gen = torch.Generator(device=dev).manual_seed(2026)
 
-    T = BATCH
-    raw = torch.randn((T, H), dtype=torch.bfloat16, device=dev, generator=gen) * 0.5
-    xq, xsf = per_token_cast_to_fp8(raw, use_ue8m0=False, gran_k=128)
-    sc = torch.randn((T, E), dtype=torch.float32, device=dev, generator=gen)
-    tw, ti = torch.topk(sc, TOPK, dim=-1, largest=True, sorted=False)
-    weights = torch.softmax(tw, -1)
-    # Skew: drive one logical expert hard so replication actually splits.
-    hot = 7
-    ti[0, :] = hot
-    ti[1, :] = hot
-
-    # ---- reference: plain path, no replication --------------------------
-    w1, w2 = make_weights(localE, gen, dev)
-    buf = gc_moe.get_symm_buffer_for_gc_moe_sm90(group, E, CAP, TOPK, H, I,
-                                                 activation='swiglu')
-    out = torch.empty((T, H), dtype=torch.bfloat16, device=dev)
-    run(out, w1, w2, buf, xq, xsf, ti, weights)
-    ref = out.clone()
-    buf.destroy()
-    dist.barrier()
-
-    # ---- ECO: EPLB placement + role-5 plan -----------------------------
-    # Uniform-ish demand with one hot expert: replication must stay within the
-    # kernel's `eco_max_copies` (4), so the hot expert is only 2x the rest.
-    demand = torch.ones(E, dtype=torch.float32)
-    demand[hot] = 2.0
     from gc_moe.layout.eplb_placement import build_eplb_layout
+    demand = torch.ones(E, dtype=torch.float32)
+    demand[7] = 3.0   # keeps max_copies == 4 (eco_max_copies)
     lay = build_eplb_layout(demand, E, R, REDUNDANCY)
-    max_rep = max(lay.max_copies, 2)
-    if rank == 0:
-        copies = torch.bincount(torch.tensor(lay.phy2log), minlength=E)
-        print(f'ECO physical={lay.physical} per_rank={lay.per_rank} '
-              f'max_copies={int(copies.max())} '
-              f'replicated={int((copies > 1).sum())}', flush=True)
+    phy = [int(x) for x in lay.phy2log]
 
-    buf2 = gc_moe.get_symm_buffer_for_gc_moe_sm90(group, E, CAP, TOPK, H, I,
-                                                  activation='swiglu',
-                                                  physical=lay.physical,
-                                                  eco=True,
-                                                  trace=True)
-    plan, slots_of = sm90_gc.install_eplb_plan(buf2, list(lay.phy2log))
-    from gc_moe.eco.meta_sm90 import build_eco_meta
-    meta = build_eco_meta(list(lay.phy2log), R, E)
-    assert meta.size == buf2.eco_meta.numel(), (meta.size, buf2.eco_meta.numel())
-    buf2.eco_meta.copy_(torch.as_tensor(meta, dtype=torch.int32, device=dev))
-    # Weights per physical slot (replicas carry the same expert's weights).
-    w1b, w2b = sm90_gc.gather_slot_weights((w1, w2), buf2, plan, group)
+    buf = gc_moe.get_symm_buffer_for_gc_moe_sm90(
+        group, E, CAP, TOPK, H, I, activation='swiglu',
+        physical=lay.physical, eco=True)
+    plan, slots_of = sm90_gc.install_eplb_plan(buf, phy)
+    meta = build_eco_meta(phy, R, E)
+    buf.eco_meta.copy_(torch.as_tensor(meta, dtype=torch.int32, device=dev))
 
-    out.zero_()
-    # [ECO-MEAS] Run a few calls and report the steady-state path. The FIRST
-    # call is cold by definition (eco_state is zero on a fresh buffer), so a
-    # single call would measure the cold path (6 auction rounds) and wrongly
-    # suggest that is what every step costs.
-    nrep = int(os.environ.get('ECO_REPEAT', '1'))
-    for _i in range(max(1, nrep)):
-        run(out, w1b, w2b, buf2, xq, xsf, ti, weights)
-        # [ECO-CHK] per-call conservation, right after the call (before the
-        # next one can overwrite eco_quota). This separates "the plan computed
-        # a bad quota" from "a later call overwrote it before we read".
-        _q = buf2.eco_quota[:lay.physical].to(torch.int64)
-        _qr = torch.zeros(lay.physical, dtype=torch.int64, device=dev)
-        dist.all_gather(_qr.view(1, -1), _q.view(1, -1) if False else _q[:1].expand(1), group=group) if False else None
-        # [ECO-CHK] the panel the plan sums: per-expert D_e from eco_counts
-        _qall = [torch.zeros(lay.physical, dtype=torch.int64, device=dev) for _ in range(R)]
-        dist.all_gather(_qall, _q, group=group)
-        # [ECO-DBUF] eco_counts holds TWO panels indexed by `epoch & 1`; the
-        # plan that just ran used the half selected by the current epoch.
-        _gen = int(buf2.header[0].item()) & 1
-        _ec = buf2.eco_counts.view(2, R, lay.physical)[_gen]
-        _de = torch.zeros(E, dtype=torch.int64, device=dev)
-        if rank == 0:
-            _phy_t = torch.tensor(list(lay.phy2log), device=dev)
-            for e in range(E):
-                g = int((_phy_t == e).nonzero()[0].item())
-                _de[e] = _ec[:, g].sum()
-            _dem = torch.bincount(ti.reshape(-1), minlength=E)
-            print(f'[chk] call{_i} quota_sum={int(_q.sum())} '
-                  f'eco_counts_sum={int(_de.sum())} demand={int(_dem.sum())} '
-                  f'panel_ok={bool(torch.equal(_de, _dem))}', flush=True)
-        if os.environ.get('GC_MOE_ECO_TRACE') == '1' and rank == 0:
-            try:
-                from dump_eco_trace import report as _tr
-                _o = _tr(buf2, calls=_i + 1, steps=1, label=f'rank0/call{_i}')
-                if _o is not None:
-                    _TRACE_OUT.append({'call': _i, **_o})
-            except Exception as _e:  # noqa: BLE001
-                print(f'[eco-trace] rank{rank} call{_i} unavailable: {_e}', flush=True)
-    torch.cuda.synchronize()
+    config = ValidatedCall(ranks=R, experts=E, capacity=CAP, topk=TOPK,
+                           hidden=H, intermediate=I, tokens=32, bound=CAP,
+                           clamp=10.0, fast_math=True, shared_experts=0,
+                           physical=lay.physical, eco_logical_experts=E,
+                           eco_max_copies=4, eco_wb=WB, eco_wa=WA,
+                           eco_rounds=ROUNDS, eco_cold_rounds=COLD)
+    ctx = get_context()
+    schedule = get_sm90_role_config(config, ctx)
+    bm = schedule.tile_m
+    if buf.rank_idx == 0:
+        print(f'[plan-only] tile_m={bm} grids={schedule.grids}', flush=True)
 
-    finite = bool(torch.isfinite(out.float()).all())
-    cos = torch.nn.functional.cosine_similarity(
-        ref.float().flatten(), out.float().flatten(), dim=0).item()
-    rel = ((out.float() - ref.float()).norm() / ref.float().norm().clamp_min(1e-9)).item()
+    # --- plan launches: counts published, then role 5 ---------------------
+    gen = torch.Generator(device=dev).manual_seed(int(os.environ.get('PLAN_SEED', '3')))
+    rounds_total = int(os.environ.get('PLAN_CALLS', '10'))
 
-    # ---- plan accounting -------------------------------------------------
-    quota = buf2.eco_quota[:lay.physical].to(torch.int64).cpu()
-    start = buf2.eco_quota_start[:lay.physical].to(torch.int64).cpu()
-    counts = buf2.expert_count[:lay.per_rank].to(torch.int64)
-    # routed tokens per logical expert, gathered across ranks
-    ids = [torch.zeros((T, TOPK), dtype=torch.int64, device=dev) for _ in range(R)]
-    dist.all_gather(ids, ti.to(torch.int64), group=group)
-    demand_e = torch.bincount(torch.cat([x.reshape(-1).cpu() for x in ids]),
-                              minlength=E)
-    # sum of slot quotas per logical expert
-    got = torch.zeros(E, dtype=torch.int64)
-    for g in range(lay.physical):
-        got[int(lay.phy2log[g])] += quota[g]
-    cons = bool(torch.equal(got, demand_e))
-    # quota_start contiguous inside each expert's copies
-    contig = True
-    for g in range(lay.physical):
-        e = int(lay.phy2log[g])
-        holders = (torch.tensor(lay.phy2log) == e).nonzero().flatten().tolist()
-        run_off = 0
-        for h in holders:
-            if int(start[h]) != run_off:
-                contig = False
-            run_off += int(quota[h])
-    # every rank's plan must be identical
-    plans = [torch.zeros(lay.physical, dtype=torch.int64, device=dev) for _ in range(R)]
-    dist.all_gather(plans, buf2.eco_quota[:lay.physical].to(torch.int64), group=group)
-    same = all(torch.equal(plans[0].cpu(), p.cpu()) for p in plans)
-    # hot expert's copies must both carry work
-    hot_slots = (torch.tensor(lay.phy2log) == hot).nonzero().flatten().tolist()
-    split = sum(1 for h in hot_slots if int(quota[h]) > 0)
+    # [ECO-MOVE] Route count handed to the plan: the whole topk_idx table, so
+    # every route `publish_counts` writes is counted.
+    TOKENS = int(buf.topk_idx.shape[0])
 
-    # actual pulled rows per logical expert (must equal the routed demand)
-    rows_self = buf2.expert_count[:lay.per_rank].to(torch.int64)
-    allrows = [torch.zeros(lay.per_rank, dtype=torch.int64, device=dev) for _ in range(R)]
-    dist.all_gather(allrows, rows_self, group=group)
-    pulled = torch.zeros(E, dtype=torch.int64)
-    for r in range(R):
-        row = allrows[r].cpu()
-        for s in range(lay.per_rank):
-            pulled[int(lay.phy2log[r * lay.per_rank + s])] += int(row[s])
-    pulled_ok = bool(torch.equal(pulled, demand_e))
-    qn = buf2.eco_quota[:lay.physical].to(torch.int64).cpu()
-    ec = buf2.expert_count[:lay.per_rank].to(torch.int64)
-    rows = [torch.zeros(lay.per_rank, dtype=torch.int64, device=dev) for _ in range(R)]
-    dist.all_gather(rows, ec, group=group)
-    # (the old `eco_dbg` scratch view was removed once the gates replaced it;
-    #  per-slot accounting now comes from `expert_count` + `eco_quota` above)
-    if rank == 0:
-        print('  slot  phy  nc  quota  pulled  start', flush=True)
-        shown = 0
-        for g in range(lay.physical):
-            r, s_ = g // lay.per_rank, g % lay.per_rank
-            e = int(lay.phy2log[g])
-            nc = int((torch.tensor(lay.phy2log) == e).sum())
-            if int(qn[g]) != int(rows[r][s_]) and shown < 8:
-                print(f'  {g:5d} {e:4d} {nc:3d} {int(qn[g]):6d} {int(rows[r][s_]):7d} '
-                      f'{int(buf2.eco_quota_start[g].item())}', flush=True)
-                shown += 1
-        print(f'  quota total={int(qn.sum())} pulled total={int(sum(int(x.sum()) for x in rows))}', flush=True)
-        print(f'  pulled total={int(pulled.sum())} demand={int(demand_e.sum())} '
-              f'per_expert_equal={pulled_ok}', flush=True)
-        if not pulled_ok:
-            bad = (pulled != demand_e).nonzero().flatten()[:6].tolist()
-            print(f'  mismatch experts={bad} pulled={[int(pulled[b]) for b in bad]} '
-                  f'demand={[int(demand_e[b]) for b in bad]}', flush=True)
-    # ref vs out per token: how many tokens differ materially
-    tok_err = (out.float() - ref.float()).abs().amax(dim=1)
-    if rank == 0:
-        nbad_tok = int((tok_err > 1e-2).sum().item())
-        print(f'  tokens with error>1e-2: {nbad_tok}/{T} '
-              f'per-token max err {[round(float(x), 3) for x in tok_err[:8]]}', flush=True)
-    ok = (finite and cos > 0.999 and rel < 1e-2 and cons and contig and same
-          and split >= 2 and pulled_ok)
-    if rank == 0:
-        print(f'ECO_EP8 finite={finite} cos={cos:.8f} rel={rel:.3e} '
-              f'conserved={cons} quota_start_contiguous={contig} '
-              f'plan_identical={same} hot_copies_used={split}/{len(hot_slots)} '
-              f'{"OK" if ok else "FAIL"}', flush=True)
-        print(f'  totals: routed={int(demand_e.sum())} quota={int(quota.sum())} '
-              f'counts_sum={int(counts.sum())}', flush=True)
-        print(f'  hot expert {hot} quotas={[int(quota[h]) for h in hot_slots]}', flush=True)
-    if rank == 0 and _TRACE_OUT:
-        outp = os.environ.get('ECO_TRACE_JSON', '/tmp/eco_trace.json')
-        with open(outp, 'w') as fh:
-            json.dump(_TRACE_OUT, fh, indent=1)
-        print(f'[eco-trace] wrote {outp}', flush=True)
-    # [ECO-TRACE] dump this rank's raw per-step timeline to CSV
-    if os.environ.get('GC_MOE_ECO_TRACE') == '1':
-        try:
-            from dump_eco_tl import dump as _tl_dump, SLOTS as _TL_SLOTS
-            _p = os.environ.get('ECO_TL_CSV', '/tmp/eco_tl.csv')
-            if rank == 0:
-                # main writes the header once; every rank then appends its rows
-                with open(_p, 'w', newline='') as _fh:
-                    import csv as _csv
-                    _csv.writer(_fh).writerow(['rank', 'step'] + _TL_SLOTS)
-            dist.barrier()
-            _tl_dump(buf2, _p, rank, header=False)
-            if rank == 0:
-                print(f'[eco-tl] wrote {_p}', flush=True)
-        except Exception as _e:  # noqa: BLE001
-            print(f'[eco-tl] rank{rank} failed: {_e}', flush=True)
-    bad = 0 if ok else 1
-    bad_t = torch.tensor([bad], device=dev)
+    def publish_counts(counts_np):
+        """Make the kernel's OWN count produce exactly `counts_np`.
+
+        [ECO-MOVE] The plan now builds the demand histogram itself from
+        `topk_idx` (it used to be built by dispatch and pushed into
+        `eco_counts`). So the test has to provide the route table rather than
+        the finished panel. Each rank gets an equal share of every expert's
+        routes; writing them into `topk_idx` makes the kernel's own count come
+        out as `counts_np`, which is exactly what the reference plan is given.
+        """
+        share = np.zeros((R, E), np.int64)
+        for e in range(E):
+            base, extra = divmod(int(counts_np[e]), R)
+            share[:, e] = base
+            share[:extra, e] += 1
+        # topk_idx is [capacity, topk]; the plan reads `tokens * topk` entries.
+        cap, tk = buf.topk_idx.shape
+        tokens = TOKENS
+        assert tokens * tk >= int(share[buf.rank_idx].sum()), (
+            f'topk_idx holds {tokens * tk} routes but this rank needs '
+            f'{share[buf.rank_idx].sum()}')
+        # [ECO-MOVE] Each rank writes ONLY ITS OWN share of the routes: the
+        # plan counts this rank's `topk_idx` and then sums the per-rank rows
+        # across ranks, so writing every rank's share on every rank would
+        # multiply D_e by R.
+        mine = share[buf.rank_idx]
+        flat = np.full(tokens * tk, -1, np.int64)
+        pos = 0
+        for e in range(E):
+            n = int(mine[e])
+            if n:
+                flat[pos:pos + n] = e
+                pos += n
+        assert pos == int(mine.sum()), (pos, int(mine.sum()))
+        ties = torch.as_tensor(flat, dtype=torch.int64, device=dev)
+        buf.topk_idx[:tokens].copy_(ties.view(tokens, tk))
+
+    specs = _role_specs(config, buf.layout, schedule, False)
+    spec = next(s for s in specs if s[1][0] == 5)
+    identity = _compiler_identity('sm_90a')
+    binaries = _get_or_compile_binaries(_binary_key(identity, (spec,)), identity, (spec,))
+    binary = binaries[0]
+
+    from cuda.bindings import driver as cu
+    loaded = ctx._get_loaded_kernel(binary)
+    kernel = loaded.kernel
+    cu.cuKernelSetAttribute(cu.CUfunction_attribute.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                            binary.smem_bytes, kernel, ctx.device)
+    args = [ctypes.c_void_p(buf.buffer.data_ptr()), ctypes.c_void_p(buf.peer_table.data_ptr())]
+    args += [ctypes.c_void_p(0)] * 12
+    args += [ctypes.c_uint32(buf.rank_idx), ctypes.c_uint32(TOKENS),
+             ctypes.c_float(10.0)]
+    arg_ptrs = [ctypes.addressof(a) for a in args]     # cuLaunchKernel wants pointer-to-arg
+    arr = (ctypes.c_void_p * len(arg_ptrs))(*arg_ptrs)
+    stream = torch.cuda.current_stream().cuda_stream
+
+    def run_plan():
+        # [ECO-MOVE] The plan publishes AND consumes the counts panel itself
+        # now, so there is no host-side panel to prepare: the plan's own
+        # header[24] rendezvous is inside the kernel. Only the wake token is
+        # supplied from the host, as dispatch would.
+        torch.cuda.synchronize()
+        dist.barrier()
+        # [ECO-MOVE] The plan gates its own count on `eco_ready[2]` having
+        # caught up with the PREVIOUS call. That guard only fires when the
+        # epoch advances, so the test has to bump `header[0]` the way a real
+        # dispatch does; otherwise the warm start reads a half-written panel.
+        epoch = int(buf.header[0].item()) + 1
+        buf.header[0] = epoch
+        buf.eco_ready[0] = epoch + 1
+        res = cu.cuLaunchKernel(kernel, 1, 1, 1, binary.threads, 1, 1,
+                                binary.smem_bytes, stream, arr, 0)
+        if res[0] != cu.CUresult.CUDA_SUCCESS:
+            raise RuntimeError(f'plan launch failed: {res[0]}')
+        torch.cuda.synchronize()
+        return buf.eco_quota[:lay.physical].to(torch.int64).cpu().numpy()
+
+    ref = UnitPlanner(phy, R, E, block_m=bm, wb=WB, wa=WA, rounds=ROUNDS,
+                      cold_rounds=COLD, hop2_rounds=0)
+    prev = None
+    failures = 0
+    for call in range(rounds_total):
+        # [ECO-MOVE] The kernel derives the demand from `topk_idx`, so the test
+        # must build counts that FIT in it: capacity*topk routes. Scale the
+        # per-expert mean so the total stays inside the route table while the
+        # distribution still varies between calls.
+        routes_cap = int(buf.topk_idx.numel())
+        mean_per_expert = max(1, int(routes_cap * 0.85) // E)
+        counts = torch.randint(0, max(2, mean_per_expert * 2), (E,), generator=gen,
+                               device=dev, dtype=torch.int32)
+        if call == 0:
+            counts[7] = mean_per_expert * 6
+        # trim to fit exactly
+        tot = int(counts.sum())
+        if tot > routes_cap:
+            counts = (counts.to(torch.float64) * (routes_cap / tot)).to(torch.int32)
+        counts = counts.cpu().numpy().astype(np.int64)
+        if buf.rank_idx == 0:
+            np.save(f'/tmp/eco_counts_{call}.npy', counts)
+            np.save('/tmp/eco_phy.npy', np.asarray(phy, np.int64))
+        publish_counts(counts)
+        want = ref.plan(counts, prev if call else None)
+        got = run_plan()
+        ok = bool(np.array_equal(got, want))
+        # conservation + contiguous quota_start inside every expert
+        cons, contig = True, True
+        start_np = buf.eco_quota_start[:lay.physical].to(torch.int64).cpu().numpy()
+        for e in range(E):
+            run_off = 0
+            for g in range(lay.physical):
+                if phy[g] != e:
+                    continue
+                if start_np[g] != run_off:
+                    contig = False
+                run_off += int(got[g])
+            if run_off != int(counts[e]):
+                cons = False
+        if os.environ.get('GC_MOE_ECO_DEBUG') == '1' and buf.rank_idx == 0:
+            nk = buf.eco_dbg[5 * lay.physical:5 * lay.physical + E].cpu().numpy().astype(np.int64)
+            print(f'   [dbg] kernel D_e[:8]={nk[:8].tolist()} host counts[:8]={counts[:8].tolist()} '
+                  f'sums={int(nk.sum())}/{int(counts.sum())}', flush=True)
+        # [dbg] every rank reports its OWN row, so a rank that never ran the
+        # counter stands out instead of being averaged away.
+        if call < 2:
+            own = int((buf.eco_counts16.view(2, R, lay.physical)[0, buf.rank_idx]
+                       .to(torch.int64) & 0x3FFF).sum())
+            print(f'   [call {call}] [rank {buf.rank_idx}] own_row_sum={own} '
+                  f'epoch_now={int(buf.header[0].item())} '
+                  f'ready={buf.eco_ready.tolist()}', flush=True)
+        if buf.rank_idx == 0:
+            if call < 2 or os.environ.get('PLAN_DBG') == '1':
+                ec = buf.eco_counts[:lay.physical].to(torch.int64).cpu().numpy()
+                print(f'   [dbg] eco_counts sum(r0..r7)='
+                      f'{[int(buf.eco_counts[r*lay.physical:(r+1)*lay.physical].sum()) for r in range(R)]} '
+                      f'expected total={int(counts.sum())} '
+                      f'quota_sum={int(got.sum())}', flush=True)
+                if call == 1:
+                    d = np.nonzero(got != want)[0][:12]
+                    print(f'   [dbg] call1 diff slots={d.tolist()} '
+                          f'got={got[d].tolist()} want={want[d].tolist()} '
+                          f'warm_state_q[:8]={buf.eco_state[:8].tolist()} '
+                          f'prev_q_fed={None if prev is None else prev[:8].tolist()}',
+                          flush=True)
+            print(f'[call {call}] warm={call > 0} equal={ok} conserved={cons} '
+                  f'quota_start_contiguous={contig}', flush=True)
+            if not ok:
+                bad = np.nonzero(got != want)[0]
+                print(f'   diffs slots={bad[:8].tolist()} '
+                      f'got={got[bad[:8]].tolist()} want={want[bad[:8]].tolist()}',
+                      flush=True)
+        if not (ok and cons and contig):
+            failures += 1
+        prev = (got, counts)
+
+    if buf.rank_idx == 0:
+        print('GPU_PLAN_V4 OK' if failures == 0 else 'GPU_PLAN_V4 FAIL', flush=True)
+    bad_t = torch.tensor([0 if failures == 0 else 1], device=dev)
     dist.all_reduce(bad_t, group=group)
-    if rank == 0:
-        print('ECO_EP8 ALL_RANKS_OK' if int(bad_t) == 0 else 'ECO_EP8 FAILED', flush=True)
+    if buf.rank_idx == 0 and int(bad_t) != 0:
+        print('GPU_PLAN_V4 ALL_RANKS FAILED', flush=True)
 
 
 if __name__ == '__main__':

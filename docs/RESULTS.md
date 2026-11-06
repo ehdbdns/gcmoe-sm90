@@ -346,3 +346,75 @@ GEMM 收益被 `pull_norep` 的绝对值淹没（见下）。
 超过 4 的副本**没有任何槽去拉它的数据，那些 token 会静默丢失**。
 已把默认值提到 8（EcoMeta 每专家有 32 个 int16 槽位）。
 
+---
+
+# 追加：冗余 8/rank + BS=256，以及 warp 并行（2026-11-06）
+
+## 冗余 8/rank + BS=256（32 seq/rank）
+
+`GC_MOE_EPLB_EXTRA_PER_RANK=8` → `P=448`，56 slots/rank。其余配置不变
+（`wb=260, wa=111`，100 步统计 + 100 步测量）。
+
+| 臂 | 放置 | 分流 | ms/step | IR | 极差 | 块/步 |
+|---|---|---|---:|---:|---:|---:|
+| random + rr | random | host RR | 81.76 | 1.1323 | 437556 | 50 |
+| **eplb + rr** | EPLB | host RR | **73.28** | 1.0373 | 50167 | 44 |
+| eplb + eco | EPLB | kernel plan | 75.55 | **1.0282** | 52630 | 45 |
+
+```
+EPLB 放置收益: -10.37% ms,  IR 1.1323 -> 1.0373
+ECO 分流     : +3.10% ms,  IR 1.0373 -> 1.0282 (最好)
+```
+
+**放置收益随 batch 单调放大**，这是本轮最重要的趋势：
+
+| BS | 冗余/rank | P | EPLB vs random |
+|---:|---:|---:|---:|
+| 32 | 4 | 416 | −2.31% |
+| 64 | 4 | 416 | −3.08% |
+| 128 | 4 | 416 | −5.36% |
+| **256** | **8** | **448** | **−10.37%** |
+
+早期 CPU 扫描（`scripts/eplb_batch_sweep_cpu.py`）预测「收益不随 batch 增长」，
+**实测推翻了它**：那个扫描让所有 rank 共享同一 popularity，低估了大 batch 下热点
+集中的程度。
+
+ECO 的 IR 在每个配置下都最好，但大 batch 下 ms 略慢于 RR。BS=256 时块数
+44 → 45，而大 batch 对 GEMM 块数更敏感。
+
+## 逐段耗时随 batch 的缩放（µs/层调用，8 rank 平均）
+
+| 段 | BS=32 | BS=128 | BS=256 |
+|---|---:|---:|---:|
+| `plan_exec` | 37.6 | 41.1 | 38.0 |
+| `push` | 8.9 | 9.7 | 10.1 |
+| `pull_norep` | 69.0 | 187.1 | **305.0** |
+| `pull_rep` | 74.2 | 208.3 | **373.3** |
+
+`plan` 基本不随 batch 变，`pull` 线性增长。**瓶颈已经完全在数据搬运上。**
+
+## warp 并行（对齐 SM100 `eco_unit_kernel.cu`）
+
+plan CTA 从 256 提到 **512 线程**（SM100 是 576 = 16 plan warp + 2 index warp），
+按 warp 分工作业：
+
+```
+warp 0     -> 静态表 + warm start      (bar.sync 1, 512 汇合)
+warp 1..15 -> counts + 广播 + 等 peer  (bar.sync 2, 480)
+```
+
+实测 `plan_exec` **37.6 → 34.3 µs**，`plan_static` 14.7 → 12.9，
+`plan_auction` 6.6 → 4.9。但 `ms/step` 20.41 → 20.72（单次测量，噪声范围内）：
+**plan 早已不是瓶颈，这部分收益被 pull 的抖动掩盖。**
+
+实现过程中踩到的两个真实 bug（都会死锁）：
+
+1. `_eco_count_and_broadcast` 末尾用 CTA-wide `sync_threads()` —— warp 0 走静态表
+   分支，永远到不了那行，warp 1–15 永久等待。改成 `bar.sync 2, 480`。
+2. `_role_specs` 里 role 5 的线程数硬编码 256 —— kernel 说 512，launch 还是 256，
+   `bar.sync 2, 480` 永远凑不齐。改成 `k.threads`。
+
+## 数据
+
+`runs/rank_traces.json`（7.8 MB）：13 个实验 × 8 rank × 每 rank 256 行 × 18 个槽位。
+

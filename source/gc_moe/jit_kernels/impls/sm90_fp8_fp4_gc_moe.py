@@ -91,7 +91,9 @@ def _role_specs(config, layout, schedule, has_stats):
     for role in roles:
         if role == 5:
             k = SM90GCMoERoleKernel(config, layout, 5, schedule, has_stats)
-            specs.append((k, (5, k.eco_smem, 256, 1, ())))
+            # [ECO-WARP] thread count comes from the kernel (512 since the
+            # warp split), not a literal.
+            specs.append((k, (5, k.eco_smem, k.threads, 1, ())))
             continue
         index = 1 if role == 4 else role - 1
         # Workspace routed offsets are a strict prefix of the shared layout.

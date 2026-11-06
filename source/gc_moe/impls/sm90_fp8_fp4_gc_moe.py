@@ -27,7 +27,7 @@ from ..ptx.tma import (
 )
 from ..ptx.utils import (
     fence_gpu, fence_sys, sync_loader, sync_math, sync_tile,
-    sync_activation, sync_weight, read_globaltimer,
+    sync_activation, sync_weight, read_globaltimer, sync_aligned,
 )
 from ..scheduler.sm90_gc_moe import claim_sm90_task
 from ..layout.sm90_gc_moe import get_role_shared_layout
@@ -141,9 +141,14 @@ class SM90GCMoERoleKernel:
         if self.eco:
             self._eco_smem_offsets()
         if role == 5:
-            # [ECO-SM90] The plan CTA has its own resources (one CTA, 256
-            # threads) and does not index the three-entry role schedule.
-            self.grid, self.threads = 1, 256
+            # [ECO-SM90] The plan CTA has its own resources (one CTA) and does
+            # not index the three-entry role schedule.
+            #
+            # 512 threads = 16 warps, matching SM100's `kPlanWarps = 16`
+            # (`eco_unit_kernel.cu` L27): warps 0..15 run the plan, warps 1..15
+            # also gather the counts, and warp 0 stages the static tables.
+            # That split is what lets the counts overlap the static tables.
+            self.grid, self.threads = 1, 512
             self.smem = self.eco_smem if self.eco else 0
         else:
             resource_role = 1 if role == 4 else role - 1
@@ -924,53 +929,45 @@ class SM90GCMoERoleKernel:
             self._eco_tl_write(base, epoch, 3, read_globaltimer())     # counts_seen
 
         # ══════════════════════════════════════════════════════════════════
-        # [ECO-MOVE] Order mirrors SM100's `eco_unit_kernel.cu`:
+        # [ECO-WARP] Warp specialisation, exactly like SM100
+        # (`eco_unit_kernel.cu` L132-360):
         #
-        #   warp 0 + index warps -> static tables + warm start   (starts first)
-        #   warp 1..15           -> counts + broadcast + peer wait (overlapped)
-        #   plan_sync()          -> the single join point
+        #   warp 0        -> stage the static tables      (96 threads in SM100)
+        #   warps 1..15   -> counts + broadcast + peer wait (`helper_sync`)
+        #   bar.sync 1,512 -> the single join point (`plan_sync`)
         #
-        # SM100 gets that overlap from warp specialisation inside one CTA. This
-        # plan CTA cannot split warps with a partial barrier (the DSL has no
-        # named barrier with a count), so the overlap is obtained structurally:
-        # the STATIC TABLES run first, and the cross-rank wait that follows now
-        # blocks with them already finished instead of doing them afterwards.
+        # Both halves run at the same time; the CTA only meets again at the
+        # join. SM100 names the barriers 1 (plan, 512) and 2 (helper, 480).
         # ══════════════════════════════════════════════════════════════════
-        # ---- 2. static tables: phy[slot] and act[slot] ---------------------
-        # `act` marks the copies the plan may split an expert over; the passive
-        # duplicates a rank holds are never planned (unit_ref L36).
-        for s in cutlass.range(tid, P, self.threads):
-            phy = self._eco_phy(base, s)
-            self._eco_set(slab, self.eco_phy_off, s, phy)
-            nc = self._eco_ncopies(base, phy)
-            act = Uint32(0)
-            for k in cutlass.range_constexpr(4):
-                if k < nc:
-                    if self._eco_slot_of(base, phy, k) == s:
-                        act = Uint32(1)
-            self._eco_set(slab, self.eco_act_off, s, act)
-        cute.arch.sync_threads()
-
-        # ---- 1b. [ECO-MOVE] build + broadcast the demand, then wait for it --
-        # This is the work that used to sit in dispatch, in front of the
-        # single-copy slots' pull. It runs here, concurrently with the push and
-        # that pull.
-        #
-        # [ECO-DBUF] No "previous call finished" wait: `eco_counts` is double
-        # buffered by `epoch & 1` (SM100 eco_unit_kernel.cu L124), so this
-        # call writes one half while a still-running previous call reads the
-        # other. A single buffer needed such a token, and it deadlocked: the
-        # plan CTA is resident, so waiting for its own predecessor starves the
-        # very call that would release it.
+        warp = tid // Uint32(32)
         gen = epoch & Uint32(1)
-        self._eco_count_and_broadcast(base, peers, rank, tokens, tid, gen)
-        # One cross-rank barrier: every peer's row must be visible before D_e
-        # is summed below. `header[24]` is the same token dispatch used.
-        head = self._field(base, 'header', Uint32)
-        if tid == 0:
-            st_release_u32(head + Uint32(24), epoch, True)
-        cute.arch.sync_threads()
         peer_table = cute.make_tensor(peers, cute.make_layout((self.ranks,)))
+        head = self._field(base, 'header', Uint32)
+
+        if warp == Uint32(0):
+            # ---- static tables: phy[slot] and act[slot] -------------------
+            # `act` marks the copies the plan may split an expert over; the
+            # passive duplicates a rank holds are never planned (unit_ref L36).
+            for s in cutlass.range(tid, P, 32):
+                phy = self._eco_phy(base, s)
+                self._eco_set(slab, self.eco_phy_off, s, phy)
+                nc = self._eco_ncopies(base, phy)
+                act = Uint32(0)
+                for k in cutlass.range_constexpr(4):
+                    if k < nc:
+                        if self._eco_slot_of(base, phy, k) == s:
+                            act = Uint32(1)
+                self._eco_set(slab, self.eco_act_off, s, act)
+        else:
+            # ---- counts + broadcast (warps 1..15, helper barriers only) ---
+            self._eco_count_and_broadcast(base, peers, rank, tokens, tid, gen)
+            # After the helper barrier every helper has written its row.
+            if tid == Uint32(32):
+                st_release_u32(head + Uint32(24), epoch, True)
+
+        # plan_sync: every warp meets here (SM100 `bar.sync 1, 512`).
+        sync_aligned(512, 1)
+        # ---- wait for every peer's row (all warps) -------------------------
         if tid < self.ranks:
             wait_epoch(self._field(Uint64(peer_table[tid]), 'header', Uint32)
                        + Uint32(24), epoch, True)
@@ -1373,17 +1370,27 @@ class SM90GCMoERoleKernel:
         `sync_threads()` -- no grid rendezvous, which is exactly the cost this
         change removes from the critical path.
         """
+        # [ECO-WARP] This body only runs on warps 1..15 (helper threads
+        # 32..511). Warp 0 is staging the static tables at the same time, so
+        # every barrier here must be a HELPER-ONLY named barrier -- a CTA-wide
+        # `sync_threads()` would wait for warp 0 and destroy the overlap
+        # SM100 gets from `helper_sync()` (`bar.sync 2, 480`).
+        # `cutlass.range`'s bounds must be static ints; the helper subset is
+        # expressed as a REBASED thread index so the loop shape stays the same
+        # as the CTA-wide version (`helpers` below is the helper count).
+        helpers = self.threads - 32          # 480 helper threads
+        helper = Uint32(0)
+        helper = tid - Uint32(32)            # rebased index inside the helpers
         hist = self._field(base, 'eco_hist', Uint32)
-        for e in cutlass.range(tid, self.eco_logical, self.threads):
+        for e in cutlass.range(helper, self.eco_logical, helpers):
             hist[e] = Uint32(0)
-        # CTA-local barrier: this CTA is the only writer of `eco_hist`.
-        cute.arch.sync_threads()
-        for route in cutlass.range(tid, tokens * self.topk, self.threads):
+        sync_aligned(480, 2)
+        for route in cutlass.range(helper, tokens * self.topk, helpers):
             expert_id = cell(base, Uint64(self.off_topk_idx) + Uint64(route) * 8,
                              Int64)[0]
             if expert_id >= 0 and expert_id < Int64(self.eco_logical):
                 atom_add_u32(hist + Uint32(expert_id), Uint32(1))
-        cute.arch.sync_threads()
+        sync_aligned(480, 2)
         # Broadcast into every peer's `eco_counts[rank][*]` row, then wait for
         # every peer to have done the same. This is ONE cross-rank barrier
         # instead of the two dispatch used to need.
@@ -1399,7 +1406,7 @@ class SM90GCMoERoleKernel:
         # symptom was `conserved=False` from the very first call.
         local_row = counts_out + base_off
         local_row_off = Uint64(self.off_eco_counts) + base_off * 4
-        for shard in cutlass.range(tid, self.physical, self.threads):
+        for shard in cutlass.range(helper, Uint32(self.physical), helpers):
             value = hist[self._eco_phy(base, shard)]
             local_row[Uint64(shard)] = value
             # Use the same `cell(...)` helper `_eco_publish_count` uses: it is a
@@ -1412,7 +1419,10 @@ class SM90GCMoERoleKernel:
                     cell(Uint64(peer_table[r]), local_row_off + Uint64(shard) * 4,
                          Uint32)[0] = value
         fence_sys()
-        cute.arch.sync_threads()
+        # [ECO-WARP] HELPER-only: warp 0 is staging the static tables in the
+        # other branch and never reaches this line. A CTA-wide
+        # `sync_threads()` here waits for warp 0 forever -- that was the hang.
+        sync_aligned(480, 2)
 
     @cute.jit
     def _eco_publish_count(self, base: Uint64, peers: cute.Pointer, rank: Uint32,

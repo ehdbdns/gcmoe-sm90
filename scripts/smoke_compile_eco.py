@@ -23,7 +23,8 @@ def main():
     E, H, I, TOPK, CAP = 384, 5120, 2304, 6, 2048
     ranks = 8
     physical = 424 if eco else 0
-    layout = SM90GCBufferLayout(ranks, E, CAP, TOPK, H, I, 0, physical, eco)
+    # trace=True so the ECO roles that touch the timeline can be compiled
+    layout = SM90GCBufferLayout(ranks, E, CAP, TOPK, H, I, 0, physical, eco, True)
     config = ValidatedCall(ranks=ranks, experts=E, capacity=CAP, topk=TOPK,
                            hidden=H, intermediate=I, tokens=8, bound=CAP,
                            clamp=10.0, fast_math=True, shared_experts=0,

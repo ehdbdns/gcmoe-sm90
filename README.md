@@ -86,6 +86,53 @@ python3 scripts/agg_eco_stages.py runs/M_32_eco.json   # 时间轴
 `GC_MOE_ECO_TRACE=1` 现在对**所有臂**生效（dispatch 侧的 plan_wake / push / pull
 列相同），所以 RR 和 random 臂也能 dump 同一张表。
 
+### 冗余 8/rank + BS=256（32 seq/rank）
+
+`GC_MOE_EPLB_EXTRA_PER_RANK=8` → `P=448`，56 slots/rank，其余配置不变。
+
+| 臂 | 放置 | 分流 | ms/step | IR | 极差 | 块/步 |
+|---|---|---|---:|---:|---:|---:|
+| gcmoe + random + rr | random | host RR | 81.76 | 1.1323 | 437556 | 50 |
+| **gcmoe + eplb + rr** | EPLB | host RR | **73.28** | 1.0373 | 50167 | 44 |
+| gcmoe + eplb + eco | EPLB | kernel plan | 75.55 | **1.0282** | 52630 | 45 |
+
+```
+EPLB 放置收益: -10.37% ms,  IR 1.1323 -> 1.0373
+ECO 分流     : +3.10% ms,  IR 1.0373 -> 1.0282 (最好)
+```
+
+**放置收益随 batch 单调放大**：
+
+| BS | 冗余/rank | EPLB vs random |
+|---:|---:|---:|
+| 32 | 4 | −2.31% |
+| 64 | 4 | −3.08% |
+| 128 | 4 | −5.36% |
+| **256** | **8** | **−10.37%** |
+
+ECO 的 IR 在所有配置下都最好，但大 batch 下 ms 略慢于 RR（BS=256 差 3.1%：quota
+切分让块数 44 → 45，而大 batch 对块数更敏感）。
+
+逐段耗时（BS=256，µs/层调用）：`plan_exec 38.0`、`push 10.1`、
+**`pull_norep 305.0`**、**`pull_rep 373.3`**。BS=32 时是 69 / 74 µs ——
+**pull 随 batch 线性增长，是唯一还要优化的地方。**
+
+### warp 并行版（对齐 SM100）
+
+plan CTA 提到 **512 线程**，照 `eco_unit_kernel.cu` 分工：
+
+```
+warp 0      -> 静态表           (bar.sync 1, 512 汇合)
+warp 1..15  -> counts + 广播     (bar.sync 2, 480)
+```
+
+实测 `plan_exec` **37.6 → 34.3 µs**（`M_32_eco` vs `WS100`），但 `ms/step`
+20.41 → 20.72：plan 早已不是瓶颈，收益被 pull 的抖动掩盖。
+
+### 全部 rank 级 trace
+
+`runs/rank_traces.json`（8.1 MB）：13 个实验 × 8 rank × 每 rank 256 行 × 18 个槽位。
+
 ## 权威规格
 
 `eco_ref/unit_ref.py` 是从 SM100 仓库逐字复制的 **bit-exact numpy 参考实现**。
