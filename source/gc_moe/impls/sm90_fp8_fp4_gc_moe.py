@@ -133,6 +133,10 @@ class SM90GCMoERoleKernel:
         # [PULL-TRACE] Independent of ECO: measures the pull phase on the
         # plain (no-replica) path too, which had no instrumentation before.
         self.pull_trace = _os.environ.get('GC_MOE_PULL_TRACE') == '1'
+        # [ECO-PULL] A/B switch for the token copy path. Default ON (TMA); set
+        # GC_MOE_SM90_PULL_TMA=0 to compile the upstream 16-byte synchronous
+        # loop instead. Compile-time, so the disabled build pays nothing.
+        self.pull_tma = _os.environ.get('GC_MOE_SM90_PULL_TMA', '1') == '1'
         # [ECO-MEAS] triage: GC_MOE_ECO_TRACE_RESET=0 keeps the trace points but
         # skips the per-call window clear, to separate "the instrument's writes
         # perturb the run" from "the trace points themselves".
@@ -1874,7 +1878,8 @@ class SM90GCMoERoleKernel:
                     (Uint64(expert) * self.rows + Uint64(local_row)) * self.hidden
                 smem_row = stage + warp_row
                 my_bar = pull_bar + Uint64(warp)
-                if elect_one_sync():
+                if cutlass.const_expr(self.pull_tma):
+                  if elect_one_sync():
                     bulk_g2s_1d(smem_row,
                                 cute.make_ptr(Uint8, src, cute.AddressSpace.gmem,
                                               assumed_align=16),
@@ -1889,6 +1894,10 @@ class SM90GCMoERoleKernel:
                                 smem_row, Uint32(self.hidden))
                     cute.arch.cp_async_bulk_commit_group()
                     cute.arch.cp_async_bulk_wait_group(0)
+                else:
+                    # upstream path: 320 synchronous 16-byte ld/st per row
+                    for k in cutlass.range(lane, self.hidden // 16, 32):
+                        copy_global_16(dst + Uint64(k) * 16, src + Uint64(k) * 16)
                 cute.arch.sync_warp()
                 # scales: 160 B per token, small enough to keep the direct path
                 remote_sf = remote + Uint64(self.off_x_sf) + \
