@@ -7,24 +7,11 @@
 ## 实验结果
 
 配置：8×H20（SM90），TP=8 / EP=8，DeepSeek-V4.1-Flash，100 步统计 + 100 步测量。
-冗余：**每 rank 4 个**（`GC_MOE_EPLB_EXTRA_PER_RANK=4`，`physical=416`，52 slots/rank）。
-ECO 权重：`wb=260, wa=0`。
+冗余：**每 rank 8 个**（`GC_MOE_EPLB_EXTRA_PER_RANK=8`，`physical=448`，56 slots/rank）。
+ECO 权重：`wb=260, wa=111`。三臂全部走 TMA 拉 token。
 
-### BS=32（8×4 seq/rank，32 gen tokens/step）
-
-| 臂 | 放置 | 分流 | ms/step | IR |
-|---|---|---|---:|---:|
-| gcmoe + random + rr | random | host RR | 21.39 | 1.1366 |
-| gcmoe + eplb + rr | EPLB | host RR | 20.98 | 1.0697 |
-| **gcmoe + eplb + eco** | EPLB | **kernel plan** | **20.82** | **1.0551** |
-
-三点结论：
-
-1. **放置是最主要因素**：同样的 52 槽、同样的分发，random → EPLB 省 0.41 ms，IR 1.137 → 1.070。
-2. **ECO 的分发比 RR 更快**：20.82 vs 20.98（−0.16 ms），且 IR 更好（1.0551 vs 1.0697）。
-3. 之前记录的 21.99（+8.6%）是**测量缺陷**下的数字，已作废，原因见 `docs/RESULTS.md`：
-   CUDA graph capture 被 host 侧 `.item()` 打断、重排后 `eco_ready` 令牌链死锁、
-   时间轴行号串行。
+完整表格见 §「最终结果：四档 batch × 三臂」和 `docs/RESULTS_TABLE.md`；
+冗余度对照见 `docs/REDUNDANCY_COMPARE.md`。
 
 ### 架构（对齐 SM100 `eco_unit_kernel.cu`）
 
@@ -36,86 +23,14 @@ plan CTA:  静态表 ─→ count+broadcast ─→ 跨rank栅栏 ─→ D_e ─�
 ```
 
 * `eco_counts` **双缓冲**（`gen = epoch & 1`，SM100 L124），不需要"上一轮读完"的令牌。
-* 一个 plan CTA 用 256 线程并行计数，只需 CTA 内的 `sync_threads()`，**没有 grid 会合**。
+* plan CTA 用 **512 线程**、按 warp 分工（见下节），计数**没有 grid 会合**。
 
-逐段耗时（µs / MoE 层调用，8 rank 平均）：`plan_exec 35.4`（等唤醒 6.9 / 静态表 14.0 /
-cold-warm 5.9 / auction 5.9 / 发布 2.7）、`push 8.6`、`pull_norep 69.9`、`pull_rep 39.6`。
+逐段耗时（BS=256，µs / MoE 层调用，8 rank 平均）：`plan_exec 40.1`（等唤醒 6.4 /
+静态表 14.2 / cold-warm 7.1 / auction 8.2 / 发布 4.3）、`push 9.7`、
+`pull_norep 124.3`、`pull_rep 142.0`。
 **消费者饥饿 = 0**（8 rank × 256 层调用，副本数据总是先于消费者空转到达）。
 
 正确性：`verify_eco_ep8.py` 在 8 卡上 **cos=1.00000000 / rel=0 / 逐位相同**、quota 守恒。
-
-### batch 规模扫描（BS=32 / 64 / 128）
-
-配置不变：每 rank 4 副本（`P=416`），`wb=260, wa=111`，100 步统计 + 100 步测量。
-
-| BS | 臂 | ms/step | IR | 极差 | 块/步 |
-|---:|---|---:|---:|---:|---:|
-| **32** | gcmoe + random + rr | 21.46 | 1.1360 | 41786 | 15 |
-| | gcmoe + eplb + rr | 20.97 | 1.1054 | 15538 | 17 |
-| | **gcmoe + eplb + eco** | **20.41** | **1.0262** | **4971** | 15 |
-| **64** | gcmoe + random + rr | 31.46 | 1.1399 | 84800 | 28 |
-| | **gcmoe + eplb + rr** | **30.49** | **1.0302** | 15075 | 30 |
-| | gcmoe + eplb + eco | 30.93 | 1.0439 | 14782 | 28 |
-| **128** | gcmoe + random + rr | 49.93 | 1.1293 | 162848 | 39 |
-| | **gcmoe + eplb + rr** | **47.26** | 1.0264 | 22891 | 41 |
-| | gcmoe + eplb + eco | 47.41 | **1.0171** | **19943** | 34 |
-
-**EPLB 放置的收益随 batch 放大**（random → eplb+rr）：
-
-| BS | ms | IR |
-|---:|---:|---|
-| 32 | −2.31% | 1.1360 → 1.1054 |
-| 64 | −3.08% | 1.1399 → **1.0302** |
-| 128 | **−5.36%** | 1.1293 → 1.0264 |
-
-**ECO 的分发在 BS=32 最优，大 batch 下与 rr 持平**：
-BS=32 时 eco 比 rr 快 2.66% 且 IR 更好（1.0262 vs 1.1054）；
-BS=128 时 eco 的 IR 最好（1.0171）但 ms 慢 0.3%。
-
-逐段耗时随 batch 的变化（µs/层调用，8 rank 平均）：`pull_norep` 是绝对瓶颈且线性增长
-（BS=32/64/128 → **69 / 115 / 187 µs**），而 `plan_exec` 稳定在 37–44 µs，
-占比从 33% 降到 20%。ECO 的 plan 已经完全不是瓶颈。
-
-复现：
-
-```bash
-./scripts/run_matrix.sh M          # 12 个实验串行，约 65 分钟
-python3 scripts/agg_eco_stages.py runs/M_32_eco.json   # 时间轴
-```
-
-`GC_MOE_ECO_TRACE=1` 现在对**所有臂**生效（dispatch 侧的 plan_wake / push / pull
-列相同），所以 RR 和 random 臂也能 dump 同一张表。
-
-### 冗余 8/rank + BS=256（32 seq/rank）
-
-`GC_MOE_EPLB_EXTRA_PER_RANK=8` → `P=448`，56 slots/rank，其余配置不变。
-
-| 臂 | 放置 | 分流 | ms/step | IR | 极差 | 块/步 |
-|---|---|---|---:|---:|---:|---:|
-| gcmoe + random + rr | random | host RR | 81.76 | 1.1323 | 437556 | 50 |
-| **gcmoe + eplb + rr** | EPLB | host RR | **73.28** | 1.0373 | 50167 | 44 |
-| gcmoe + eplb + eco | EPLB | kernel plan | 75.55 | **1.0282** | 52630 | 45 |
-
-```
-EPLB 放置收益: -10.37% ms,  IR 1.1323 -> 1.0373
-ECO 分流     : +3.10% ms,  IR 1.0373 -> 1.0282 (最好)
-```
-
-**放置收益随 batch 单调放大**：
-
-| BS | 冗余/rank | EPLB vs random |
-|---:|---:|---:|
-| 32 | 4 | −2.31% |
-| 64 | 4 | −3.08% |
-| 128 | 4 | −5.36% |
-| **256** | **8** | **−10.37%** |
-
-ECO 的 IR 在所有配置下都最好，但大 batch 下 ms 略慢于 RR（BS=256 差 3.1%：quota
-切分让块数 44 → 45，而大 batch 对块数更敏感）。
-
-逐段耗时（BS=256，µs/层调用）：`plan_exec 38.0`、`push 10.1`、
-**`pull_norep 305.0`**、**`pull_rep 373.3`**。BS=32 时是 69 / 74 µs ——
-**pull 随 batch 线性增长，是唯一还要优化的地方。**
 
 ### warp 并行版（对齐 SM100）
 
@@ -126,8 +41,8 @@ warp 0      -> 静态表           (bar.sync 1, 512 汇合)
 warp 1..15  -> counts + 广播     (bar.sync 2, 480)
 ```
 
-实测 `plan_exec` **37.6 → 34.3 µs**（`M_32_eco` vs `WS100`），但 `ms/step`
-20.41 → 20.72：plan 早已不是瓶颈，收益被 pull 的抖动掩盖。
+`plan_exec` 因此在 TMA 之前实测从 37.6 降到 34.3 µs；TMA 之后它是 40.1 µs，
+但 pull 已经从 678 µs 降到 266 µs（见下节），plan 早已不是关键路径。
 
 ### TMA token 拉取（上游 SM90 的遗留瓶颈）
 
@@ -153,7 +68,7 @@ shared memory（staged 循环里 Python 变量每次迭代都会重置）；`mba
 
 ### 全部 rank 级 trace
 
-`runs/rank_traces.json`（8.1 MB）：13 个实验 × 8 rank × 每 rank 256 行 × 18 个槽位。
+`runs/rank_traces.json`（3.3 MB）：四档 batch × 三臂，每 rank 256 行 × 21 个槽位。
 
 ### 最终结果：四档 batch × 三臂（TMA 全开，extra=8，P=448）
 
@@ -186,8 +101,10 @@ shared memory（staged 循环里 Python 变量每次迭代都会重置）；`mba
 
 **ECO 在四档全部最快**，相对 vanilla 级基线（random+rr）省 7.0–8.6%。
 
-ECO 的 M 块数在大 batch 下明显更少（BS=128: 33 vs 40；BS=256: 42 vs 50）——
-quota 切分把 token 集中到更少的槽，减少了 GEMM 调用次数，这是它 ms 优势的直接来源。
+ECO 的 M 块数在大 batch 下明显更少（BS=128: 33 vs 40；BS=256: 42 vs 50）。
+但**块数不是全部原因**：BS=32 时 ECO 的块数反而更多（19 vs 14）却仍然最快，
+BS=128/256 与 rr 的块数也不是一一对应 —— 真正的驱动是槽上的 token 分布
+（进而影响 GEMM 的 tile 形状），详见 `docs/REDUNDANCY_COMPARE.md` 的更正说明。
 
 ### 冗余度扫描（BS=256，eplb+rr，TMA）
 
