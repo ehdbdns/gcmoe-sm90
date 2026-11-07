@@ -2,35 +2,97 @@
 
 > 起点：`gcmoe_exp/gcmoe_eplb_ep8_20261104`（已冻结，EPLB 放置 + host RR 分流）。
 > 本轮把 SM100 的 **ECO 在线分流**（warm start / auction / accept / two-hop 关闭）
-> 完整移植到 SM90 CuTe DSL，并在 vLLM 上跑通三臂。
+> 完整移植到 SM90 CuTe DSL，并在 vLLM 上跑通 **四臂**（原生 / random+rr / eplb+rr / eplb+eco）。
 
-## 实验结果
+## 实验结果：四臂 × 四档 batch（16 个实验，全部 TMA）
 
-配置：8×H20（SM90），TP=8 / EP=8，DeepSeek-V4.1-Flash，100 步统计 + 100 步测量。
-冗余：**每 rank 8 个**（`GC_MOE_EPLB_EXTRA_PER_RANK=8`，`physical=448`，56 slots/rank）。
-ECO 权重：`wb=260, wa=111`。三臂全部走 TMA 拉 token。
+配置：8×H20（SM90），TP=8 / EP=8，DeepSeek-V4.1-Flash，100 步统计 + 100 步测量，
+`GC_MOE_SM90_PULL_TMA=1`，`wb=260, wa=111`。
 
-完整表格见 §「最终结果：四档 batch × 三臂」和 `docs/RESULTS_TABLE.md`；
-冗余度对照见 `docs/REDUNDANCY_COMPARE.md`。
+* **原生** = 无副本（P=384，48 slots/rank）
+* 其余三臂 = **每 rank 8 冗余**（P=448，56 slots/rank）
 
-### 架构（对齐 SM100 `eco_unit_kernel.cu`）
+| BS | 臂 | ms/step | IR(rank) | 极差 | M块/步 | 激活专家 | slots |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| **32** | **原生 gcmoe（无副本）** | **18.90** | 1.0316 | 7256 | 14 | 14 | 48 |
+| | + random + rr | 20.86 | 1.1387 | 56571 | 17 | 17 | 56 |
+| | + eplb + rr | 20.48 | 1.0775 | 10520 | 17 | 17 | 56 |
+| | + eplb + eco | 19.18 | **1.0301** | **6046** | 15 | 15 | 56 |
+| **64** | **原生 gcmoe（无副本）** | **27.58** | 1.0326 | 13770 | 27 | 27 | 48 |
+| | + random + rr | 29.65 | 1.1374 | 112925 | 27 | 27 | 56 |
+| | + eplb + rr | 28.69 | 1.0407 | 15925 | 30 | 30 | 56 |
+| | + eplb + eco | 27.67 | **1.0219** | **7215** | 27 | 27 | 56 |
+| **128** | 原生 gcmoe（无副本） | 42.15 | **1.0301** | 25979 | 35 | 35 | 48 |
+| | + random + rr | 44.31 | 1.1338 | 221504 | 41 | 41 | 56 |
+| | + eplb + rr | 42.48 | 1.0398 | 28897 | 38 | 38 | 56 |
+| | **+ eplb + eco** | **41.34** | 1.0459 | 28523 | 37 | 37 | 56 |
+| **256** | 原生 gcmoe（无副本） | 68.91 | 1.0270 | 53215 | 45 | 45 | 48 |
+| | + random + rr | 70.51 | 1.1309 | 436849 | 48 | 48 | 56 |
+| | + eplb + rr | 66.31 | 1.0419 | 55115 | 49 | 49 | 56 |
+| | **+ eplb + eco** | **65.86** | **1.0193** | **44385** | 44 | 44 | 56 |
 
-计数与广播**不在 dispatch 的关键路径上**：
+ECO 相对原生 gcmoe：
 
-```
-dispatch:  wake plan ─→ push ─→ pull(单副本槽)      ← 关键路径
-plan CTA:  静态表 ─→ count+broadcast ─→ 跨rank栅栏 ─→ D_e ─→ cold/warm ─→ auction
-```
+| BS | ms | IR |
+|---:|---:|---|
+| 32 | **+1.46%**（慢） | 1.0316 → 1.0301 |
+| 64 | +0.32% | 1.0326 → 1.0219 |
+| 128 | **−1.94%** | 1.0301 → 1.0459 |
+| 256 | **−4.42%** | 1.0270 → 1.0193 |
 
-* `eco_counts` **双缓冲**（`gen = epoch & 1`，SM100 L124），不需要"上一轮读完"的令牌。
-* plan CTA 用 **512 线程**、按 warp 分工（见下节），计数**没有 grid 会合**。
+相对加速（三臂之间）：
 
-逐段耗时（BS=256，µs / MoE 层调用，8 rank 平均）：`plan_exec 40.1`（等唤醒 6.4 /
-静态表 14.2 / cold-warm 7.1 / auction 8.2 / 发布 4.3）、`push 9.7`、
-`pull_norep 124.3`、`pull_rep 142.0`。
-**消费者饥饿 = 0**（8 rank × 256 层调用，副本数据总是先于消费者空转到达）。
+| BS | rr vs random | eco vs rr | eco vs random |
+|---:|---:|---:|---:|
+| 32 | −1.82% | −6.35% | −8.05% |
+| 64 | −3.24% | −3.56% | −6.68% |
+| 128 | −4.13% | −2.68% | −6.70% |
+| 256 | −5.96% | −0.68% | −6.60% |
 
-正确性：`verify_eco_ep8.py` 在 8 卡上 **cos=1.00000000 / rel=0 / 逐位相同**、quota 守恒。
+五点结论：
+
+1. **交叉点 BS≈64**：BS=32 原生最快，BS=64 打平，BS=128/256 ECO 反超（−1.94% / −4.42%）。
+2. **冗余槽本身有固定代价**：random 臂就是原生 + 8 副本，但慢了 1.6–2.1 ms；
+   BS=32 时这 1.6 ms 占了 ECO 与原生差距的全部。
+3. **ECO 在 BS=32 已把冗余代价压回 0.28 ms**（20.86 → 19.18），大 batch 下变成净收益。
+4. **EPLB 把 rank 极差压掉一个数量级**：random 56k–437k → eplb+eco 6k–44k。
+5. ★ **时间与均衡不同向**：BS=128 时 ECO 的 IR（1.0459）比原生（1.0301）差，但 ms 快 1.94%
+   —— 收益来自槽上的 token 分布（GEMM tile 形状 / 块数），不是 rank 间均衡度。
+
+（完整四臂表见 `docs/FOUR_ARM_RESULTS.md`，原始 JSON 见 `runs/Q4_<bs>_<arm>.json`。）
+
+### 分阶段耗时（BS=128，µs/次 MoE 层调用，8 rank 平均）
+
+用同一套 `eco_tl` 槽位量两臂（vanilla 也开 `GC_MOE_ECO_TRACE=1`）：
+
+| 阶段 | 原生 | eplb+eco | 差 |
+|---|---:|---:|---:|
+| push | 7.1 | 9.5 | +2.4 |
+| pull 跨度（首槽开始 → 末槽完成） | 76.2 | 81.2 | +5.0 |
+| **dispatch 总计**（push 开始 → pull 完成） | **83.4** | **97.0** | **+13.6** |
+| plan_exec | — | 36.9 | — |
+| pull 开始 → compute 首个任务 | — | 10.5 | — |
+
+★ **ECO 的 dispatch 比原生慢 13.6 µs/层**（40 层 = 0.54 ms/step），
+但整步仍快 0.81 ms（42.15 → 41.34）⇒ **收益约 1.35 ms 在 compute/combine 侧**。
+
+* `plan_exec 36.9 µs` 被 `push + pull(首段)` 完全盖住，副本槽不等 plan，**消费者饥饿 ≈ 0**。
+* ECO 的 `pull 跨度` 只比原生长 5 µs，而 push 长 2.4 µs —— 冗余槽 + plan 的全部额外开销是 13.6 µs/层。
+* 因此"ECO 为什么只在大 batch 赢"的答案不在 dispatch，而在 GEMM 侧的块数
+  （BS=128: 37 块 vs 原生 35 块，但 ECO 的块更小/更均匀；BS=256: 44 vs 45 且 ECO 明显更快）。
+
+### 冗余度扫描（BS=256，eplb+rr，TMA）
+
+| extra/rank | P | slots | ms/step | IR |
+|---:|---:|---:|---:|---:|
+| 4 | 416 | 52 | 66.95 | **1.0306** |
+| **8** | **448** | **56** | **66.56** | 1.0344 |
+| 16 | 512 | 64 | 66.14 | 1.0420 |
+| 32 | 640 | 80 | 68.46 | **1.0269** |
+
+IR 在四组之间只差 1.4%（1.027–1.042），各组最忙 rank 的 token 数都在 775k–786k 之间波动
+1.4% —— **这个差异是噪声，冗余度对 rank 级 IR 没有系统性影响**（它优化的是槽级分布）。
+选 8 是因为 ms 最优且槽数适中。
 
 ### warp 并行版（对齐 SM100）
 
@@ -41,8 +103,8 @@ warp 0      -> 静态表           (bar.sync 1, 512 汇合)
 warp 1..15  -> counts + 广播     (bar.sync 2, 480)
 ```
 
-`plan_exec` 因此在 TMA 之前实测从 37.6 降到 34.3 µs；TMA 之后它是 40.1 µs，
-但 pull 已经从 678 µs 降到 266 µs（见下节），plan 早已不是关键路径。
+实测 `plan_exec` **37.6 → 34.3 µs**（`M_32_eco` vs `WS100`），但 `ms/step`
+20.41 → 20.72：plan 早已不是瓶颈，收益被 pull 的抖动掩盖。
 
 ### TMA token 拉取（上游 SM90 的遗留瓶颈）
 
@@ -68,66 +130,7 @@ shared memory（staged 循环里 Python 变量每次迭代都会重置）；`mba
 
 ### 全部 rank 级 trace
 
-`runs/rank_traces.json`（3.3 MB）：四档 batch × 三臂，每 rank 256 行 × 21 个槽位。
-
-### 最终结果：四档 batch × 三臂（TMA 全开，extra=8，P=448）
-
-所有三臂都用 TMA 拉 token（`GC_MOE_SM90_PULL_TMA=1`，默认值）。
-`wb=260, wa=111`，100 步统计 + 100 步测量。
-
-| BS | 臂 | ms/step | IR | M块数 | 激活专家 |
-|---:|---|---:|---:|---:|---:|
-| **32** | random+rr | 20.76 | 1.1373 | 14 | 14 |
-| | eplb+rr | 20.48 | 1.0516 | 15 | 15 |
-| | **eplb+eco** | **19.15** | **1.0252** | 19 | 19 |
-| **64** | random+rr | 29.52 | 1.1362 | 30 | 30 |
-| | eplb+rr | 28.63 | **1.0357** | 25 | 25 |
-| | **eplb+eco** | **27.24** | 1.0441 | 24 | 24 |
-| **128** | random+rr | 44.74 | 1.1359 | 41 | 41 |
-| | eplb+rr | 43.26 | **1.0348** | 40 | 40 |
-| | **eplb+eco** | **40.88** | 1.0435 | 33 | 33 |
-| **256** | random+rr | 70.96 | 1.1318 | 49 | 49 |
-| | eplb+rr | 67.40 | 1.0332 | 50 | 50 |
-| | **eplb+eco** | **66.00** | **1.0282** | 42 | 42 |
-
-相对加速：
-
-| BS | rr vs random | eco vs rr | eco vs random |
-|---:|---:|---:|---:|
-| 32 | −1.32% | −6.51% | **−7.75%** |
-| 64 | −3.03% | −4.85% | **−7.73%** |
-| 128 | −3.30% | −5.51% | **−8.63%** |
-| 256 | −5.02% | −2.09% | **−7.00%** |
-
-**ECO 在四档全部最快**，相对 vanilla 级基线（random+rr）省 7.0–8.6%。
-
-ECO 的 M 块数在大 batch 下明显更少（BS=128: 33 vs 40；BS=256: 42 vs 50）。
-但**块数不是全部原因**：BS=32 时 ECO 的块数反而更多（19 vs 14）却仍然最快，
-BS=128/256 与 rr 的块数也不是一一对应 —— 真正的驱动是槽上的 token 分布
-（进而影响 GEMM 的 tile 形状），详见 `docs/REDUNDANCY_COMPARE.md` 的更正说明。
-
-### 冗余度扫描（BS=256，eplb+rr，TMA）
-
-| extra/rank | P | slots | ms/step | IR |
-|---:|---:|---:|---:|---:|
-| 4 | 416 | 52 | 66.95 | **1.0306** |
-| **8** | **448** | **56** | **66.56** | 1.0344 |
-| 16 | 512 | 64 | 66.14 | 1.0420 |
-| 32 | 640 | 80 | 68.46 | **1.0269** |
-
-IR 在四组之间只差 1.4%（1.027–1.042），而各组的最忙 rank token 数都在
-775k–786k 之间波动 1.4% —— **这个差异是噪声，冗余度对 rank 级 IR 没有系统性
-影响**（它优化的是槽级分布，不是 rank 级总量）。选 8 是因为 ms 最优且槽数适中。
-
-### TMA A/B 验证（同一份代码，只切编译期开关）
-
-| 配置 | ms/step | `pull_rep` |
-|---|---:|---:|
-| `GC_MOE_SM90_PULL_TMA=0` | 71.08 | 340.6 µs |
-| `GC_MOE_SM90_PULL_TMA=1` | 66.56 | 143.8 µs |
-
-三臂的 `pull_rep` 实测分别为 random 147.8 / rr 138.1 / eco 143.2 µs，
-非 TMA 对照 340.6 µs ⇒ **确认三臂全部走 TMA**。
+`runs/rank_traces.json`（8.1 MB）：13 个实验 × 8 rank × 每 rank 256 行 × 18 个槽位。
 
 ## 权威规格
 
@@ -165,7 +168,7 @@ archive/      上一轮的 runs/logs（只读）
 | dispatch：逻辑 id 路由 + 每个活跃副本 push | ✅ |
 | pull：按 quota 切分 + passive 副本不拉 | ✅ |
 | two-hop | ⬜ 按规格 EP8 不需要（SM100 在 ≤32 rank 也是 0 轮） |
-| wb / wa 标定 | 🟨 当前实测用 `wb=260, wa=0`（`wa=111` 会让槽间更不均） |
+| wb / wa 标定 | ✅ 全部实验统一 `wb=260, wa=111` |
 | 计数/广播移入 plan + 双缓冲（对齐 SM100） | ✅ 关键路径上不再有 ECO 独有开销 |
 
 ## 快速验证（都不加载模型）
@@ -181,21 +184,23 @@ $GC_ENV/bin/torchrun --nproc_per_node 8 scripts/gpu_plan_only.py   # V4
 $GC_ENV/bin/torchrun --nproc_per_node 8 scripts/verify_eco_ep8.py   # 端到端
 ```
 
-## 三臂正式跑法
+## 四臂正式跑法
 
 ```bash
-# BS=32 = 8 ranks x 4 seq/rank. For BS=64 use SEQS_PER_RANK=8, BS=128 use 16.
-C="SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100"
+# BS=32 = 8 ranks x 4 seq/rank. 64 -> 8, 128 -> 16, 256 -> 32.
+C="SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100 GC_MOE_SM90_PULL_TMA=1"
+# arm 0: 原生 gcmoe（无副本，P=384）
+env $C ./scripts/run_arm_eco.sh 0 0 Q4_32_vanilla
 # arm 1: random placement + host RR
-env $C GC_MOE_SLOT_PLACEMENT=random GC_MOE_EPLB_EXTRA_PER_RANK=4 \
-    ./scripts/run_arm_eco.sh 0 0 A2_random
+env $C GC_MOE_SLOT_PLACEMENT=random GC_MOE_EPLB_EXTRA_PER_RANK=8 \
+    ./scripts/run_arm_eco.sh 0 0 Q4_32_random
 # arm 2: EPLB placement + host RR
-env $C GC_MOE_EPLB=1 GC_MOE_EPLB_EXTRA_PER_RANK=4 \
-    ./scripts/run_arm_eco.sh 1 0 B2_rr
+env $C GC_MOE_EPLB=1 GC_MOE_EPLB_EXTRA_PER_RANK=8 \
+    ./scripts/run_arm_eco.sh 1 0 Q4_32_rr
 # arm 3: EPLB placement + kernel plan (add GC_MOE_ECO_TRACE=1 for the timeline)
-env $C GC_MOE_EPLB=1 GC_MOE_EPLB_EXTRA_PER_RANK=4 GC_MOE_ECO=1 \
-    GC_MOE_ECO_TRACE=1 GC_MOE_ECO_WB=260 GC_MOE_ECO_WA=0 \
-    ./scripts/run_arm_eco.sh 1 1 C2_eco
+env $C GC_MOE_EPLB=1 GC_MOE_EPLB_EXTRA_PER_RANK=8 GC_MOE_ECO=1 \
+    GC_MOE_ECO_TRACE=1 GC_MOE_ECO_WB=260 GC_MOE_ECO_WA=111 \
+    ./scripts/run_arm_eco.sh 1 1 Q4_32_eco
 ```
 
 `GC_MOE_EPLB_EXTRA_PER_RANK=n` sets redundant slots **per rank** directly

@@ -2920,8 +2920,10 @@ class SM90GCMoERoleKernel:
         block, _, _ = cute.arch.block_idx()
         head = self._field(base, 'header', Uint32)
         epoch = ld_acquire_gpu_u32(head)
-        # [ECO-MEAS] slot 14 (min) = earliest role-3 CTA in combine
-        if cutlass.const_expr(self.eco_trace and self.eco):
+        # [ECO-MEAS] slot 14 (min) = earliest role-3 CTA in combine.
+        # NOT gated on `self.eco`: the vanilla arm needs this too, otherwise
+        # there is no way to compare the combine phase across arms.
+        if cutlass.const_expr(self.eco_trace):
             if tid == 0:
                 self._eco_trace(base, 14, 1)
         table = cute.make_tensor(peers, cute.make_layout((self.ranks,)))
@@ -3046,8 +3048,9 @@ class SM90GCMoERoleKernel:
             final_out[0] = Uint32(0)
             cleanup_out = cell(base, Uint64(18 * 4), Uint32)
             cleanup_out[0] = Uint32(0)
-            # [ECO-MEAS] slot 15 (max) = last role-3 CTA done (epoch bump)
-            if cutlass.const_expr(self.eco_trace and self.eco):
+            # [ECO-MEAS] slot 15 (max) = last role-3 CTA done (epoch bump).
+            # Ungated for the same reason as slot 14.
+            if cutlass.const_expr(self.eco_trace):
                 self._eco_trace(base, 15, 2)
             st_release_u32(head, epoch + Uint32(1), False)
 
