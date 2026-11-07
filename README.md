@@ -61,6 +61,59 @@ ECO 相对原生 gcmoe：
 
 （完整四臂表见 `docs/FOUR_ARM_RESULTS.md`，原始 JSON 见 `runs/Q4_<bs>_<arm>.json`。）
 
+### ⚠️ 四臂之前的一步：上游 SM90 移植遗漏了 TMA，我们补齐了，四臂全部使用
+
+上游 `Bruce-Lee-LY/gc-moe` 的 SM90 实现里，**token 拉取仍是 16 B 同步拷贝**
+（`copy_global_16`，每个 token 320 次 `ld.global.v4` / `st.global.v4`），
+只有 SM100 用的是 TMA（`cp.async.bulk`）。也就是说 SM90 移植时把数据量最大的一条路径漏掉了。
+
+我们先做了一个**只加 TMA、其他一律不动**的对照臂来验证这件事
+（`gcmoe_exp/gcmoe_tma_only_20261107/`，冻结树的完整副本 + 仅 TMA 改动，
+无副本 / 不开 EPLB / `routed_grid` 仍是 72）：
+
+| 臂（BS=32，无副本，EPLB 关，100+100 步） | 源码目录 | ms/step | IR |
+|---|---|---:|---:|
+| 原生 gcmoe（无 TMA，上游移植原样） | `gcmoe_eplb_ep8_20261104` | 20.33 | 1.0299 |
+| 原生 gcmoe **+ TMA** | `gcmoe_tma_only_20261107` | **18.88** | 1.0290 |
+| | | **−7.11%** | 不变 |
+
+**结论：TMA 确实更快（−7.11%），且不改变语义（IR / slots 完全一致）。**
+
+因此**四臂（原生 / random+rr / eplb+rr / eplb+eco）全部启用了 TMA**。
+这样做是为了让比较公平：TMA 是上游移植的遗漏修复，属于**共用的基础设施**，
+而不是任何一臂的特性。如果只给 ECO 臂加 TMA，那四臂之间比的就变成
+"谁用了 TMA"而不是"谁的分流/放置更好"。
+
+> 注意：因此四臂表里的「原生」= 原生 **+ TMA**（18.90 ms），
+> 不是上游移植原样（20.33 ms）。所有四臂数字都建立在同一份 TMA 实现之上。
+
+#### 第一臂（原生）与上游原生树的完整差异清单
+
+第一臂跑的是 `gcmoe_eco-auction_20261105/source`（四臂共用同一份源码），
+与上游原生树逐文件对比，差异只有下面这几类：
+
+| # | 改动 | 在 vanilla 路径上的影响 |
+|---|---|---|
+| 1 | **TMA token 拉取**（`impls` `pull_tma` 分支 + `heuristics` 的 dispatch smem） | ✅ **生效**，这是刻意统一的（见上一节） |
+| 2 | `eco=False` 时**不**分配任何 ECO 区域（`eco_counts` / `eco_meta` / `eco_hist` / `eco_quota` / `eco_state`） | ❌ 不生效，`reserve` 全在 `if self.eco:` 内 |
+| 3 | role 5（plan CTA）只在 `eco_logical_experts > 0` 时插入 roles 列表 | ❌ 不生效 |
+| 4 | `routed_grid = compute_sms - 1` **只在** `eco_logical_experts > 0` 时 | ❌ 不生效，vanilla 仍是 **72** |
+| 5 | `eco` / `trace` 参数从 api → layout → kernel 透传 | ❌ 不生效（默认 `False`） |
+| 6 | `runtime/sm90_gc_moe.py` 放宽 role 序列校验 | ❌ 只放宽校验，不改执行 |
+| 7 | 版本号 `0.3.0` → `0.3.1`、`__init__.py` 重新导出 | ❌ 无语义影响 |
+| 8 | **★ trace 埋点**（`eco_tl` / `pull_tl` 行的 store） | ⚠️ 见下 |
+
+**第 8 项需要说明**：`_eco_tl_write` / `_pull_tl_write` 的保护条件是
+`if cutlass.const_expr(self.eco_trace)`，而 `eco_trace` 的取值是
+**"layout 里有没有 `eco_tl` 视图"**，不是"ECO 开没开"。四臂实验为了拿到
+per-rank 时间轴，给**所有臂**都开了 `GC_MOE_ECO_TRACE=1` ⇒ 第一臂也写了 trace，
+每个 MoE 层调用多出约 **6 次 `globaltimer` 读取 + 6 次 global store**。
+
+这是四臂表**四臂同等承担**的开销（四臂都开 trace），所以臂间比较仍然公平；
+但它会让四臂的**绝对值**比"完全不埋点"的版本略高。若要报告纯净绝对值，
+需要用 `GC_MOE_ECO_TRACE=0` 重跑（此时 `const_expr` 为假，分支在编译期整体消失，
+不残留任何开销）。
+
 ### 分阶段耗时（BS=128，µs/次 MoE 层调用，8 rank 平均）
 
 两臂都开 `GC_MOE_ECO_TRACE=1`（`runs/CB_128_*.json` / `runs/CB4_128_*.json`）：
