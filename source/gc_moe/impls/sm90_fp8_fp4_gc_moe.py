@@ -1168,7 +1168,12 @@ class SM90GCMoERoleKernel:
 
     # [PULL-TRACE] Pull-phase timing for every arm (ECO or not).
     PULL_TL_STEPS = 256
-    PULL_TL_SLOTS = 8
+    # [ECO-TRACE] 8 pull slots + slots 8/9 for combine, so a NON-ECO arm can
+    # measure combine too (`eco_trace` only exists in an ECO layout, so the
+    # combine marks could not be written at all in the vanilla arm).
+    #   [8] first role-3 CTA enters combine
+    #   [9] last role-3 CTA bumps the epoch (combine done)
+    PULL_TL_SLOTS = 10
 
     @cute.jit
     def _pull_trace_on(self):
@@ -1186,8 +1191,15 @@ class SM90GCMoERoleKernel:
                     Uint32(ts // Uint64(1000))
             # [ECO-TRACE] Mirror into the shared timeline so a NON-ECO arm
             # produces the same columns as ECO (10/12/13 are the pull slots).
-            if cutlass.const_expr(self.eco_trace):
-                self._eco_tl_write(base, epoch, (10, 12, 13)[slot - 3], ts)
+            # `slot` is a Constexpr int, but the tracer may still symbolically
+            # reach this line for slots 8/9 (combine), so branch explicitly
+            # instead of indexing a tuple with `slot - 3`.
+            if cutlass.const_expr(slot == 3):
+                self._eco_tl_write(base, epoch, 10, ts)
+            elif cutlass.const_expr(slot == 4):
+                self._eco_tl_write(base, epoch, 12, ts)
+            elif cutlass.const_expr(slot == 5):
+                self._eco_tl_write(base, epoch, 13, ts)
 
     @cute.jit
     def _eco_key_set(self, slab: cute.Pointer, s: Uint32, v: Uint64):
@@ -2926,6 +2938,11 @@ class SM90GCMoERoleKernel:
         if cutlass.const_expr(self.eco_trace):
             if tid == 0:
                 self._eco_trace(base, 14, 1)
+        # [ECO-TRACE] combine start, EVERY arm: `eco_trace` only exists in an
+        # ECO layout, so the vanilla arm measures this through `pull_tl`.
+        if cutlass.const_expr(self.pull_trace):
+            if block == 0 and tid == 0:
+                self._pull_tl_write(base, epoch, 8, read_globaltimer())
         table = cute.make_tensor(peers, cute.make_layout((self.ranks,)))
         cute.arch.sync_threads()
         if tid < 128:
@@ -3052,6 +3069,8 @@ class SM90GCMoERoleKernel:
             # Ungated for the same reason as slot 14.
             if cutlass.const_expr(self.eco_trace):
                 self._eco_trace(base, 15, 2)
+            if cutlass.const_expr(self.pull_trace):
+                self._pull_tl_write(base, epoch, 9, read_globaltimer())
             st_release_u32(head, epoch + Uint32(1), False)
 
     @cute.kernel

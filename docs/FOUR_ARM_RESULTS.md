@@ -45,3 +45,66 @@
 3. **ECO 的时间优势主要来自 M 块数**：BS=256 时 ECO 44 块，eplb+rr 49、random 48；原生 45 块但少 8 个槽的管理开销。
 4. **EPLB 把 rank 极差压掉一个数量级**：random 56k–437k → eplb+eco 6k–44k。
 5. ★ **时间与均衡不同向**：BS=128 时 ECO 的 IR（1.0459）比原生（1.0301）差，但 ms 快 1.94%。说明 ECO 的收益来自槽上的 token 分布（GEMM tile 形状），不是 rank 间的均衡度。
+
+---
+
+## 时间优势来源：dispatch vs combine（BS=128，30 步窗口）
+
+两臂都开 `GC_MOE_ECO_TRACE=1`（`runs/CB_128_vanilla.json` / `runs/CB_128_eco.json`）。
+
+| 阶段（µs / MoE 层调用） | 原生 | eplb+eco | 差 |
+|---|---:|---:|---:|
+| push | 7.1 | 9.5 | +2.4 |
+| pull 跨度（首槽开始 → 末槽完成） | 76.2 | 81.2 | +5.0 |
+| **dispatch 总计**（push 开始 → pull 完成） | **83.4** | **97.0** | **+13.6** |
+| plan_exec | — | 36.9 | — |
+| combine 跨度（slot15 − slot14） | — | 147.2 | — |
+
+**整步**：39.33 ms（原生）→ 38.24 ms（ECO），−1.09 ms/step。
+
+### 结论
+
+40 层 × 13.6 µs = **0.54 ms/step 的 dispatch 劣势**，但整步仍快 1.09 ms
+⇒ **净收益约 1.6 ms 在 compute(GEMM) / combine 侧**。
+
+因此「ECO 只在大 batch 赢」不是 dispatch 的问题 —— ECO 的 dispatch 在每一档 batch
+都比原生慢（多 8 个副本槽 + 一份 plan），小 batch 下这笔固定开销盖过了 GEMM 侧的收益，
+大 batch 下 GEMM 侧收益随块数放大才反超。
+
+★ `plan_exec 36.9 µs` 完全被 `push + pull(单副本段)` 盖住，副本槽不等 plan
+（消费者饥饿 ≈ 0）—— 说明 plan 的握手延迟不是瓶颈，**不需要再去优化 plan 本身**。
+
+---
+
+## ★ combine 实测（BS=128，`pull_tl` slot 8/9，两臂同源）
+
+早期 `eco_trace` 只在 ECO layout 里分配，vanilla 臂**没有** combine 数据。现在把
+combine 的首/末标记也写进 `pull_tl`（slot 8 = 最早 role-3 CTA 进入，slot 9 = 最后一个
+role-3 CTA bump epoch），两臂用同一张表。`runs/CB4_128_*.json`，20 warm + 30 measure。
+
+覆盖率 8 rank × 256 层调用 = **2048 行 × 2 臂，slot8/9 全部命中且有序**。
+
+| 阶段（µs / MoE 层调用，中位数） | 原生 | eplb+eco | 差 |
+|---|---:|---:|---:|
+| push_end → pull_begin | 3.0 | 4.0 | +1.0 |
+| **PULL**（首槽开始 → 末槽完成） | **74.0** | **82.0** | **+8.0** |
+| pull_end → combine_begin | 338.0 | 349.0 | +11.0 |
+| **COMBINE**（首 role-3 CTA → 末 CTA bump） | **193.5** | **152.0** | **−41.5** |
+| push_end → combine_end（dispatch+compute+combine 跨度） | 625.0 | 603.0 | **−22.0** |
+
+combine 分布（p10 / p50 / p90）：原生 12 / 193.5 / 449，ECO 12 / 152 / **354**
+⇒ ECO 的 combine **尾巴短了 95 µs**，不是只挪了中位数。
+
+### 结论（修正之前的推断）
+
+1. **ECO 的 dispatch 在 BS=128 是更慢的**：pull 82 vs 74 µs（+8），
+   加上 push +2.4 µs ⇒ dispatch 侧约 **+10~14 µs/层**，与上一节的 13.6 µs 一致。
+2. **ECO 的 combine 明显更快**：152 vs 193.5 µs（**−41.5 µs/层**，−21%）。
+   物理原因：副本把每 rank 的**入站 token 摊薄**了 —— quota 切分后单 rank 要收的
+   token 更少、更均匀，combine 的 scatter/归约跨度随之缩短。p90 从 449 → 354 印证是尾部效应。
+3. **净差**：`push_end → combine_end` 原生 625 vs ECO 603（**−22 µs/层**），
+   即 40 层约 **−0.88 ms/step**，与整步 −1.09 ms 同量级。
+   ⇒ **ECO 的收益主要在 combine，不在 dispatch。**
+
+=> 这也解释了「ECO 只在大 batch 赢」：combine 的收益与**入站 token 量**成正比
+（BS=32 时每 rank 只有 ~20 token，摊薄收益 < dispatch 的固定开销；BS=128/256 才反超）。

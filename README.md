@@ -63,7 +63,7 @@ ECO 相对原生 gcmoe：
 
 ### 分阶段耗时（BS=128，µs/次 MoE 层调用，8 rank 平均）
 
-用同一套 `eco_tl` 槽位量两臂（vanilla 也开 `GC_MOE_ECO_TRACE=1`）：
+两臂都开 `GC_MOE_ECO_TRACE=1`（`runs/CB_128_*.json` / `runs/CB4_128_*.json`）：
 
 | 阶段 | 原生 | eplb+eco | 差 |
 |---|---:|---:|---:|
@@ -71,15 +71,37 @@ ECO 相对原生 gcmoe：
 | pull 跨度（首槽开始 → 末槽完成） | 76.2 | 81.2 | +5.0 |
 | **dispatch 总计**（push 开始 → pull 完成） | **83.4** | **97.0** | **+13.6** |
 | plan_exec | — | 36.9 | — |
-| pull 开始 → compute 首个任务 | — | 10.5 | — |
 
-★ **ECO 的 dispatch 比原生慢 13.6 µs/层**（40 层 = 0.54 ms/step），
-但整步仍快 0.81 ms（42.15 → 41.34）⇒ **收益约 1.35 ms 在 compute/combine 侧**。
+* `plan_exec 36.9 µs` 完全被 `push + pull(单副本段)` 盖住，副本槽不等 plan，
+  **消费者饥饿 ≈ 0** ⇒ plan 的握手延迟不是瓶颈，不需要继续优化 plan 本身。
+* 也就是说 **ECO 的 dispatch 比原生慢**，收益必须从别处找 —— 下一节是答案。
 
-* `plan_exec 36.9 µs` 被 `push + pull(首段)` 完全盖住，副本槽不等 plan，**消费者饥饿 ≈ 0**。
-* ECO 的 `pull 跨度` 只比原生长 5 µs，而 push 长 2.4 µs —— 冗余槽 + plan 的全部额外开销是 13.6 µs/层。
-* 因此"ECO 为什么只在大 batch 赢"的答案不在 dispatch，而在 GEMM 侧的块数
-  （BS=128: 37 块 vs 原生 35 块，但 ECO 的块更小/更均匀；BS=256: 44 vs 45 且 ECO 明显更快）。
+### ★ 收益来源：combine 更快，不是 dispatch 更快（BS=128）
+
+两臂同一张 `pull_tl` 表（早期 `eco_trace` 只在 ECO layout 里分配，vanilla 拿不到 combine，
+所以把 combine 首/末标记并入了 `pull_tl` 的 slot 8/9）。覆盖 8 rank × 256 层调用 × 2 臂 =
+2048 行，slot 全部命中且有序。
+
+| 阶段（µs/层，中位数） | 原生 | eplb+eco | 差 |
+|---|---:|---:|---:|
+| push_end → pull_begin | 3.0 | 4.0 | +1.0 |
+| **PULL** | **74.0** | **82.0** | **+8.0** |
+| pull_end → combine_begin | 338.0 | 349.0 | +11.0 |
+| **COMBINE** | **193.5** | **152.0** | **−41.5** |
+| push_end → combine_end | 625.0 | 603.0 | **−22.0** |
+
+combine p90：原生 449 → ECO **354** µs ⇒ 尾巴短 95 µs。
+
+**结论**
+
+1. **ECO 的 dispatch 每一档都更慢**（BS=128 时约 +10~14 µs/层 = 0.5 ms/step）——
+   多 8 个副本槽 + 一份 plan，这是固定开销。
+2. **ECO 的 combine 快 21%**（−41.5 µs/层）。副本把每 rank 的入站 token 摊薄，
+   scatter/归约跨度变短，尾部尤其明显。
+3. 净差 `push_end → combine_end` = **−22 µs/层 ≈ −0.88 ms/step**，与实测 −1.09 ms 同量级
+   ⇒ **ECO 的收益在 combine，不在 dispatch。**
+4. 这也解释了「ECO 只在大 batch 赢」：combine 的收益正比于入站 token 量，
+   BS=32 每 rank 只有 ~20 token，摊薄收益抵不过 dispatch 的固定开销。
 
 ### 冗余度扫描（BS=256，eplb+rr，TMA）
 

@@ -134,9 +134,12 @@ class SM90GCBufferLayout:
         #   [0] epoch tag   [1] wake    [2] push start
         #   [3] push end    [4] pull start  [5] pull end (all local slots done)
         #   [6] count of single-copy slots  [7] count of replica slots
-        # 256 x 8 x 4 B = 8 KB per rank, and only when the env switch is on.
+        #   [8] first role-3 CTA in combine [9] combine done (epoch bump)
+        # 256 x 10 x 4 B = 10 KB per rank, and only when the env switch is on.
+        # ★ [8]/[9] exist because `eco_trace` (slots 14/15) is only allocated
+        # in an ECO layout, so the vanilla arm had NO combine measurement.
         if os.environ.get('GC_MOE_PULL_TRACE') == '1':
-            reserve('pull_tl', (256 * 8,), 'int32', 4)
+            reserve('pull_tl', (256 * 10,), 'int32', 4)
 
         reserve('x', (capacity, hidden), 'float8_e4m3fn', 1)
         reserve('x_sf', (capacity, hidden // 128), 'float32', 4)

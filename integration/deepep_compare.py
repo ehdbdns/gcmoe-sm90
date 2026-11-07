@@ -1572,7 +1572,7 @@ def _install_worker_rpc() -> None:
                 out['slots'] = [int(v) for v in tr.cpu().tolist()]
             ptl = getattr(buf, 'pull_tl', None)
             if ptl is not None:
-                out['pull_rows'] = ptl.view(256, 8).cpu().tolist()
+                out['pull_rows'] = ptl.view(256, 10).cpu().tolist()
             tl = getattr(buf, 'eco_tl', None)
             if tl is not None:
                 rows = tl.view(256, 21).cpu().tolist()
