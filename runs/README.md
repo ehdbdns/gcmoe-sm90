@@ -78,3 +78,27 @@ GC_MOE_FINE_MIN_EPOCH=8300 GC_MOE_SM90_BLOCK_READY=0`。
 python3 scripts/gen_pull_table.py runs/R5_64.json 0 8300   # pull 表
 python3 scripts/gen_gemm_table.py runs/R5_64.json 0        # GEMM 表
 ```
+
+## `x16/` — 16 个实验（4 臂 x 4 档 BS），2026-11-09 重测
+
+`X16_<BS>_<arm>.json`，arm = `vanilla` / `random` / `rr` / `eco`。
+
+只保留 `load_detail` + `ir_detail`（逐 rank 指标）以控制体积；
+**`X16_128_eco.json` 额外带完整 `eco_trace`（8 rank 的 `fine_rows` + `tl_rows` +
+`eco_meta`）**，README 的两张 trace 表就从它生成。
+
+配置：BS = 32/64/128/256（`seqs_per_rank` = 4/8/16/32），
+100 步 warmup + **100 步测量**，`GC_MOE_SM90_PULL_TMA=1`，
+`wb=260 wa=111`，`GC_MOE_EPLB_EXTRA_PER_RANK=8`，每臂都开三个 trace 开关。
+
+⚠️ 测量陷阱（已踩过两次，务必照做）：
+
+1. **`MEASURE_STEPS` 必须是 100。** 用 10 时 warmup 的 100 步还在 GPU 队列里，
+   10 步窗口被稀释（BS=64 报 18.10 而真实 27.49；判据是 `submit/warm ≪ 1`）。
+2. **每臂之间必须彻底清 GPU。** vLLM worker 的线程名叫 `VLLM::Worker_TP`，
+   `pkill -f real_decode` 抓不到，残留会占 55 GB/卡并使下一臂报
+   `Free memory ... less than desired` 或 `Gloo connectFullMesh refused`。
+   用 `scripts/_clean_gpu.sh`（按驱动报告的 PID 杀 + 等端口释放）。
+3. `fine_rows` 的 epoch 与 `tl_rows` 的 `step_tag` **不重叠**（前者是
+   `FINE_MIN_EPOCH` 之后最先填满的 65536 条，后者是最近 256 步的环形缓冲），
+   取时间基准只能用 `fine_rows` 自己的首个 `slot_begin`。
