@@ -1,80 +1,56 @@
 import json, sys
-from collections import defaultdict, Counter
-
-PATH = sys.argv[1] if len(sys.argv) > 1 else 'runs/TR3.json'
-RANK = int(sys.argv[2]) if len(sys.argv) > 2 else 0
-E, R, P = 384, 8, 448
-S = P // R
-EMPTY = 0x7FFF
-
-d = json.load(open(PATH))
-r = d['eco_trace']['ranks'][RANK]
-rows = [x for x in r['fine_rows'] if x[1]]
-eps = Counter(x[6] for x in rows)
-ep = eps.most_common(1)[0][0]
-E_ = [x for x in rows if x[6] == ep]
-
-# decode phy2log for this rank's local slots
-em = r['eco_meta']
-phy = em[16 + E*16: 16 + E*16 + P]
-
+from collections import Counter
+PATH=sys.argv[1]; RANK=int(sys.argv[2]); EP=int(sys.argv[3]) if len(sys.argv)>3 else None
+E,R,P=384,8,448; S=P//R; EMPTY=0x7FFF
+d=json.load(open(PATH)); r=d['eco_trace']['ranks'][RANK]
+rows=[x for x in r['fine_rows'] if x[1]]
+ep = EP if EP else Counter(x[6] for x in rows).most_common(1)[0][0]
+E_=[x for x in rows if x[6]==ep]
+u=lambda t:t&0xFFFFFFFF
+em=r['eco_meta']; phy=em[16+E*16:16+E*16+P]
 def ncopies(e):
-    """active copies of logical expert e from eco_meta copies[]"""
-    n = 0
+    n=0
     for k in range(32):
-        w = em[16 + e*16 + k//2]
-        v = (w & 0xFFFF) if k % 2 == 0 else (w >> 16) & 0xFFFF
-        if v == EMPTY: break
-        if v & 0x8000: continue      # passive
-        n += 1
+        w=em[16+e*16+k//2]; v=(w&0xFFFF) if k%2==0 else (w>>16)&0xFFFF
+        if v==EMPTY: break
+        if v&0x8000: continue
+        n+=1
     return n
-
-def t2u(t):
-    return t & 0xFFFFFFFF
-
-# ---- per-slot records -------------------------------------------------
-begin = {}      # globalslot -> (t, cta, ncop)
-end = {}
-wait_b = {}
-wait_r = {}
+beg={};end={};wb={};wr={}
 for x in E_:
-    k, sid, a0, a1, a2 = x[1], x[2], x[3], x[4], x[5]
-    if k == 1:  begin[sid] = (t2u(x[0]), a0, a2)
-    elif k == 2: end[sid] = (t2u(x[0]), a0, a1)      # owned, lo
-    elif k == 3:
-        if a0 == 0: wait_b[sid] = t2u(x[0])
-        else: wait_r[sid] = t2u(x[0])
-
-t0 = min(v[0] for v in begin.values())
-def rel(t): return t - t0
-
-slots = []
-for sid in sorted(begin):
-    bt, cta, ncop = begin[sid]
-    et, owned, lo = end.get(sid, (None, 0, 0))
-    is_rep = ncop > 1
-    start = wait_r.get(sid) if is_rep else bt
-    wb = wait_b.get(sid)
-    slots.append(dict(gs=sid, ls=sid - RANK*S, e=int(phy[sid]), ncop=ncop, rep=is_rep,
-                      begin=rel(bt), wait_b=rel(wb) if wb else None,
-                      grant=rel(start) if start else None,
-                      start=rel(start) if start else None,
-                      end=rel(et) if et else None, owned=owned))
-slots.sort(key=lambda s: (s['start'], s['ls']))
-
-print(f'# {PATH} rank{RANK} epoch{ep}  base t0={t0}  slots={len(slots)}')
-print(f"# plan_end (eco_tl slot 7) = {r['eco_tl']['slots'][7]*1 if isinstance(r.get('eco_tl'),dict) and 'slots' in r.get('eco_tl',{}) else 'n/a'}")
+    gs=x[2]
+    if x[1]==1: beg[gs]=u(x[0])
+    elif x[1]==2: end[gs]=(u(x[0]),x[4])
+    elif x[1]==3: (wb if x[3]==0 else wr)[gs]=u(x[0])
+# 基准：最早 pull begin（≈ push_end，因为 pull 紧跟 push）
+base=min(beg.values())
+recs=[]
+for gs in beg:
+    nc=ncopies(int(phy[gs])); rep=nc>1
+    st=wr.get(gs,beg[gs])
+    v=end.get(gs)
+    recs.append(dict(gs=gs,ls=gs-RANK*S,e=int(phy[gs]),nc=nc,rep=rep,
+        begin=beg[gs]-base, wb=(wb[gs]-base) if gs in wb else None,
+        st=st-base, end=(v[0]-base) if v else None, owned=v[1] if v else 0))
+recs.sort(key=lambda z:(z['st'],z['ls']))
+print(f'### 56 槽拉取表 — {PATH.split("/")[-1]} / rank{RANK} / epoch {ep}')
+print(f'（所有时刻相对「首个 pull begin」= 0 µs）')
 print()
-nrep = sum(1 for s in slots if s['rep'])
-print(f'单副本槽 {len(slots)-nrep} / 副本槽 {nrep}   (ncopies>1)')
+print(f'pull 窗口 0 → {max(z["end"] for z in recs)} µs；'
+      f'单副本最早 {min(z["st"] for z in recs if not z["rep"])} µs，'
+      f'副本最早 {min(z["st"] for z in recs if z["rep"])} µs')
 print()
-hdr = f"| # | 槽 | **逻辑专家** | 类型 | begin | 等plan开始 | grant | **开始拉** | end | 拉取耗时 | token |"
-print(hdr); print('|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|')
-for i, s in enumerate(slots, 1):
-    typ = '副本' if s['rep'] else '单副本'
-    wb = '-' if s['wait_b'] is None else s['wait_b']
-    gr = '-' if (not s['rep'] or s['grant'] is None) else s['grant']
-    st = s['start'] if s['start'] is not None else '?'
-    en = s['end'] if s['end'] is not None else '?'
-    dur = (s['end'] - s['start']) if (s['end'] is not None and s['start'] is not None) else '?'
-    print(f"| {i} | {s['ls']} | **{s['e']}** | {typ} | {s['begin']} | {wb} | {gr} | **{st}** | {en} | {dur} | {s['owned']} |")
+print('| # | 槽 | **逻辑专家** | 类型 | begin | 等plan开始 | grant | **开始拉** | end | 拉取耗时 | token |')
+print('|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|')
+for i,z in enumerate(recs,1):
+    typ=f"副本(nc={z['nc']})" if z['rep'] else '单副本'
+    wbx='-' if z['wb'] is None else z['wb']
+    gr='-' if not z['rep'] else z['st']
+    print(f"| {i} | {z['ls']} | **{z['e']}** | {typ} | {z['begin']} | {wbx} | {gr} | **{z['st']}** | {z['end']} | {z['end']-z['st']} | {z['owned']} |")
+single=[z for z in recs if not z['rep']]; rep=[z for z in recs if z['rep']]
+print()
+print('| 类别 | 槽数 | 最早开始拉 | 最晚拉完 | 有 token | token 合计 |')
+print('|---|---:|---|---|---:|---:|')
+print(f"| 单副本槽 | {len(single)} | {min(z['st'] for z in single)} µs | {max(z['end'] for z in single)} µs | {sum(1 for z in single if z['owned']>0)} | {sum(z['owned'] for z in single)} |")
+print(f"| 副本槽 | {len(rep)} | {min(z['st'] for z in rep)} µs | {max(z['end'] for z in rep)} µs | {sum(1 for z in rep if z['owned']>0)} | {sum(z['owned'] for z in rep)} |")
+print(f"| **合计** | 56 | — | {max(z['end'] for z in recs)} µs | {sum(1 for z in recs if z['owned']>0)} | {sum(z['owned'] for z in recs)} |")

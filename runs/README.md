@@ -56,3 +56,25 @@ GC_MOE_FINE_MIN_EPOCH=8300 GC_MOE_SM90_BLOCK_READY=0`。
 python3 scripts/gen_pull_table.py runs/TR3.json 0   # pull 表
 python3 scripts/gen_gemm_table.py runs/TR3.json 0   # GEMM 表
 ```
+
+## `R5_64.json` — README 两表的数据源（ECO half-SM 修复后）
+
+BS=64（`seqs_per_rank=8`），`GC_MOE_EPLB_EXTRA_PER_RANK=8 GC_MOE_ECO=1`，
+`wb=260 wa=111`，100 步 warmup + **100 步测量**，
+`GC_MOE_ECO_TRACE=1 GC_MOE_PULL_TRACE=1 GC_MOE_FINE_TRACE=1
+GC_MOE_FINE_MIN_EPOCH=8300 GC_MOE_SM90_BLOCK_READY=0`。
+
+重排结果 `max_copies=3 / replicated=58`；每 rank 39 单副本 + 17 副本槽。
+
+⚠️ **两个已知陷阱**（踩过）：
+
+1. `fine_rows` 的 epoch（8300–8321）与 `tl_rows` 的 `step_tag`（10145–10400）
+   **不重叠** —— `tl_rows` 是最近 256 步的环形缓冲，`fine_rows` 是
+   `FINE_MIN_EPOCH` 之后最先填满的 65536 条。取时间基准必须用 `fine_rows`
+   自己的首个 `slot_begin`。
+2. 生成 pull/GEMM 表用：
+
+```
+python3 scripts/gen_pull_table.py runs/R5_64.json 0 8300   # pull 表
+python3 scripts/gen_gemm_table.py runs/R5_64.json 0        # GEMM 表
+```
