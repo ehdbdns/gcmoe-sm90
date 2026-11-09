@@ -99,6 +99,17 @@ $$
 | 峰值积压 | 1207 块 |
 | **积压 > 0 的时间** | **几乎全程** |
 
+延时 0 与延时 50 µs 的两行图（放置冻结）：
+
+| 延时 0 µs | 延时 50 µs |
+|---|---|
+| ![](docs/plots/delay/producer_consumer_delay0us.png) | ![](docs/plots/delay/producer_consumer_delay50us.png) |
+| pull 177 µs / gemm 725 µs / 峰值积压 1340 | pull 328 µs / gemm 1089 µs / 峰值积压 1339 |
+
+★ 延时把 `pull_done` 从 177 推到 328 µs、`gemm_done` 从 725 推到 1089 µs，
+但**峰值积压基本不变（1340 vs 1339）** —— compute 的活始终供大于求。
+（单层 trace 的绝对时刻会随层波动，`ms/step` 的 100 步平均才是判据。）
+
 $$
 \Rightarrow\quad \text{compute 从未缺活干，推迟副本槽拉取不可能有收益}
 $$
