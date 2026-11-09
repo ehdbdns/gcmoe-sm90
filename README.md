@@ -150,8 +150,14 @@ GEMM 阶段的活跃 CTA 数（BS=256，rank 0，单层）：
 ⇒ 只有 20 个 CTA 能算，持续 155 µs（占整层 **19.5%** 的时间）。
 role 6 让这 6 个 CTA 一直参与，把尾部从 20 提到 61。
 
-图：`docs/plots/smreuse_bs{32,64,128,256}.png`（红虚线是 role 6 加入的时刻，
-红色阴影是它参与的时间区间）。
+图（红虚线 = role 6 加入的时刻，红色阴影 = 它参与的时间区间）：
+
+| BS | 图 |
+|---|---|
+| 32 | ![](docs/plots/smreuse/smreuse_bs32.png) |
+| 64 | ![](docs/plots/smreuse/smreuse_bs64.png) |
+| 128 | ![](docs/plots/smreuse/smreuse_bs128.png) |
+| 256 | ![](docs/plots/smreuse/smreuse_bs256.png) |
 
 ### 代价与边界
 
