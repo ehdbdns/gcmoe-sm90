@@ -123,18 +123,13 @@ class SM90GCMoERoleKernel:
         # [ECO-MEAS] cost-decomposition gates (compile-time, no runtime branch)
         self.eco_null_plan = bool(getattr(config, 'eco_null_plan', False))
         self.eco_no_auction = bool(getattr(config, 'eco_no_auction', False))
-        # [ECO-DELAY] Artificial hold between "plan finished computing quotas"
-        # and "plan publishes eco_ready[1]". Purpose: sweep WHEN the replica
-        # slots are allowed to start pulling, so the pipeline cost of that
-        # insertion point can be measured directly. Compile-time constant, so
-        # a 0 build carries no clock read at all.
-        #
-        #   GC_MOE_ECO_PLAN_DELAY_US=0   -> no hold (baseline, same as the
-        #                                   16-arm run in the parent dir)
-        #   =10 / 20 / 30 / ...          -> hold that long after the compute
-        #                                   finishes and before the release
-        self.eco_plan_delay_us = int(
-            _os.environ.get('GC_MOE_ECO_PLAN_DELAY_US', '0'))
+        # [SM-REUSE] Role 6: a helper compute kernel that lives in the
+        # DISPATCH green context.  It parks until this call's pull is finished
+        # (`header[9] == epoch`, published by dispatch) and then competes for
+        # the same L1/L2 task queue as role 2 via `_consume_tasks`.  The point
+        # is to hand the 6 dispatch SMs to compute for the GEMM phase, which is
+        # where the whole call's time actually goes (pull is 12-33% of it).
+        self.sm_reuse = int(getattr(config, 'sm_reuse', 0) or 0)
         # [ECO-MEAS] timeline trace: COMPILE-TIME off unless requested, so the
         # default build carries no clock read at all.
         # [ECO-TRACE] Derived from the LAYOUT, not the env: the timeline table
@@ -191,6 +186,12 @@ class SM90GCMoERoleKernel:
             # That split is what lets the counts overlap the static tables.
             self.grid, self.threads = 1, 512
             self.smem = self.eco_smem if self.eco else 0
+        elif role == 6:
+            # [SM-REUSE] Same resources as role 2 (the routed compute role): it
+            # runs the same math, only its CTA count and green context differ,
+            # and those come from the launch spec, not from here.
+            self.grid, self.threads = schedule.grids[1], schedule.threads[1]
+            self.smem = schedule.smem[1]
         else:
             resource_role = 1 if role == 4 else role - 1
             self.grid, self.threads = schedule.grids[resource_role], schedule.threads[resource_role]
@@ -1169,18 +1170,6 @@ class SM90GCMoERoleKernel:
             self._eco_publish_count_state(base, slab, e)
         cute.arch.sync_threads()
         fence_sys()
-        if cutlass.const_expr(self.eco_plan_delay_us > 0):
-            # [ECO-DELAY] Spin AFTER the quotas are published and BEFORE
-            # eco_ready[1] is released. Everything the replica slots need is
-            # already written, so this hold only shifts the moment they are
-            # allowed to start pulling -- which is exactly the pipeline knob
-            # this experiment sweeps. Single writer (tid 0) because the
-            # replicas key off the release it performs.
-            if tid == 0:
-                delay_t0 = read_globaltimer()
-                while read_globaltimer() < delay_t0 + Uint64(
-                        self.eco_plan_delay_us * 1000):
-                    pass
         if tid == 0:
             self._eco_trace(base, 5)   # [ECO-MEAS] quota + warm state published
             self._eco_tl_write(base, epoch, 7, read_globaltimer())     # plan_end
@@ -2491,7 +2480,8 @@ class SM90GCMoERoleKernel:
 
     @cute.jit
     def _claim_command(self, base: Uint64, command: cute.Tensor,
-                         epoch: Uint32, is_l1: Boolean):
+                         epoch: Uint32, is_l1: Boolean,
+                         late: cutlass.Constexpr = False):
         tid, _, _ = cute.arch.thread_idx()
         _blk, _, _ = cute.arch.block_idx()
         head = self._field(base, 'header', Uint32)
@@ -2550,9 +2540,27 @@ class SM90GCMoERoleKernel:
                         if active_slot >= active_count:
                             self._fine_spin(base, epoch, Uint32(_blk), Uint32(1),
                                             active_slot, active_count)
-                while active_slot >= active_count and dispatch_done != epoch:
-                    active_count = ld_acquire_gpu_u32(head + 7)
-                    dispatch_done = ld_acquire_gpu_u32(head + 9)
+                if cutlass.const_expr(late):
+                    # [SM-REUSE] Role 6 starts AFTER dispatch published
+                    # `header[9]`, so the normal exit condition
+                    # (`dispatch_done != epoch`) is already false: role 6 used
+                    # to quit at the first out-of-range task and stopped at
+                    # ~850 us while role 2 kept claiming until ~1100 us
+                    # (measured at BS=256: 72 of 1748 blocks).
+                    #
+                    # Instead spin on the CALL's lifetime: `header[0] == epoch`
+                    # stays true until combine bumps it, so role 6 keeps trying
+                    # to claim for as long as the layer is running.  Repeated
+                    # claims that find nothing are cheap (one atomic + one
+                    # acquire load) and the loop exits the moment the call
+                    # closes.
+                    while active_slot >= active_count and \
+                            ld_acquire_gpu_u32(head) == epoch:
+                        active_count = ld_acquire_gpu_u32(head + 7)
+                else:
+                    while active_slot >= active_count and dispatch_done != epoch:
+                        active_count = ld_acquire_gpu_u32(head + 7)
+                        dispatch_done = ld_acquire_gpu_u32(head + 9)
                 if cutlass.const_expr(self.eco_trace and self.eco):
                     # slot 12 (max) = last CTA that got work
                     self._eco_trace(base, 12, 2)
@@ -2660,12 +2668,13 @@ class SM90GCMoERoleKernel:
     @cute.jit
     def _produce_tasks(self, base: Uint64, slab: cute.Pointer, epoch: Uint32,
                         w1: cute.Pointer, s1: cute.Pointer,
-                        w2: cute.Pointer, s2: cute.Pointer):
+                        w2: cute.Pointer, s2: cute.Pointer,
+                        late: cutlass.Constexpr = False):
         command = cute.make_tensor(cute.recast_ptr(slab + self.command_offset, dtype=Uint32), cute.make_layout((3,)))
         is_l1, running = True, True
         task_iter, data_iter = Uint32(0), Uint32(0)
         while running:
-            self._claim_command(base, command, epoch, is_l1)
+            self._claim_command(base, command, epoch, is_l1, late)
             sync_loader()
             if command[0] == 0:
                 if is_l1:
@@ -2842,6 +2851,12 @@ class SM90GCMoERoleKernel:
         # [ECO-FINE] this CTA's own epoch, needed to tag the fine records.
         epoch = ld_acquire_gpu_u32(self._field(base, 'header', Uint32))
         math_tid, lane = tid - 128, tid % 32
+        # [SM-REUSE] Role 6 shares its block ids (0..5) with role 2, so the
+        # fine trace cannot tell the two apart.  Offset its record id past the
+        # compute grid so the analyser can attribute blocks correctly.
+        if cutlass.const_expr(self.fine_trace):
+            if cutlass.const_expr(self.role == 6):
+                _blk = Uint32(_blk) + Uint32(1000)
         task_iter, data_iter = Uint32(0), Uint32(0)
         # [ECO-FINE] `epoch` above is stale for a resident CTA, so every
         # record below re-reads `eco_tl_step` instead.
@@ -2926,7 +2941,8 @@ class SM90GCMoERoleKernel:
     @cute.jit
     def _compute_persistent(self, base: Uint64, peers: cute.Pointer, w1: cute.Pointer,
                              s1: cute.Pointer, sec1: cute.Pointer, w2: cute.Pointer,
-                             s2: cute.Pointer, sec2: cute.Pointer, clamp: Float32):
+                             s2: cute.Pointer, sec2: cute.Pointer, clamp: Float32,
+                             late: cutlass.Constexpr = False):
         tid, _, _ = cute.arch.thread_idx()
         alloc = cutlass.utils.SmemAllocator()
         slab = cute.recast_ptr(alloc.allocate(self.smem, 1024), dtype=Uint8)
@@ -2945,7 +2961,7 @@ class SM90GCMoERoleKernel:
                 self._eco_trace(base, 9, 1)
         if tid < 128:
             cute.arch.setmaxregister_decrease(32 if self.max_m <= 32 else 64)
-            self._produce_tasks(base, slab, epoch, w1, s1, w2, s2)
+            self._produce_tasks(base, slab, epoch, w1, s1, w2, s2, late)
             fence_sys()
             sync_tile()
         else:
@@ -2957,6 +2973,175 @@ class SM90GCMoERoleKernel:
         if cutlass.const_expr(self.eco_trace and self.eco):
             if tid == 0:
                 self._eco_trace(base, 16, 2)
+
+    @cute.jit
+    def _reuse_helper(self, base: Uint64, peers: cute.Pointer, w1: cute.Pointer,
+                      s1: cute.Pointer, sec1: cute.Pointer, w2: cute.Pointer,
+                      s2: cute.Pointer, sec2: cute.Pointer, clamp: Float32):
+        """[SM-REUSE] Compute helper that lives in the DISPATCH green context.
+
+        The dispatch role only needs its 24 CTAs / 6 SMs during push+pull, and
+        pull is 12-33% of the call; after `header[9] == epoch` (pull finished)
+        those SMs idle until the next call.  This kernel parks on that token
+        and then joins the SAME global L1/L2 task queue as role 2, so the GEMM
+        phase gets 6 extra SMs.
+
+        Why `_compute_sync` and not `_consume_tasks`: the latter waits on the
+        per-CTA `task_full` mbarrier that only that CTA's own producer half
+        fills, which an independent CTA never sees (it would hang). The
+        `_claim_command` path only touches `header[3]`/`header[10]` and the
+        publish/release counters, i.e. pure device memory, so any CTA can use
+        it.
+
+        `math_tid` layout: `_compute_sync` assumes tid>=128 is the math half of
+        a 384-thread CTA.  Here the whole CTA is math, so the thread index is
+        shifted by 128 at entry (see `_reuse_helper_entry`).
+        """
+        # [SM-REUSE] This kernel runs ONCE per call, launched by the graph
+        # edge from role 1: `_dispatch` returns when the last local slot has
+        # been pulled, so by the time we start the 6 dispatch SMs are free and
+        # the GEMM phase is still running on role 2.  No parking loop is
+        # needed -- the graph dependency is the synchronisation.
+        #
+        # The epoch is whatever dispatch published for this call, so the
+        # `_claim_command` wait on `active_ready`/`expert_ready` sees this
+        # call's tokens.
+        head = self._field(base, 'header', Uint32)
+        # [SM-REUSE-DIAG] GC_MOE_SM90_SM_REUSE=2 -> role 6 exists in the graph
+        # (so the launch/dependency structure is identical) but returns at
+        # once.  That isolates "the extra node costs performance" from "the
+        # extra consumer actually helps".
+        if cutlass.const_expr(self.sm_reuse < 2):
+            # [SM-REUSE-DIAG] Sample the global task counters at entry.
+            #   header[33] = sum over the 6 CTAs of header[3] seen at entry
+            #   header[34] = sum of header[7] (published slots)
+            # If [33] already exceeds the total valid tasks, that explains why
+            # a late role 6 claims nothing: `claim_sm90_task` is monotonic.
+            if cutlass.const_expr(self.sm_reuse == 3):
+                if cute.arch.thread_idx()[0] == 0:
+                    hd = self._field(base, 'header', Uint32)
+                    atom_add_u32(hd + Uint32(33), ld_acquire_gpu_u32(hd + Uint32(3)))
+                    atom_add_u32(hd + Uint32(34), ld_acquire_gpu_u32(hd + Uint32(7)))
+                    atom_add_u32(hd + Uint32(32), Uint32(1))
+            # [SM-REUSE] Run the FULL routed-compute path, not a hand-rolled
+            # consumer: role 2 splits its CTA into a producer half (tid<128,
+            # claims the command and TMA-loads the tile) and a math half
+            # (tid>=128, waits on the per-CTA mbarrier and computes).  An
+            # independent CTA cannot use that mbarrier, so role 6 must own both
+            # halves itself -- which is exactly `_compute_persistent`.
+            #
+            # NO `late`: role 6 is a graph ROOT that becomes resident at the
+            # same moment as role 2, so its claim loop spins on the normal
+            # condition (`dispatch_done != epoch`) and interleaves with role 2
+            # while dispatch is still publishing slots.  Starting late (after
+            # header[9]) was measured to claim 0 of the M blocks: by then the
+            # task counters had been consumed past the published range.
+            self._compute_persistent(base, peers, w1, s1, sec1, w2, s2, sec2,
+                                     clamp, False)
+
+    @cute.jit
+    def _reuse_consume(self, base: Uint64, peers: cute.Pointer, w1: cute.Pointer,
+                       s1: cute.Pointer, sec1: cute.Pointer, w2: cute.Pointer,
+                       s2: cute.Pointer, sec2: cute.Pointer, clamp: Float32):
+        """[SM-REUSE] Persistent consumer on the SMs dispatch released.
+
+        `_compute_sync` is the one-shot variant: it reads the epoch once and
+        gives up as soon as `header[9] == epoch` and no task is queued, which
+        is ALWAYS true when we start (dispatch publishes `header[9]` and exits,
+        and that is our graph trigger).  Measured with the one-shot version:
+        role 6 claimed 0 of 1330 M blocks and ms/step went 66 -> 98.
+
+        This is the persistent variant: it behaves exactly like role 2's
+        consumer loop, but its start is delayed by the role-1 dependency.  It
+        keeps claiming until the call closes (`header[0]` moves past the epoch
+        it was serving), then starts over on the next call.
+        """
+        head = self._field(base, 'header', Uint32)
+        last = Uint32(0)
+        while True:
+            epoch = ld_acquire_gpu_u32(head)
+            if epoch != last:
+                # One shot through the L1/L2 queues for THIS call.  The queues
+                # are drained by the time `_compute_sync` returns, and it only
+                # returns early when nothing is left -- which is exactly the
+                # "no work for me this round" case; we then wait for the next
+                # call instead of exiting the kernel.
+                self._compute_sync(base, peers, w1, s1, sec1, w2, s2, sec2, clamp)
+                cute.arch.sync_threads()
+                last = epoch
+                # Do not spin on the same epoch: wait until dispatch advances
+                # `header[0]`, i.e. the next call has begun.
+                wait_epoch(head, epoch + Uint32(1), False)
+                cute.arch.sync_threads()
+
+    @cute.jit
+    def _reuse_claim_loop(self, base: Uint64, peers: cute.Pointer, slab: cute.Pointer,
+                          w1: cute.Pointer, s1: cute.Pointer, sec1: cute.Pointer,
+                          w2: cute.Pointer, s2: cute.Pointer, sec2: cute.Pointer,
+                          clamp: Float32, epoch: Uint32, is_l1: Boolean):
+        """[SM-REUSE] One pass over the L1 or L2 queue with `late=True`."""
+        tid, _, _ = cute.arch.thread_idx()
+        command = cute.make_tensor(
+            cute.recast_ptr(slab + self.smem - 96, dtype=Uint32),
+            cute.make_layout((3,)))
+        running = True
+        while running:
+            self._claim_command(base, command, epoch, is_l1, True)
+            cute.arch.sync_threads()
+            if command[0] == 0:
+                running = False
+            else:
+                expert = Uint32(command[1])
+                ntile = Uint32(command[2])
+                count = cell(base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)[0]
+                for start in cutlass.range(0, count, self.max_m):
+                    valid = cute.math.min(Uint32(self.max_m), count - Uint32(start))
+                    if is_l1:
+                        self._bucket_tile(base, peers, slab, expert, ntile,
+                                          Uint32(start), valid, w1, s1, sec1,
+                                          clamp, True)
+                    else:
+                        self._bucket_tile(base, peers, slab, expert, ntile,
+                                          Uint32(start), valid, w2, s2, sec2,
+                                          clamp, False)
+                fence_gpu()
+                cute.arch.sync_threads()
+                if is_l1 and tid == 0:
+                    atom_release_gpu_add_u32(
+                        self._field(base, 'l1_done', Uint32) + expert,
+                        Uint32(self.routed_n_factor))
+                cute.arch.sync_threads()
+        fence_sys()
+
+    @cute.jit
+    def _reuse_persistent(self, base: Uint64, peers: cute.Pointer, slab: cute.Pointer,
+                          w1: cute.Pointer, s1: cute.Pointer, sec1: cute.Pointer,
+                          w2: cute.Pointer, s2: cute.Pointer, sec2: cute.Pointer,
+                          clamp: Float32):
+        """[SM-REUSE] Persistent helper on the SMs dispatch released.
+
+        Role 6 is launched by the graph edge from role 1: `_dispatch` returns
+        once the last local slot is pulled, so by then those 6 SMs are free and
+        the GEMM phase is still running on role 2.  It then behaves like role
+        2's consumer -- drain whatever is still queued, wait for the next call,
+        repeat -- except it must not spin inside a call for new publications
+        (dispatch is gone), hence `late=True`.
+        """
+        head = self._field(base, 'header', Uint32)
+        epoch = ld_acquire_gpu_u32(head)
+        cute.arch.sync_threads()
+        self._reuse_claim_loop(base, peers, slab, w1, s1, sec1,
+                               w2, s2, sec2, clamp, epoch, True)
+        self._reuse_claim_loop(base, peers, slab, w1, s1, sec1,
+                               w2, s2, sec2, clamp, epoch, False)
+        # [SM-REUSE] EXIT as soon as this call's queue is drained.  An earlier
+        # version looped here and ended each round with
+        # `wait_epoch(header, epoch + 1)`, which only fires at the END of the
+        # call (combine).  Role 6 shares the DISPATCH green context, so holding
+        # it blocked the NEXT call's dispatch from starting on those 6 SMs --
+        # it serialised the pipeline and stretched prefill from 76 s to 146 s
+        # and ms/step from 66 to 98.  The graph edge from role 1 relaunches us
+        # every call, so returning here is correct.
 
     @cute.jit
     def _compute_sync(self, base: Uint64, peers: cute.Pointer, w1: cute.Pointer,
@@ -3377,6 +3562,10 @@ class SM90GCMoERoleKernel:
             alloc = cutlass.utils.SmemAllocator()
             slab = cute.recast_ptr(alloc.allocate(self.smem, 1024), dtype=Uint8)
             self._compute_shared(base, slab, tokens, sw1, ss1, sw2, ss2, clamp)
+        elif cutlass.const_expr(self.role == 6):
+            # [SM-REUSE] helper consumer that parks on "pull finished" and then
+            # joins the global task queue.
+            self._reuse_helper(base, peers, w1, s1, sec1, w2, s2, sec2, clamp)
         elif cutlass.const_expr(self.role == 5):
             # [ECO-SM90] one CTA per rank computes the identical plan
             alloc = cutlass.utils.SmemAllocator()

@@ -115,3 +115,27 @@ def get_shared_role_config(schedule):
         smem = (smem[0], shared_smem, smem[2])
     return replace(schedule, threads=(schedule.threads[0], 256, schedule.threads[2]),
                    smem=smem)
+
+
+def get_reuse_role_config(config, schedule):
+    """[SM-REUSE] Geometry for role 6 (the helper compute role).
+
+    Role 6 runs the same math as role 2 but on the 6 SMs dispatch vacates, so
+    it wants the SMALLEST per-CTA shared memory that still fits the routed
+    kernel: `tile_m=32` needs 101632 B (occupancy 2/SM) versus 199680 B at
+    tile_m=64 (occupancy 1), i.e. 12 CTAs on 6 SMs instead of 6.
+
+    Correctness: `tile_m` only controls how one claimed task is split into M
+    chunks (`for start in range(0, count, max_m)`); the chunks write disjoint
+    row ranges of the same expert and `l1_done` is bumped once per TASK, not
+    per chunk, so the L2 dependency count (`intermediate // 128`) is unchanged.
+    """
+    from dataclasses import replace as _replace
+    from gc_moe.jit_kernels.heuristics.sm90_gc_moe import SM90RoleConfig
+    tile_m = 32
+    stage_bytes = (17408 + tile_m * 132 + 1023) // 1024 * 1024
+    stages = 3
+    smem = stages * stage_bytes + 1024 + tile_m * 1024 + 256
+    return _replace(schedule,
+                    tile_m=tile_m,
+                    smem=(schedule.smem[0], smem, schedule.smem[2]))

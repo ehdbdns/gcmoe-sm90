@@ -76,19 +76,70 @@ def _entry_formals(ptx: str) -> list[str]:
         raise RuntimeError('CuTe kernel entry formals changed')
     return lines
 
+# [SM-REUSE] Per-SM shared-memory budget on this H20.  Used to derive the
+# role-6 CTA count (one CTA per dispatch SM at 199 KB).  A wrong value can only
+# make the estimate conservative.
+_SMEM_BUDGET = 233472
+
 _POINTER_TYPES = (Uint8, Uint64, BFloat16, Uint8, Uint8, Float32,
                   Uint8, Uint8, Float32, Uint32, Uint8, Float32, Uint8, Float32)
 
 
 def _role_specs(config, layout, schedule, has_stats):
     routed = get_routed_role_config(config, schedule)
+    # [SM-REUSE] Size of the DISPATCH green partition, which role 6 inherits.
+    schedule_sms = int(getattr(config, 'dispatch_partition_sms', 0) or 0)
     shared = get_shared_role_config(schedule) if config.shared_experts else None
     # [ECO-SM90] role 5 = the ECO plan CTA, only when the buffer reserved it.
     eco = bool(getattr(config, 'eco_logical_experts', 0))
     base_roles = (1, 4, 2, 3) if config.shared_experts else (1, 2, 3)
     roles = (base_roles[:-1] + (5,) + base_roles[-1:]) if eco else base_roles
+    # [SM-REUSE] Role 6 = compute helper that shares the DISPATCH green context
+    # and parks until pull is done. Must be compiled/launched BEFORE role 3
+    # (combine depends on every producer finishing).
+    if getattr(config, 'sm_reuse', False):
+        roles = roles[:-1] + (6,) + roles[-1:]
     specs = []
     for role in roles:
+        if role == 6:
+            # Same geometry as role 2 (384 threads) so `_tile_sync`'s
+            # tid%32 / (tid//32)%4 / tid//128 decomposition is unchanged; the
+            # CTA count is the dispatch grid (24), i.e. what those 6 SMs hold.
+            # [SM-REUSE] Role 6 uses the SAME geometry as role 2 (tile_m and
+            # therefore 199680 B at BS=256).  A smaller tile_m would let two
+            # CTAs share an SM, but filling all 6 dispatch SMs was measured to
+            # deadlock ("No available shared memory broadcast block found in
+            # 60 seconds"): the context has no room left for the next call's
+            # dispatch.  One CTA per SM is the hard ceiling here.
+            _sched6 = routed.schedule
+            k = SM90GCMoERoleKernel(replace(config, shared_experts=0),
+                                    layout, 6, _sched6, has_stats,
+                                    routed_n_factor=routed.n_factor)
+            # Role 6 inherits the 6 SMs of the DISPATCH green context, and its
+            # shared memory is the routed role's (199 KB at tile_m=64), so only
+            # ONE CTA fits per SM: the grid must be 6, not dispatch's 24.
+            # Using 24 would leave 18 CTAs unschedulable forever and the call
+            # would hang.  `workers` is 1 at this geometry; at tile_m<=32
+            # (99 KB) two fit, so scale by occupancy.
+            # The dispatch context holds `dispatch_sms` SMs and its 24 CTAs
+            # need ceil(24 / occ_dispatch) of them; whatever is left is free
+            # once pull is done.  Role 6 then takes those SMs at ITS occupancy
+            # (1 CTA/SM at 199 KB).  At this geometry: 6 - 5 = 1 SM -> 1 CTA.
+            # [SM-REUSE] dispatch RETURNS after the last slot is pulled, so
+            # its whole partition is free for role 6.  Fill every one of those
+            # SMs at role 6's own occupancy (1 CTA/SM at 199 KB, 2 at 99 KB).
+            # [SM-REUSE] One CTA per dispatch SM, NOT occupancy-many.
+            # `_part * occ` (12 CTAs at tile_m=32) fills all 6 SMs completely,
+            # and then the graph can no longer schedule the OTHER roles that
+            # share this context -- observed as "No available shared memory
+            # broadcast block found in 60 seconds", the same deadlock the
+            # SM-SHARE experiment hit.  Keep a CTA per SM so each SM retains
+            # room to host the next call's dispatch.
+            _part = schedule_sms if schedule_sms else 6
+            _grid6 = max(1, _part)
+            specs.append((k, (6, _sched6.smem[1],
+                              _sched6.threads[1], _grid6, ())))
+            continue
         if role == 5:
             k = SM90GCMoERoleKernel(config, layout, 5, schedule, has_stats)
             # [ECO-WARP] thread count comes from the kernel (512 since the

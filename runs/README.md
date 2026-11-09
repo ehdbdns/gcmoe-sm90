@@ -102,3 +102,15 @@ python3 scripts/gen_gemm_table.py runs/R5_64.json 0        # GEMM 表
 3. `fine_rows` 的 epoch 与 `tl_rows` 的 `step_tag` **不重叠**（前者是
    `FINE_MIN_EPOCH` 之后最先填满的 65536 条，后者是最近 256 步的环形缓冲），
    取时间基准只能用 `fine_rows` 自己的首个 `slot_begin`。
+
+## `smreuse/` — SM-reuse 臂（20 臂表的最后一列）
+
+`SMRY_{32,64,128}.json` 与 `SMRX_256.json`：`GC_MOE_SM90_SM_REUSE=1`，
+即 ECO + 一个跑在 dispatch 腾出 SM 上的额外 compute role（role 6）。
+
+其余配置与 `x16/` 完全相同（100 步 warmup + **100 步测量**，tracing 全开）。
+`SMRX_256.json` 额外带完整 `eco_trace`（8 rank 的 `fine_rows`），
+`docs/plots/smreuse/smreuse_bs256.png` 由它生成。
+
+role 6 的 M 块在 `fine_rows` 里用 **id >= 1000** 标记（role 2 是 0..70），
+所以在 trace 里可以直接区分两者的工作量。

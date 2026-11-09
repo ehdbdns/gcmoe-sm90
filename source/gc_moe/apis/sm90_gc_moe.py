@@ -34,6 +34,11 @@ class ValidatedCall:
     # the ECO arm's overhead; neither changes the algorithm when false.
     eco_null_plan: bool = False      # keep wait/static/D_e, skip cold/warm/auction/publish
     eco_no_auction: bool = False     # keep cold/warm, skip the auction rounds
+    # [SM-REUSE] Add role 6: a compute helper that lives in the DISPATCH green
+    # context and starts claiming GEMM tasks once this call's pull is done.
+    sm_reuse: int = 0
+    # [SM-REUSE] SM count of the DISPATCH green partition (role 6 inherits it).
+    dispatch_partition_sms: int = 0
 
 
 def validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,
@@ -115,7 +120,9 @@ def validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,
                           int(os.environ.get('GC_MOE_ECO_ROUNDS', '1')),
                           int(os.environ.get('GC_MOE_ECO_COLD_ROUNDS', '6')),
                           os.environ.get('GC_MOE_ECO_NULL_PLAN') == '1',
-                          os.environ.get('GC_MOE_ECO_NO_AUCTION') == '1')
+                          os.environ.get('GC_MOE_ECO_NO_AUCTION') == '1',
+                          int(os.environ.get('GC_MOE_SM90_SM_REUSE', '0') or 0),
+                          int(os.environ.get('GC_MOE_SM90_DISPATCH_PARTITION_SMS', '0') or 0))
 
 
 def sm90_fp8_fp4_gc_moe(y, w1, w2, buffer, stats, recipe, activation, clamp,

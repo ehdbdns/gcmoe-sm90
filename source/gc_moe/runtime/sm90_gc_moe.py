@@ -202,17 +202,17 @@ class _ChildGraph:
     def __init__(self, owner: 'GreenContextPair', binaries: Sequence[RoleBinary],
                  arguments: Sequence[_KernelArgs]):
         # [ECO-SM90] role 5 = ECO plan (one CTA, runs beside dispatch/compute).
-        if tuple(x.role for x in binaries) not in (
-                (1, 2, 3), (1, 2, 4, 3), (1, 4, 2, 3),
-                (1, 2, 5, 3), (1, 2, 4, 5, 3), (1, 5, 2, 3), (1, 5, 2, 4, 3),
-                # `_role_specs` builds `base_roles[:-1] + (5,) + base_roles[-1:]`,
-                # so with shared experts the order is (1, 4, 2, 5, 3) -- which
-                # was missing here. That made EVERY ECO run with shared experts
-                # (i.e. every vLLM run) raise before launch; the CPU/GPU smoke
-                # tests all used shared_experts=0 and never saw it.
-                (1, 4, 2, 5, 3)):
-            raise ValueError('expected dispatch, routed, optional shared, '
-                             'optional ECO plan, finalize cubins')
+        # [SM-REUSE] Enumerating the legal role tuples did not scale: adding
+        # role 6 (a compute helper that shares the dispatch context) doubles the
+        # set again. Check the INVARIANTS instead -- dispatch first, finalize
+        # last, everything else unique and known.
+        _r = tuple(x.role for x in binaries)
+        if (not _r or _r[0] != 1 or _r[-1] != 3
+                or len(set(_r)) != len(_r)
+                or not set(_r) <= {1, 2, 3, 4, 5, 6}):
+            raise ValueError(
+                f'unexpected role set {_r}: need dispatch (1) first, finalize '
+                f'(3) last, and only roles 1..6')
         if len(arguments) != len(binaries):
             raise ValueError('expected one argument vector per role')
         self.graph = None
@@ -236,7 +236,10 @@ class _ChildGraph:
                 # [ECO-SM90] role 5 (plan) shares the compute partition; the
                 # routed grid is sized to leave it an SM (see the SM90 role
                 # heuristics) so both can be resident at the same time.
-                params.kernel.ctx = owner.contexts[0 if index == 0 else 1]
+                # [SM-REUSE] role 6 must live in the DISPATCH green context
+                # (contexts[0]) so it inherits those 6 SMs once pull is done.
+                _ctx_idx = 0 if (index == 0 or binary.role == 6) else 1
+                params.kernel.ctx = owner.contexts[_ctx_idx]
                 params.kernel.gridDimX = binary.grid
                 params.kernel.gridDimY = params.kernel.gridDimZ = 1
                 params.kernel.blockDimX = binary.threads
@@ -250,8 +253,23 @@ class _ChildGraph:
                 prerequisites = getattr(binary, 'wait_for', ())
                 if any(role not in role_nodes for role in prerequisites):
                     raise ValueError('kernel dependency must reference an earlier graph node')
+                # [SM-REUSE] Role 6 = a second copy of the routed-compute
+                # role that lives in the DISPATCH green context, so the 6 SMs
+                # dispatch vacates go to the GEMM phase of the same call.
+                #
+                # It MUST depend on role 1.  Role 6's CTA needs 199680 B and
+                # dispatch occupies 5 of the 6 partition SMs, so the only
+                # coherent schedule is: dispatch pulls and RETURNS, then role 6
+                # takes all 6 SMs.  Making it a root would need 11 SMs in a
+                # 6-SM context and deadlock.
+                #
+                # It still gets work: `_produce_tasks` claims ONE task at a
+                # time (claim -> compute -> claim), so when pull finishes the
+                # 71 role-2 CTAs hold one M block each and the L1/L2 queues
+                # still contain the rest.
+                _prereq = (1,) if binary.role == 6 else prerequisites
                 dependencies = (list(nodes) if binary.role == 3 else
-                                [role_nodes[role] for role in prerequisites])
+                                [role_nodes[role] for role in _prereq])
                 node = _ok(cu.cuGraphAddNode(self.graph, dependencies, None,
                                              len(dependencies), params))
                 nodes.append(node)
@@ -304,6 +322,11 @@ class GreenContextPair:
                      else None)
         self.compute_sms = compute.sm.smCount
         self.dispatch_sms = communication.sm.smCount
+        # [SM-REUSE] Publish the dispatch partition size so `_role_specs` can
+        # size role 6 to the SMs that go idle once pull finishes.  Set once per
+        # process; the Green split is device-wide and never changes.
+        os.environ.setdefault('GC_MOE_SM90_DISPATCH_PARTITION_SMS',
+                              str(self.dispatch_sms))
         parts = (communication, compute)
         if self.compute_sms < 32 or self.compute_sms % 2 or \
                 self.dispatch_sms <= 1 or self.compute_sms + self.dispatch_sms != total:
