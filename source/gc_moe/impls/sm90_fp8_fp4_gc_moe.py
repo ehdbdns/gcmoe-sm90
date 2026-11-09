@@ -123,6 +123,18 @@ class SM90GCMoERoleKernel:
         # [ECO-MEAS] cost-decomposition gates (compile-time, no runtime branch)
         self.eco_null_plan = bool(getattr(config, 'eco_null_plan', False))
         self.eco_no_auction = bool(getattr(config, 'eco_no_auction', False))
+        # [ECO-DELAY] Artificial hold between "plan finished computing quotas"
+        # and "plan publishes eco_ready[1]". Purpose: sweep WHEN the replica
+        # slots are allowed to start pulling, so the pipeline cost of that
+        # insertion point can be measured directly. Compile-time constant, so
+        # a 0 build carries no clock read at all.
+        #
+        #   GC_MOE_ECO_PLAN_DELAY_US=0   -> no hold (baseline, same as the
+        #                                   16-arm run in the parent dir)
+        #   =10 / 20 / 30 / ...          -> hold that long after the compute
+        #                                   finishes and before the release
+        self.eco_plan_delay_us = int(
+            _os.environ.get('GC_MOE_ECO_PLAN_DELAY_US', '0'))
         # [ECO-MEAS] timeline trace: COMPILE-TIME off unless requested, so the
         # default build carries no clock read at all.
         # [ECO-TRACE] Derived from the LAYOUT, not the env: the timeline table
@@ -1157,6 +1169,18 @@ class SM90GCMoERoleKernel:
             self._eco_publish_count_state(base, slab, e)
         cute.arch.sync_threads()
         fence_sys()
+        if cutlass.const_expr(self.eco_plan_delay_us > 0):
+            # [ECO-DELAY] Spin AFTER the quotas are published and BEFORE
+            # eco_ready[1] is released. Everything the replica slots need is
+            # already written, so this hold only shifts the moment they are
+            # allowed to start pulling -- which is exactly the pipeline knob
+            # this experiment sweeps. Single writer (tid 0) because the
+            # replicas key off the release it performs.
+            if tid == 0:
+                delay_t0 = read_globaltimer()
+                while read_globaltimer() < delay_t0 + Uint64(
+                        self.eco_plan_delay_us * 1000):
+                    pass
         if tid == 0:
             self._eco_trace(base, 5)   # [ECO-MEAS] quota + warm state published
             self._eco_tl_write(base, epoch, 7, read_globaltimer())     # plan_end

@@ -27,6 +27,14 @@ fi
 export GC_MOE_SRC=$HERE/source
 export PYTHONPATH=$HERE/source:$HERE/patches:$HERE/integration:${PYTHONPATH:-}
 
+# [WARM] Preload the checkpoint into the page cache before the engine starts.
+# vLLM's own prefetch is a BACKGROUND thread racing the weight load, so without
+# this a cold cache turns a 3 s load into 10+ min (8 workers x ~37 GB from the
+# NAS).  GC_MOE_SKIP_WARM=1 disables it when the cache is known to be hot.
+if [ "${GC_MOE_SKIP_WARM:-0}" != "1" ]; then
+    "$HERE/scripts/warm_page_cache.sh" >> /tmp/gc_warm_cache.log 2>&1 || true
+fi
+
 LOG=$HERE/logs/real_${ARM_LABEL}.log
 OUT=$HERE/runs/${ARM_LABEL}.json
 mkdir -p "$HERE/logs" "$HERE/runs"
