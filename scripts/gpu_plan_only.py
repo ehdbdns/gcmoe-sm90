@@ -215,7 +215,7 @@ def main():
                     print(f'   [dbg] call1 diff slots={d.tolist()} '
                           f'got={got[d].tolist()} want={want[d].tolist()} '
                           f'warm_state_q[:8]={buf.eco_state[:8].tolist()} '
-                          f'prev_q_fed={None if prev is None else prev[:8].tolist()}',
+                          f'prev_q_fed={None if prev is None else list(prev[0][:8])}',
                           flush=True)
             print(f'[call {call}] warm={call > 0} equal={ok} conserved={cons} '
                   f'quota_start_contiguous={contig}', flush=True)

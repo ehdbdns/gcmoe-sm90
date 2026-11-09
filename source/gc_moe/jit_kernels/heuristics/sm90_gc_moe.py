@@ -50,7 +50,15 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
     # (2 CTAs per SM co-residency starved it), hence one whole SM.
     routed_grid = compute_sms * workers
     if getattr(config, 'eco_logical_experts', 0):
-        routed_grid = max(1, compute_sms - 1)
+        # [ECO-SM142] The routed role is PERSISTENT: `workers` CTAs per SM
+        # co-reside and grid-stride over the M blocks, so `grid == CTAs`, and
+        # CTAs per SM == workers. The old value `compute_sms - 1` silently
+        # dropped `workers`, so at bound=128 (tile_m=32, workers=2) the
+        # compute partition ran 71 CTAs on 36 SMs and left half of it idle
+        # (native arm: 144). Keep one whole SM for the plan CTA -- it is only
+        # schedulable on a completely free SM -- and fill the rest with
+        # `workers` CTAs each.
+        routed_grid = max(1, (compute_sms - 1) * workers)
     # [ECO-PULL] The dispatch role stages each pulled token through shared
     # memory so it can use TMA (`cp.async.bulk`) instead of a 16-byte
     # `ld.global.v4`/`st.global.v4` pair. One token row is `hidden` bytes (fp8)

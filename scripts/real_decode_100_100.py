@@ -33,7 +33,7 @@ import deepep_compare  # noqa: E402,F401  (registers the gc_moe backend)
 
 DATASET = os.environ.get(
     'DATASET',
-    '$DATASET_DIR/'
+    '/mnt/nas2/nanjun.cp/MoE-Bench-Experiments/datasets/'
     'dsv4-flash_online_input_ids_26-10-08_1.jsonl')
 
 

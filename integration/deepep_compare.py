@@ -122,6 +122,13 @@ def _eplb_random_seed() -> int:
     return int(os.environ.get('GC_MOE_EPLB_RANDOM_SEED', '0'))
 
 
+# [ECO-WARP] Per-rank slot permutation produced by the single-copy-first
+# reorder. Kept so the host can map a permuted local slot back to the original
+# one when it has to (weights are moved with the placement, so normally nothing
+# needs it).
+_ECO_SLOT_ORDER = {'order': None}
+
+
 def _eplb_extra_per_rank() -> int:
     """[SME-EPLB] Redundant slots PER RANK; overrides the fraction knob.
 
@@ -897,6 +904,20 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             raise RuntimeError(
                 f'initial layout has {len(plan_list)} slots, buffer has '
                 f'{buf.physical}; raise GC_MOE_EPLB_REDUNDANCY so they agree')
+        if _eco_enabled():
+            # [ECO-WARP] Put every rank's single-copy slots in a prefix so the
+            # dispatch cursor can walk them before it ever touches the plan.
+            # SM100's EcoMeta contract requires exactly this ("num_fixed[R] is
+            # a prefix of its local slots", eco_meta.cuh L17); the EPLB packer
+            # does not produce it, so the permutation is applied HERE and the
+            # permuted placement is used by every consumer below (weights,
+            # routing, EcoMeta, push's source_index).
+            from gc_moe.eco.meta_sm90 import (
+                reorder_single_copy_first as _reorder_scf)
+            plan_list, _slot_order = _reorder_scf(plan_list, ranks)
+            _ECO_SLOT_ORDER['order'] = _slot_order
+            print(f'[eco] single-copy-first permutation applied '
+                  f'(rank0 first {sum(1 for x in _slot_order[0])} slots)', flush=True)
         plan, slots_of = sm90.install_eplb_plan(buf, plan_list)
         count = (slots_of >= 0).sum(-1).clamp_min(1)
         if _eco_enabled():
@@ -1000,6 +1021,12 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                _eplb_extra_per_rank(),
                _slot_placement(),
                os.environ.get('GC_MOE_ECO_TRACE') == '1',
+               # [ECO-FINE] The buffer grows by ~2 MB when the fine trace is
+               # reserved, so it MUST key the buffer -- otherwise a buffer
+               # built without `fine_*` is reused by a kernel compiled WITH
+               # them, and the extra views land on top of `eco_meta`
+               # (measured: phy2log read back as the identity 0,1,2,3...).
+               os.environ.get('GC_MOE_FINE_TRACE') == '1',
                _eplb_enabled() and _eco_enabled())
         # Every layer of this model has identical expert shapes, so one
         # process-wide buffer serves all of them (calls are serialized).
@@ -1114,13 +1141,27 @@ def rearrange_now() -> bool:
     dist.broadcast(new_plan, src=0, group=dist.group.WORLD)
     target = new_plan[0].cpu().tolist()
 
-    # --- 3. move weights between GPUs -------------------------------------
+    # --- 3. single-copy-first permutation, BEFORE anything consumes target -
+    # [ECO-WARP-FIX] The permutation MUST be applied to `target` before
+    # `shuffler.move`, not after. `_ipc_layer` writes slot j with the weights
+    # of `target[j]`, so moving to the RAW target and then installing the
+    # PERMUTED one as the routing map pairs slot j's real weights with
+    # `permuted[j]` -- measured on a CPU replay: 448/448 slots mismatched.
+    # Applying it here means the weight move, the routing map, EcoMeta and
+    # push's source_index all refer to the same permuted placement.
+    if _eco_enabled():
+        from gc_moe.eco.meta_sm90 import (
+            reorder_single_copy_first as _reorder_scf)
+        target, _slot_order = _reorder_scf(target, ranks)
+        _ECO_SLOT_ORDER['order'] = _slot_order
+
+    # --- 4. move weights between GPUs -------------------------------------
     shuffler = m._eplb_shuffler
     n_layers = len(shuffler.components)
     shuffler.move([list(layout) for _ in range(n_layers)],
                   [list(target) for _ in range(n_layers)])
 
-    # --- 4. repoint routing ----------------------------------------------
+    # --- 5. repoint routing ----------------------------------------------
     new_t, slots_of = m._gc.sm90_gc.install_eplb_plan(buf, target)
     count = (slots_of >= 0).sum(-1).clamp_min(1)
     if _eco_enabled():
@@ -1573,6 +1614,32 @@ def _install_worker_rpc() -> None:
             ptl = getattr(buf, 'pull_tl', None)
             if ptl is not None:
                 out['pull_rows'] = ptl.view(256, 10).cpu().tolist()
+            ftl = getattr(buf, 'fine_tl', None)
+            if ftl is not None:
+                out['fine_rows'] = ftl.view(65536, 8).cpu().tolist()
+            em = getattr(buf, 'eco_meta', None)
+            if em is not None:
+                out['eco_meta'] = [int(v) for v in em.cpu().tolist()]
+                # [ECO-FINE] pointer audit: the kernel receives
+                # `buffer.buffer.data_ptr()` and adds `off_eco_meta`, so this
+                # difference MUST equal layout.eco_meta.
+                out['ptr_eco_meta'] = int(em.data_ptr())
+                out['ptr_workspace'] = int(buf.buffer.data_ptr())
+                out['nbytes_workspace'] = int(buf.buffer.numel())
+                out['ptr_delta'] = int(em.data_ptr()) - int(buf.buffer.data_ptr())
+                # [ECO-FINE] Absolute-address audit from the HOST side: read the
+                # exact bytes the kernel will read (workspace + off_eco_meta +
+                # phy2log offset) with torch, so "the kernel sees zeros" can be
+                # separated from "the memory really holds zeros".
+                import torch as _t
+                _lay = buf.layout
+                _w = (_lay.eco_meta + (16 + 384 * 16) * 4) // 4
+                out['host_read_phy2log'] = [
+                    int(v) for v in
+                    buf.buffer.view(_t.int32)[_w:_w + 8].cpu().tolist()]
+            pl = getattr(self, '_eplb_layout', None)
+            if pl is not None:
+                out['eplb_layout'] = [int(v) for v in pl]
             tl = getattr(buf, 'eco_tl', None)
             if tl is not None:
                 rows = tl.view(256, 21).cpu().tolist()

@@ -141,10 +141,42 @@ class SM90GCBufferLayout:
         if os.environ.get('GC_MOE_PULL_TRACE') == '1':
             reserve('pull_tl', (256 * 10,), 'int32', 4)
 
+        # [ECO-FINE] Fine-grained single-call event log. One flat array of
+        # fixed 8-word records, appended through ONE global counter, so the
+        # emission order IS the order (no ring, no per-type interleaving).
+        #   [0] t_us   [1] type   [2] id   [3..6] args   [7] epoch
+        # Types: 1 slot_begin 2 slot_end 3 slot_wait_plan 4 claim_spin
+        #        5 claim_ok   6 task_begin 7 task_end
+        # Only calls matching GC_MOE_FINE_EPOCH / GC_MOE_FINE_MOD record, and
+        # the epoch is stored in every record, so several calls can be captured
+        # without any reset (a reset would race resident CTAs).
+        # 65536 x 8 x 4 B = 2 MB per rank, only when the switch is on.
+        if os.environ.get('GC_MOE_FINE_TRACE') == '1':
+            reserve('fine_tl', (65536 * 8,), 'int32', 4)
+            reserve('fine_ctr', (1,), 'int32', 4)
+            # [ECO-FINE] Per-CTA spin state (0 = busy, 1 = already logged a
+            # spinstreak). Edge detection needs the PREVIOUS state of a CTA,
+            # which no single record can carry. Sized for the largest role-2
+            # grid in use (72 CTAs) with headroom.
+            reserve('fine_spin', (256,), 'int32', 4)
+            # [ECO-FINE] active_slot -> the layer epoch that dispatch published
+            # for its expert. A resident consumer CTA cannot use `header[0]`
+            # (stale) nor `eco_tl_step` (names the NEWEST call, not this task).
+            reserve('fine_lay', (physical,), 'int32', 4)
+            # [ECO-FINE] expert -> layer epoch (what `_consume_tasks` can see,
+            # since its task record only carries the expert id).
+            reserve('fine_epx', (experts,), 'int32', 4)
+
         reserve('x', (capacity, hidden), 'float8_e4m3fn', 1)
         reserve('x_sf', (capacity, hidden // 128), 'float32', 4)
         reserve('topk_idx', (capacity, topk), 'int64', 8)
         reserve('topk_weights', (capacity, topk), 'float32', 4)
+        # [ECO-BLKRDY] Per-slot count of M blocks whose data is already in
+        # `l1_acts`. Pull increments it after each block's last row lands, so
+        # the producer can publish that block's GEMM task immediately instead
+        # of waiting for the whole slot -- SM100 does the same with
+        # `l1_full_count[ring_block]` (sm100_fp8_fp4_gc_moe.py L1495).
+        reserve('l1_block_ready', (local,), 'int32', 4)
         reserve('route_meta', (local, rows, 3), 'int32', 4)
         reserve('route_weight', (local, rows), 'float32', 4)
         reserve('l1_acts', (local, rows, hidden), 'float8_e4m3fn', 1)
