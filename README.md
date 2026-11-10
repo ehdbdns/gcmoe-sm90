@@ -2448,7 +2448,7 @@ $GC_ENV/bin/torchrun --nproc_per_node 8 scripts/verify_eco_ep8.py   # 端到端
 
 ```bash
 B=/home/admin/workspace/aop_lab/app_source/gcmoe_exp/gcmoe_ir20_trace_20261111
-cd $B
+cd $B && source scripts/env.sh           # 机器相关的 HCA 从环境变量给
 # 4 档 BS = 32/64/128/256 -> SEQS_PER_RANK = 4/8/16/32
 C="WARM_STEPS=1000 MEASURE_STEPS=1000 GC_MOE_SM90_PULL_TMA=1
    GC_MOE_EPLB_REDUNDANCY=0.10 GC_MOE_EPLB_EXTRA_PER_RANK=8
