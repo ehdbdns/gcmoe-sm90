@@ -37,8 +37,9 @@ json（`ir_step.ir_poisson_null_mean` / `ir_excess_over_null`），下表只列 
 
 ### 主表
 
-**五列指标，全部由 dispatch kernel 在测量窗口内按 `(layer, step)` 直接记录**
-（每个 (step, layer) 对先在 8 个 rank 间算一次，再对 40,000 个对取平均）：
+**四个新指标，全部由 dispatch kernel 在测量窗口内按 `(layer, step)` 直接记录**
+（每个 (step, layer) 对先在 8 个 rank 间算一次，再对 40,000 个对取平均）。
+表里另外两列是 `ms/step` 和相对原生臂的百分比：
 
 | 列 | 定义 |
 |---|---|
