@@ -65,6 +65,17 @@ _MEAS = {'on': False, 'steps_done': 0, 'has_stats': False,
          'table': None, 'vanilla_idx': {},
          'measure': os.environ.get('GC_MEASURE_LOAD', '1') == '1'}
 _IR = {'on': False, 'steps': [], 'ir': -1.0}
+# [IR-STEP] Per-(step, layer) rank-critical-path cost, for the IR the user
+# actually wants: one max/mean over the 8 ranks PER LAYER PER STEP, averaged
+# over all (step, layer) pairs afterwards -- NOT max/mean taken over a window
+# sum (that number is diluted by averaging and cannot be recovered from it).
+#
+# Storage is one float per (layer, step) on every rank:
+#   _IRSTEP['buf'][layer, step] = this rank's tokens routed to `layer` in `step`
+# filled by differencing the per-layer accumulator right after each MoE
+# launch (no RPC: the driver calls forward 40 times per engine step, so the
+# table is complete by the time `_gc_moe_ir_end` runs).
+_IRSTEP = {'on': False, 'rows': [], 'prev': None, 'acc': None}
 # [RR-FIX] `eplb_logic` sits next to this module (integration/), which is
 # already on sys.path when the driver imports us.
 try:
@@ -1440,6 +1451,64 @@ def _slot_count() -> int:
     return -1
 
 
+def irstep_begin() -> None:
+    """# [IR-STEP] Arm per-(step, layer) sampling. Requires `_MEAS['has_stats']`
+    so the kernel is already feeding a per-layer accumulator."""
+    _IRSTEP['on'] = True
+    _IRSTEP['rows'] = []
+    _IRSTEP['prev'] = None
+    _IRSTEP['acc'] = None
+
+
+def _irstep_table():
+    """(table, slots) of the per-layer accumulator this rank feeds the kernel."""
+    live = [m for m in _EXPERT_REGISTRY if m._eplb is not None]
+    if live:
+        return live[0]._eplb['stats'], int(live[0]._eplb['stats'].shape[1])
+    if _MEAS['table'] is not None:
+        return _MEAS['table'], int(_MEAS['table'].shape[1])
+    return None, 0
+
+
+def irstep_sample() -> dict:
+    """# [IR-STEP] Snapshot ONE engine step's per-layer load on this rank.
+
+    Returns the per-layer token counts routed by the step that just finished,
+    computed as `acc_now - acc_prev` on the `[layers, slots]` accumulator the
+    kernel adds into. Divided by `world` to undo the same inflation `ir_end`
+    removes (send_count is replicated on every rank).
+
+    Must be called once per engine step and NOT during the timed window.
+    """
+    import torch
+
+    if not _IRSTEP['on']:
+        return {'ok': False, 'reason': 'not armed'}
+    table, slots = _irstep_table()
+    if table is None:
+        return {'ok': False, 'reason': 'no stats table'}
+    torch.cuda.synchronize()
+    acc = table.to(torch.float64).sum(dim=1)          # [layers]
+    prev = _IRSTEP['prev']
+    _IRSTEP['prev'] = acc.clone()
+    if prev is None:
+        return {'ok': True, 'warm': True, 'layers': int(acc.numel())}
+    delta = acc - prev
+    # The first snapshot only establishes the baseline; a step whose delta is
+    # all zeros means the counter did not advance (graph replay of a different
+    # batch), so it is reported but carries no information.
+    return {'ok': True, 'warm': False,
+            'layers': int(delta.numel()),
+            'per_layer_tokens': [float(x) for x in delta.tolist()],
+            'slots': slots}
+
+
+def irstep_end() -> dict:
+    """# [IR-STEP] Hand back everything sampled (this rank only)."""
+    _IRSTEP['on'] = False
+    return {'ok': True, 'rows': _IRSTEP['rows']}
+
+
 def ir_begin() -> None:
     """# [SME-IR] Arm the imbalance measurement (zero per-call overhead)."""
     _IR['on'] = True
@@ -1581,6 +1650,31 @@ def _install_worker_rpc() -> None:
 
         Worker._gc_moe_ir_begin = gc_moe_ir_begin
 
+    if getattr(Worker, '_gc_moe_irstep_begin', None) is None:
+
+        def gc_moe_irstep_begin(self) -> bool:
+            """# [IR-STEP] Arm per-step per-layer sampling on this worker."""
+            irstep_begin()
+            return True
+
+        Worker._gc_moe_irstep_begin = gc_moe_irstep_begin
+
+    if getattr(Worker, '_gc_moe_irstep_sample', None) is None:
+
+        def gc_moe_irstep_sample(self) -> dict:
+            """# [IR-STEP] One per-step snapshot (call after engine.step())."""
+            return irstep_sample()
+
+        Worker._gc_moe_irstep_sample = gc_moe_irstep_sample
+
+    if getattr(Worker, '_gc_moe_irstep_end', None) is None:
+
+        def gc_moe_irstep_end(self) -> dict:
+            """# [IR-STEP] Return the sampled rows for this rank."""
+            return irstep_end()
+
+        Worker._gc_moe_irstep_end = gc_moe_irstep_end
+
     if getattr(Worker, '_gc_moe_ir_end', None) is None:
 
         def gc_moe_ir_end(self) -> dict:
@@ -1607,6 +1701,16 @@ def _install_worker_rpc() -> None:
                 return {'ok': False, 'reason': 'no buffer'}
             buf = allm[0]._get_buffer()
             out = {'ok': True, 'rank': int(buf.rank_idx)}
+            # [SM-REUSE-DIAG] `header[32]` counts role-6 CTA entries; a non-zero
+            # value proves the helper kernel was actually launched.
+            try:
+                torch.cuda.synchronize()
+                _h = buf.buffer.view(torch.int32)
+                out['role6_entries'] = int(_h[32].item())
+                out['role6_l1_ctr_sum'] = int(_h[33].item())
+                out['role6_pub_slots_sum'] = int(_h[34].item())
+            except Exception:
+                out['role6_entries'] = -1
             tr = getattr(buf, 'eco_trace', None)
             if tr is not None:
                 torch.cuda.synchronize()

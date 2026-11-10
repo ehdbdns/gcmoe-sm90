@@ -2063,6 +2063,56 @@ pull 窗口 0 → 64 µs；单副本最早 0 µs，副本最早 25 µs
 | **GEMM** | 33 → 466 | **93%** |
 | combine | 473 → 486 | 3% |
 
+## ★ 三个开关（相互独立）与新的 IR 口径
+
+这个目录把三件事做成**互不依赖的 env 开关**，可以任意组合：
+
+| 开关 | 作用 | 依赖 |
+|---|---|---|
+| `GC_MOE_EPLB=1` | EPLB 放置（副本），`GC_MOE_SLOT_PLACEMENT=random` 换成随机放置作对照 | — |
+| `GC_MOE_ECO=1` | 内核内 plan（role 5），副本按配额切分流 | 需要 `GC_MOE_EPLB=1` |
+| `GC_MOE_SM90_SM_REUSE=1` | role 6：dispatch 拉完后把 6 个 SM 交给 compute | 需要 `GC_MOE_ECO=1` |
+
+`apis/sm90_gc_moe.py` 直接从环境读这三个值，所以 `run_arm_eco.sh` 只需要 `export`，
+不需要改脚本。role 6 的 CTA 数默认等于 dispatch 分区的 SM 数（6）；
+需要覆盖时用 `GC_MOE_SM90_DISPATCH_PARTITION_SMS`。
+
+一条命令跑五臂（含 sm_reuse）：
+
+```bash
+./scripts/run_matrix_ir.sh IR32 4      # BS=32 = 8 ranks x 4 seq/rank
+# 产出 runs/IR32_{vanilla,random,rr,eco,eco_smr}.json
+```
+
+### 为什么换了一个 IR 定义
+
+旧口径把 100 步的计数**先求和再算** `max_rank/mean_rank`。求和会让各 rank 的
+偏离互相抵消，而 `max/mean` 不是线性泛函 —— **逐步的真实不均衡无法从窗口求和里恢复**。
+一个极端例子（CPU 已验）：
+
+```
+4 步、每步都只有一个 rank 是 3x：
+  逐步 IR = 2.00  （每步 max/mean = 300/150）
+  窗口 IR = 1.00  （4 步合计每个 rank 恰好相等）
+```
+
+新口径（`ir_step`）**每层每步各算一次**，再把所有 `(step, layer)` 对取平均：
+
+```python
+for step, layer:
+    IR = max_r tok[r, step, layer] / mean_r tok[r, step, layer]
+ir_step_layer_mean = mean(all pairs)
+```
+
+同时给出 `ir_step_layer_p50/p90/p99` 与 **Poisson 零假设基线**
+（`ir_poisson_null_mean`）：单层单步每个 rank 只有约 192 条路由，
+`sigma = sqrt(192) ≈ 13.9`（7.2%），即使放置完全均衡，`max/mean` 也会 > 1。
+**只有 `ir_excess_over_null` 才是放置真正贡献的部分。**
+
+采样方式：decode 会重放 CUDA graph，引擎自己无法逐步采样，所以由测试脚本
+在**计时窗口之后**另开一个窗口，每步发一次 `_gc_moe_irstep_sample`
+（RPC 约 60 ms，因此**不计入 ms/step**）。结果写在 run json 的 `ir_step` 字段。
+
 ## 权威规格
 
 `eco_ref/unit_ref.py` 是从 SM100 仓库逐字复制的 **bit-exact numpy 参考实现**。

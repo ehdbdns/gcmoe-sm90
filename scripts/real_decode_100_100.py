@@ -73,6 +73,90 @@ def _compilation_config():
     return {'cudagraph_mode': getattr(CUDAGraphMode, mode)}
 
 
+def _irstep_reduce(rows):
+    """# [IR-STEP] avg over (step, layer) of max_rank/mean_rank.
+
+    `rows[t][r]` is rank r's per-layer token vector for step t. For every
+    (step, layer) pair we take
+
+        IR = max_r tok[r, layer] / mean_r tok[r, layer]
+
+    and report the mean over all pairs (the "A" definition: layer is NOT
+    unfolded into extra weight -- every pair counts once).
+
+    A Poisson NULL BASELINE is returned alongside. One layer of one step
+    carries only `tokens_total / 8` routes per rank, so even a perfectly
+    balanced placement gives IR > 1 purely from sampling noise:
+        sigma = sqrt(n),  E[max of 8 draws] ~ mean + sigma * 1.42
+    Without this number an IR of 1.03 looks like imbalance when it may be
+    nothing but noise.
+    """
+    import math
+    import statistics
+
+    # rows[0] is the baseline snapshot (warm), rows[1:] carry the deltas.
+    steps = [r for r in rows[1:] if r]
+    if not steps:
+        return {'ok': False, 'reason': 'no samples'}
+
+    irs, per_layer_irs, totals, nulls = [], {}, [], []
+    n_rank = max(len(r) for r in steps)
+    for row in steps:
+        if len(row) != n_rank:
+            continue
+        vecs = []
+        for r in row:
+            pl = r.get('per_layer_tokens')
+            if not pl:
+                vecs = []
+                break
+            vecs.append(pl)
+        if not vecs:
+            continue
+        n_layer = min(len(v) for v in vecs)
+        step_total = 0.0
+        for layer in range(n_layer):
+            vals = [v[layer] for v in vecs]
+            m = sum(vals) / len(vals)
+            if m <= 0:
+                continue
+            irs.append(max(vals) / m)
+            per_layer_irs.setdefault(layer, []).append(max(vals) / m)
+            step_total += m
+            # Poisson null for this (step, layer): same total, even split, but
+            # with sqrt(n) sampling noise per rank.
+            n_route = m
+            nulls.append(1.0 + 1.42 * math.sqrt(max(n_route, 1e-9)) / n_route)
+        totals.append(step_total)
+
+    if not irs:
+        return {'ok': False, 'reason': 'no positive (step, layer) pair'}
+
+    def _q(xs, p):
+        xs = sorted(xs)
+        k = max(0, min(len(xs) - 1, int(round(p * (len(xs) - 1)))))
+        return xs[k]
+
+    return {
+        'ok': True,
+        'ir_step_layer_mean': statistics.mean(irs),
+        'ir_step_layer_p50': _q(irs, 0.50),
+        'ir_step_layer_p90': _q(irs, 0.90),
+        'ir_step_layer_p99': _q(irs, 0.99),
+        'ir_step_layer_max': max(irs),
+        'ir_poisson_null_mean': statistics.mean(nulls),
+        # excess over what noise alone explains
+        'ir_excess_over_null': statistics.mean(irs) - statistics.mean(nulls),
+        'n_pairs': len(irs),
+        'n_steps': len(totals),
+        'n_ranks': n_rank,
+        'routes_per_rank_per_layer': statistics.mean(
+            [t / max(1, len(steps)) for t in totals]) if totals else -1.0,
+        'per_layer_ir_mean': {str(k): statistics.mean(v)
+                              for k, v in sorted(per_layer_irs.items())},
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--output', required=True)
@@ -273,6 +357,28 @@ def main():
         except Exception as exc:  # noqa: BLE001 - never fail a run over telemetry
             eco_trace = {'error': str(exc)}
 
+    # [IR-STEP] Separate sampling window: one max/mean over the 8 ranks PER
+    # LAYER PER STEP, averaged over (step, layer) afterwards.
+    #
+    # It runs AFTER the timed window and its RPCs are excluded from ms/step on
+    # purpose: `collective_rpc` costs ~60 ms and would otherwise inflate the
+    # number we report.  Decode replays a CUDA graph, so the engine cannot
+    # sample itself -- the harness has to drive one snapshot per step.
+    irstep = {}
+    if os.environ.get('GC_MEASURE_IR_STEP', '1') == '1':
+        try:
+            engine.collective_rpc('_gc_moe_irstep_begin')
+            rows = []                      # rows[step][rank] = [layers]
+            n_irstep = int(os.environ.get('GC_IRSTEP_STEPS',
+                                          str(a.measure_steps)))
+            for _ in range(n_irstep + 1):   # +1 establishes the baseline
+                _collect(engine.step())
+                outs = engine.collective_rpc('_gc_moe_irstep_sample')
+                rows.append([x for x in outs if isinstance(x, dict) and x.get('ok')])
+            irstep = _irstep_reduce(rows)
+        except Exception as exc:  # noqa: BLE001 - telemetry must not fail a run
+            irstep = {'error': str(exc)}
+
     def _stat(xs):
         return (min(xs), max(xs), statistics.median(xs)) if xs else (-1, -1, -1)
 
@@ -293,6 +399,14 @@ def main():
           f'min={ir.get("min_rank_tokens", -1):.0f} '
           f'per_rank={[int(x) for x in ir.get("tokens_per_rank", [])]}', flush=True)
 
+    if irstep:
+        print(f'[ir-step] IR(step x layer avg)={irstep.get("ir_step_layer_mean", -1):.4f} '
+              f'p50={irstep.get("ir_step_layer_p50", -1):.4f} '
+              f'p90={irstep.get("ir_step_layer_p90", -1):.4f} '
+              f'null={irstep.get("ir_poisson_null_mean", -1):.4f} '
+              f'excess={irstep.get("ir_excess_over_null", -1):.4f} '
+              f'pairs={irstep.get("n_pairs", 0)} steps={irstep.get("n_steps", 0)}',
+              flush=True)
     result = dict(label=a.label, seqs=nseq, seqs_per_rank=a.seqs_per_rank,
                   warm_steps=a.warm_steps, measure_steps=a.measure_steps,
                   prefill_s=prefill_s, warm_ms_per_step=warn_s,
@@ -316,8 +430,7 @@ def main():
                   # correctness / IR evidence
                   tokens_per_rank=int(gen_med) if gen_med > 0 else -1,
                   ir=ir.get('ir', -1.0),
-                  ir_detail=ir,
-                  load_detail=load,
+                  ir_detail=ir, ir_step=irstep,                   load_detail=load,
                   eco_trace=eco_trace,
                   gen_tokens_total=sum(len(v) for v in got.values()),
                   tokens={k: v for k, v in sorted(got.items())})
