@@ -2427,6 +2427,9 @@ archive/      上一轮的 runs/logs（只读）
 | two-hop | ⬜ 按规格 EP8 不需要（SM100 在 ≤32 rank 也是 0 轮） |
 | wb / wa 标定 | ✅ 全部实验统一 `wb=260, wa=111` |
 | 计数/广播移入 plan + 双缓冲（对齐 SM100） | ✅ 关键路径上不再有 ECO 独有开销 |
+| 每 (layer, step) 的 token / M 块 / 激活槽三张表（IR 新口径） | ✅ 20 个 run、40,000 个 (layer, step) 对 |
+| fine event log 的 epoch floor 门控（修掉"prefill 吃光 2 MB"） | ✅ CPU 回归 + GPU 形态校验 |
+| SM-reuse（role 6 复用 dispatch 的 6 个 SM） | ✅ 四档 −0.76% / −1.33% / −2.35% / −1.09% vs eco |
 
 ## 快速验证（都不加载模型）
 
