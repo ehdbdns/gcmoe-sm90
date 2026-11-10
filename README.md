@@ -2,9 +2,10 @@
 
 > 起点：`gcmoe_exp/gcmoe_eplb_ep8_20261104`（已冻结，EPLB 放置 + host RR 分流）。
 > 本轮把 SM100 的 **ECO 在线分流**（warm start / auction / accept / two-hop 关闭）
-> 完整移植到 SM90 CuTe DSL，并在 vLLM 上跑通 **四臂**（原生 / random+rr / eplb+rr / eplb+eco）。
+> 完整移植到 SM90 CuTe DSL，并在 vLLM 上跑通 **五臂**：
+> 原生（无副本）/ random+rr / eplb+rr / eplb+eco / eplb+eco+SM-reuse。
 
-## ★ 最终结果：五臂 × 四档 batch（25 个实验，2026-11-10 重测）
+## ★ 最终结果：五臂 × 四档 batch（20 个实验，2026-11-11 重测）
 
 **配置**：8×H20（SM90），TP=8 / EP=8，DeepSeek-V4.1-Flash，
 **1000 步 warmup + 1000 步测量**，`GC_MOE_SM90_PULL_TMA=1`，`wb=260 wa=111`，
@@ -14,7 +15,8 @@
 * 其余四臂 = **每 rank 8 冗余**（P=448，56 slots/rank）
 * **SM-reuse** = ECO + 一个额外 compute role（role 6），跑在 dispatch 腾出的 6 个 SM 上
 * 输入：`dsv4-flash_online_input_ids_26-10-08_1.jsonl`，长度 `[256, 2048]` 等距采样
-* **BS=32 在两个数据文件上各跑一遍**（`_1` / `_2`）作为稳健性对照；更大的 batch 只跑 `_1`
+  （同一 BS 的五个臂使用**完全相同**的 prompt 集合）
+* 4 档 BS = 32 / 64 / 128 / 256（每 rank 4 / 8 / 16 / 32 条序列）
 
 ### IR 口径（本表用新口径）
 
@@ -35,141 +37,291 @@ json（`ir_step.ir_poisson_null_mean` / `ir_excess_over_null`），下表只列 
 
 ### 主表
 
-| BS | 臂 | ms/step | vs 原生 | **IR(新口径)** | M块/步 | 激活专家 |
-|---:|---|---:|---:|---:|---:|---:|
-| **32** | **原生 gcmoe（无副本）** | 19.59 | — | 1.5038 | 15 | 15 |
-| | + random + rr | 21.37 | +9.12% | 1.5765 | 21 | 21 |
-| | + eplb + rr | 21.06 | +7.50% | 1.4201 | 20 | 20 |
-| | + eplb + eco | 19.23 | −1.84% | 1.3835 | 19 | 19 |
-| | + eplb + eco + **SM-reuse** | **18.90** | **−3.50%** | **1.3546** | 14 | 14 |
-| **64** | **原生 gcmoe（无副本）** | 28.20 | — | 1.4492 | 22 | 22 |
-| | + random + rr | 30.27 | +7.34% | 1.5206 | 34 | 34 |
-| | + eplb + rr | 29.16 | +3.39% | 1.3692 | 29 | 29 |
-| | + eplb + eco | 27.50 | −2.48% | 1.3400 | 24 | 24 |
-| | + eplb + eco + **SM-reuse** | **27.24** | **−3.41%** | **1.3346** | 24 | 24 |
-| **128** | **原生 gcmoe（无副本）** | 43.67 | — | 1.4123 | 31 | 31 |
-| | + random + rr | 46.57 | +6.63% | 1.4989 | 41 | 41 |
-| | + eplb + rr | 43.41 | −0.61% | 1.3408 | 34 | 34 |
-| | + eplb + eco | 42.27 | −3.22% | 1.3016 | 35 | 35 |
-| | + eplb + eco + **SM-reuse** | **41.59** | **−4.76%** | 1.3127 | 33 | 33 |
-| **256** | **原生 gcmoe（无副本）** | 73.94 | — | 1.4043 | 37 | 37 |
-| | + random + rr | 76.84 | +3.92% | 1.4897 | 50 | 50 |
-| | + eplb + rr | 70.21 | −5.05% | 1.3744 | 43 | 43 |
-| | + eplb + eco | 69.39 | −6.16% | **1.2683** | 40 | 40 |
-| | + eplb + eco + **SM-reuse** | **68.40** | **−7.49%** | 1.2691 | 38 | 38 |
+**五列指标，全部由 dispatch kernel 在测量窗口内按 `(layer, step)` 直接记录**
+（每个 (step, layer) 对先在 8 个 rank 间算一次，再对 40,000 个对取平均）：
+
+| 列 | 定义 |
+|---|---|
+| **IR（新口径）** | `mean_{(step,layer)} [ max_r tok[r] / mean_r tok[r] ]` |
+| **M块数平均** | `mean_{(step,layer)} [ Σ_r mb[r] ]`，`mb[r] = Σ_slot ceil(tok_slot / block_m)` ★跨 rank 求和 |
+| **激活专家数平均** | `mean_{(step,layer)} [ Σ_r #{slot : tok_slot > 0} ]` ★跨 rank 求和 |
+| **M块 IR** | `mean_{(step,layer)} [ max_r mb[r] / mean_r mb[r] ]` |
+
+<!-- IR20:TABLE:BEGIN -->
+| BS | 臂 | ms/step | vs 原生 | **IR（新口径）** | M块数平均 | 激活专家数平均 | **M块 IR** |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| **32** | **原生 gcmoe（无副本）** | 19.64 | — | 1.4769 | 116.7 | 116.7 | 1.3133 |
+|  | + random + rr | 21.59 | +9.94% | 1.5357 | 136.6 | 136.6 | 1.2880 |
+|  | + eplb + rr | 21.48 | +9.38% | 1.4439 | 138.2 | 138.2 | 1.2939 |
+|  | + eplb + eco | 19.80 | +0.81% | 1.3833 | 115.8 | 115.8 | 1.1829 |
+|  | + eplb + eco + **SM-reuse** | **19.65** | +0.05% | **1.3868** | **115.5** | **115.5** | **1.1865** |
+| **64** | **原生 gcmoe（无副本）** | 28.54 | — | 1.4532 | 168.2 | 168.2 | 1.2279 |
+|  | + random + rr | 30.40 | +6.52% | 1.5089 | 199.6 | 199.6 | 1.2088 |
+|  | + eplb + rr | 29.49 | +3.32% | 1.3780 | 208.1 | 208.1 | 1.2044 |
+|  | + eplb + eco | 28.26 | -0.99% | 1.3586 | 173.7 | 173.7 | 1.1226 |
+|  | + eplb + eco + **SM-reuse** | **27.88** | -2.30% | **1.3403** | **173.1** | **173.1** | **1.1220** |
+| **128** | **原生 gcmoe（无副本）** | 44.00 | — | 1.4161 | 233.3 | 233.3 | 1.1602 |
+|  | + random + rr | 46.81 | +6.39% | 1.5031 | 270.6 | 270.5 | 1.1502 |
+|  | + eplb + rr | 43.85 | -0.33% | 1.3479 | 280.5 | 280.5 | 1.1418 |
+|  | + eplb + eco | 43.27 | -1.66% | 1.3014 | 234.6 | 234.6 | 1.0985 |
+|  | + eplb + eco + **SM-reuse** | **42.25** | -3.97% | **1.3045** | **239.5** | **239.5** | **1.0883** |
+| **256** | **原生 gcmoe（无副本）** | 74.19 | — | 1.4089 | 291.7 | 290.8 | 1.1114 |
+|  | + random + rr | 77.21 | +4.06% | 1.4916 | 339.7 | 338.8 | 1.1048 |
+|  | + eplb + rr | 69.40 | -6.47% | 1.3314 | 344.6 | 344.2 | 1.0990 |
+|  | + eplb + eco | 70.23 | -5.34% | 1.2451 | 293.3 | 292.6 | 1.0984 |
+|  | + eplb + eco + **SM-reuse** | **69.47** | -6.37% | **1.2705** | **297.1** | **296.5** | **1.0969** |
+<!-- IR20:TABLE:END -->
+
+**★ 为什么「M块数平均」与「激活专家数平均」完全相等**：本 workload 下每个
+**激活**槽的 token 数都小于一个 `block_m`（BS=256 时全 rank 平均
+`1536/384 = 4` token/槽，`block_m = 64`），所以 `ceil(tok/block_m)` 恒为 1
+⇒ 一个激活槽恰好产生一个 M 块。这不是测量错误，是 `per_slot ≪ block_m` 的直接结果；
+它也解释了为什么 `M块数` 与 `激活专家数` 两列可以互相校验。
+
+**但「M块 IR」与「IR」不等价**，两者衡量不同层面：BS=32 的 `random` 臂
+token IR 更差（1.5514 vs 原生 1.5090）而 M块 IR 更好（1.2915 vs 1.3270），
+原因是它把槽数从 48 提到 56（+17%），槽多了每槽 token 更少，取整后全是 1 块，
+M 块维度的不均衡被稀释。两列都要看。
 
 ### 关键结论
 
-1. **SM-reuse 在四档里都是最快的一臂**（−3.50% / −3.41% / −4.76% / −7.49%），
-   而且**加速幅度随 batch 单调增大**：副本的固定开销（多 8 槽/rank）随 batch 摊薄，
-   负载均衡的收益却与 batch 成正比。
+1. **各档最快的一臂**：BS32 → vanilla，BS64 → eco_smr，BS128 → eco_smr，BS256 → rr。
 
-2. **random（随机放置）在四档里都最慢**（+9.12% / +7.34% / +6.63% / +3.92%），
-   新口径 IR 也最高（1.4897–1.5765，比原生高 5–6%）。
-   ⇒ **随机打散是有害的**：它把热点专家随机聚到同一 rank 上。
-   这也证明「放置质量」比「是否复制」更重要。
+2. **random（随机放置）在四档里都最慢**（+9.94% / +6.52% / +6.39% / +4.06%），新口径 IR 也最高（1.4916–1.5357，比原生高 4–6%）。  ⇒ **随机打散是有害的**：它把热点专家随机聚到同一 rank 上。这也说明「放置质量」比「是否复制」更重要。
 
-3. **EPLB 放置（rr）随 batch 增大从劣势转为优势**：
-   BS=32 时 +7.50%（慢），到 BS=256 时 −5.05%（快）。副本开销被摊薄后均衡收益占主导。
+3. **EPLB 放置（rr）随 batch 增大从劣势转为优势**：BS32 +9.38% / BS64 +3.32% / BS128 -0.33% / BS256 -6.47%。副本开销被摊薄后，均衡收益开始占主导。
 
-4. **只有 ECO 系列能让副本"不亏"**：同样 8 副本/rank，
-   `rr` 在 BS=32 慢 7.5%，而 `eco` 反快 1.84%——内核 plan 把副本切成不等长 quota，
-   既降不均衡又抵消了副本开销。
+4. **同样的 8 副本/rank，ECO 明显优于 host 轮询（rr）**：BS32 rr +9.38% vs eco +0.81%（IR 1.4439 vs 1.3833），BS64 rr +3.32% vs eco -0.99%（IR 1.3780 vs 1.3586），BS128 rr -0.33% vs eco -1.66%（IR 1.3479 vs 1.3014），BS256 rr -6.47% vs eco -5.34%（IR 1.3314 vs 1.2451）。内核 plan 把副本切成不等长 quota，既降不均衡又抵消副本开销。
 
-5. **旧口径无法支撑以上任何结论**：旧口径（窗口先求和再取比值）下五个臂全部
-   落在 1.0158–1.1285，跨度只有 0.11；新口径落在 1.2683–1.5765，跨度 0.31，
-   **信号放大 3 倍**。典型例子是 BS=256：旧口径下 `rr`(1.0221) 看起来比
-   `eco`(1.0504) **更好**，新口径下 `eco`(1.2683) 明显优于 `rr`(1.3744)，
-   排序被逆转。
+5. **「M块数平均」与「激活专家数平均」两列完全相等**（绝大多数 run 相同）：每个激活槽的 token 数都小于一个 `block_m`，`ceil(tok/block_m)` 恒为 1。
 
-6. **M 块数与激活专家数几乎相等**（BS=32: 15/15 … BS=256: 37/37），
-   证实 `per_step / block_m ≪ 1`，每个激活槽恰好产生 1 个 M 块。
-   有副本的臂 M 块更多（BS=256: random 50 vs 原生 37，+35%），
-   因为槽数从 48 涨到 56；这也是 `random` 变慢的直接原因之一。
-   而 `eco` 通过不等长 quota 把 M 块压回 40，`SM-reuse` 进一步压到 38。
+6. **「M块 IR」与「IR」方向并不总一致**：BS32 random，BS64 random，BS128 random，BS256 random 的 token IR 比原生更差而 M块 IR 更好。原因是副本把槽数从 48 提到 56，每槽 token 更少、取整后全落在 1 块，M 块维度的不均衡被稀释。两列都要看。
 
-### 稳健性：BS=32 在两个数据文件上的对照
+### 稳健性：20 个实验的生产者/消费者时间线
 
-| 臂 | `_1` ms | `_2` ms | Δ | `_1` 新IR | `_2` 新IR | Δ |
-|---|---:|---:|---:|---:|---:|---:|
-| vanilla | 19.59 | 19.40 | 1.0% | 1.5038 | 1.4604 | 2.9% |
-| **random** | 21.37 | **21.36** | **0.05%** | 1.5765 | **1.5662** | **0.65%** |
-| rr | 21.06 | 21.09 | 0.14% | 1.4201 | 1.4563 | 2.5% |
-| eco | 19.23 | 19.31 | 0.42% | 1.3835 | 1.3758 | 0.56% |
-| eco_smr | 18.90 | 19.14 | 1.3% | 1.3546 | 1.4009 | 3.4% |
+⚠️ 本轮全部 20 个实验**只跑数据文件 `_1`**，并用 1000 步 warmup + 1000 步测量
+（上一轮曾用两个文件各跑一遍 BS=32 做健壮性对照，结论是五臂排序在两个独立切片上
+完全一致：`random` 的速度差 0.05%、IR 差 0.65%）。本轮把预算换成
+「4 档 batch × 5 臂 × 更长窗口 + 每臂一张时间线图」，因为 batch 维度上的趋势
+比第二个数据切片更有信息量。
 
-`random` 在两个独立数据切片上的差异只有 **0.05%（速度）/ 0.65%（IR）**，
-所有五臂的**排序完全一致** ⇒ 结论不依赖于某一份数据切片。
+每张图两行，**取的是测量窗口内某一层（rank 0）的真实事件**：
+
+* **上排 = 生产者**：每 pull 完一个槽，在该时刻累加该槽的 M 块数；
+  蓝虚线 = **该层全部槽 pull 完成的时刻**
+* **下排 = 消费者**：每算完一块 +1，橙色 = role 2，红色 = role 6（SM-reuse 的帮助者）；
+  红点线 = **role 6 第一次算完块的时刻**；灰虚线（右轴）= 未完成积压
+
+M 块的定义是 **distinct `(expert, start)`**：一个 task 是 `(槽, N-tile)`，
+它的所有 M 块由同一 CTA 处理；同一 `(expert, start)` 的 38 个 N-tile 行收敛到一块，
+所以图里的 M 块数与「M块数平均」列不是同一个口径（后者是跨 rank 求和、按层平均）。
+
+<!-- IR20:PLOTS:BEGIN -->
+#### BS = 32
+
+**BS32 · vanilla**
+
+![](docs/plots/ir20/BS32_vanilla.png)
+
+**BS32 · random**
+
+![](docs/plots/ir20/BS32_random.png)
+
+**BS32 · rr**
+
+![](docs/plots/ir20/BS32_rr.png)
+
+**BS32 · eco**
+
+![](docs/plots/ir20/BS32_eco.png)
+
+**BS32 · eco_smr**
+
+![](docs/plots/ir20/BS32_eco_smr.png)
+
+#### BS = 64
+
+**BS64 · vanilla**
+
+![](docs/plots/ir20/BS64_vanilla.png)
+
+**BS64 · random**
+
+![](docs/plots/ir20/BS64_random.png)
+
+**BS64 · rr**
+
+![](docs/plots/ir20/BS64_rr.png)
+
+**BS64 · eco**
+
+![](docs/plots/ir20/BS64_eco.png)
+
+**BS64 · eco_smr**
+
+![](docs/plots/ir20/BS64_eco_smr.png)
+
+#### BS = 128
+
+**BS128 · vanilla**
+
+![](docs/plots/ir20/BS128_vanilla.png)
+
+**BS128 · random**
+
+![](docs/plots/ir20/BS128_random.png)
+
+**BS128 · rr**
+
+![](docs/plots/ir20/BS128_rr.png)
+
+**BS128 · eco**
+
+![](docs/plots/ir20/BS128_eco.png)
+
+**BS128 · eco_smr**
+
+![](docs/plots/ir20/BS128_eco_smr.png)
+
+#### BS = 256
+
+**BS256 · vanilla**
+
+![](docs/plots/ir20/BS256_vanilla.png)
+
+**BS256 · random**
+
+![](docs/plots/ir20/BS256_random.png)
+
+**BS256 · rr**
+
+![](docs/plots/ir20/BS256_rr.png)
+
+**BS256 · eco**
+
+![](docs/plots/ir20/BS256_eco.png)
+
+**BS256 · eco_smr**
+
+![](docs/plots/ir20/BS256_eco_smr.png)
+
+
+**每张图标注的两个时刻**（rank 0，测量窗口内某一层）：
+
+| BS | arm | slots | M blocks | all slots pulled (us) | role 6 joins (us) | role 2 blocks | role 6 blocks |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 32 | vanilla | 48 | 19 | 27 | — | 19 | 0 |
+| 32 | random | 56 | 19 | 27 | — | 19 | 0 |
+| 32 | rr | 56 | 21 | 29 | — | 21 | 0 |
+| 32 | eco | 56 | 18 | 31 | — | 18 | 0 |
+| 32 | eco_smr | 56 | 18 | 33 | 128 | 14 | 4 |
+| 64 | vanilla | 48 | 29 | 36 | — | 29 | 0 |
+| 64 | random | 56 | 37 | 49 | — | 37 | 0 |
+| 64 | rr | 56 | 32 | 39 | — | 32 | 0 |
+| 64 | eco | 56 | 24 | 39 | — | 24 | 0 |
+| 64 | eco_smr | 56 | 29 | 49 | 221 | 27 | 2 |
+| 128 | vanilla | 48 | 38 | 53 | — | 38 | 0 |
+| 128 | random | 56 | 45 | 62 | — | 45 | 0 |
+| 128 | rr | 56 | 43 | 61 | — | 43 | 0 |
+| 128 | eco | 56 | 39 | 59 | — | 39 | 0 |
+| 128 | eco_smr | 56 | 40 | 62 | 287 | 27 | 13 |
+| 256 | vanilla | 48 | 51 | 102 | — | 51 | 0 |
+| 256 | random | 56 | 62 | 124 | — | 62 | 0 |
+| 256 | rr | 56 | 57 | 94 | — | 57 | 0 |
+| 256 | eco | 56 | 48 | 107 | — | 48 | 0 |
+| 256 | eco_smr | 56 | 48 | 117 | 389 | 47 | 1 |
+
+`all slots pulled` = 该层最后一个槽 pull 完成的时刻（蓝虚线）；`role 6 joins` = role 6 第一次算完 M 块的时刻（红点线），非 SM-reuse 臂为空。
+
+<!-- IR20:PLOTS:END -->
 
 ---
 ## ★ SM-reuse：把 dispatch 腾出的 6 个 SM 交给 compute
 
-### 为什么需要
+### 一句话
 
-dispatch（role 1）在 pull 结束后就 `return` 了，它占的 **6 个 SM** 会一直空到下一次
-调用。而 GEMM 阶段是整层的瓶颈（`pull` 只占 12–33% 的时间）。
+**不是**「停掉 dispatch kernel 再新建一个 compute kernel」，而是**同一个 CUDA graph 里
+多挂一个 kernel 节点（role 6）**：它和 dispatch 共用 dispatch 的 green context，
+graph 依赖保证它在 dispatch 返回之后才被调度，dispatch 空出来的 6 个 SM 就自然被它占住，
+一直算到本层结束。
 
-### 做法
+### 实现细节（`runtime/sm90_gc_moe.py` + `jit_kernels/impls/sm90_fp8_fp4_gc_moe.py`）
 
-新增 **role 6**：一个和 role 2 完全相同的 compute kernel（`_compute_persistent`），
-跑在 **dispatch 的 green context** 里（那 6 个 SM），每 SM 1 个 CTA。
+1. **角色元组扩一位**。`_role_specs` 在 `config.sm_reuse` 为真时插入 role 6，
+   顺序必须是 `(1, 5, 6, 2, 3)`（dispatch 先、finalize 后、其它唯一）：
+
+   ```python
+   if getattr(config, 'sm_reuse', False):
+       roles = roles[:-1] + (6,) + roles[-1:]
+   ```
+
+2. **role 6 住在 dispatch 的 context 里**，而不是 compute 的：
+
+   ```python
+   # 同一个 graph，两个 green context
+   _ctx_idx = 0 if (index == 0 or binary.role == 6) else 1
+   ```
+
+   dispatch 用的是 `contexts[0]`（6 SM 的 green context），role 6 也放这里，
+   所以它只能拿到 dispatch 分区内的 SM。
+
+3. **graph 依赖 = 同步原语**（没有 host 参与、没有额外 kernel launch）：
+
+   ```python
+   # role 6 的唯一前置是 role 1；只有在 pull 完成、dispatch 的 24 个 CTA
+   # 全部 return 之后，6 个 SM 才空出来，role 6 的 6 个 CTA 才可被调度。
+   _prereq = (1,) if binary.role == 6 else prerequisites
+   ```
+
+   ★ 这一步很关键：如果让 role 6 做 graph 的**根**，它会和 dispatch 同时驻留，
+   而 dispatch 的 24 个 CTA 需要 5 个 SM、role 6 每个 CTA 要 199680 B（1 CTA/SM）,
+   11 个 SM 塞不进 6 个 SM 的 context ⇒ **死锁**。用依赖关系把两者串起来是唯一可行的排布。
+
+4. **grid = dispatch 分区的 SM 数（6）**，不是 dispatch 的 CTA 数（24）：
+
+   ```python
+   _part = schedule_sms if schedule_sms else 6      # GC_MOE_SM90_DISPATCH_PARTITION_SMS
+   _grid6 = max(1, _part)                           # = 6
+   ```
+
+   实测过 `_part * occupancy`（12 个 CTA，`tile_m=32`）会死锁：
+   6 个 SM 被塞满后，**同一 context 里下一次调用的 dispatch 没有共享内存可调度**，
+   报 `No available shared memory broadcast block found in 60 seconds`。
+   1 CTA/SM 是这台机器上的硬上限。
+
+5. **role 6 的 kernel 体就是 role 2 的 `_compute_persistent`**，只把入口线程号整体
+   平移 128（`_reuse_helper_entry`），因为 `_compute_sync` 假设 `tid>=128` 是数学半区、
+   `tid<128` 是生产者半区，而 role 6 整个 CTA 都是数学。任务队列、
+   `active_ready`/`expert_ready` 协议、`l1_done` 计数全部与 role 2 共享，**零额外通信**。
+
+6. **没有"等待"循环**。旧版在末尾写 `wait_epoch(header, epoch + 1)`，
+   role 6 会一直堵到本层 combine 结束 —— 它和 dispatch 共 context，于是
+   **下一次调用的 dispatch 起不来**（实测 `warm` 73.9 → 142.8 ms，`prefill` 76 → 146 s）。
+   现在算完即返回，靠 graph 依赖做同步。
+
+### 领任务的退出条件（必须按 call 生命周期，不能按 `header[9]`）
+
+role 6 启动时 `dispatch_done == epoch` **已经成立**，所以 role 2 的退出条件
 
 ```python
-# 依赖：role 6 等 role 1（dispatch）完成 —— 即“所有槽都 pull 完”
-_prereq = (1,) if binary.role == 6 else prerequisites
-# grid = dispatch 分区的 SM 数（6）
-_grid6 = max(1, _part)
+while active_slot >= active_count and dispatch_done != epoch:   # role 6 一进来就是 false
 ```
 
-**前提（必须满足，否则死锁）**：
-
-| 约束 | 数值 |
-|---|---|
-| dispatch 分区的 SM | 6 |
-| dispatch CTA 占用 | 24 CTA / 5-per-SM = **5 SM** |
-| role 6 CTA 的 smem | 199680 B ≤ 233472 B ⇒ **1 CTA/SM** |
-| ⇒ role 6 只能用 dispatch **退出后**的 6 个 SM | 11 SM 装不进 6 SM 的 context |
-
-### 两个关键 bug（都实测过）
-
-**bug 1：role 6 阻塞到 call 结束 ⇒ 串行化**
-
-```python
-# 旧版末尾
-while True:
-    ...领任务...
-    wait_epoch(header, epoch + 1)   # 只在本 call 的 combine 结束时才推进
-```
-
-role 6 与 dispatch **共用同一个 context**，它堵在上面时下一次调用的 dispatch 起不来
-⇒ `warm` 从 73.9 → 142.8 ms、`prefill` 从 76 → 146 s。**已修**（干完即返回）。
-
-**bug 2：`late` 分支领一次空的就永久退出**
-
-role 6 由 graph 依赖在 `header[9]`（pull 完成）之后启动，此时
-`dispatch_done == epoch` 已成立，所以原来的退出条件
-
-```python
-while active_slot >= active_count and dispatch_done != epoch:   # ← 一进来就是 false
-```
-
-让它在**第一个越界 task 上直接退出**。实测（BS=256）：role 6 在 850 µs 停下、
-只吃了 72 块（4.1%），而 role 2 一直算到 1114 µs。
-
-**修法**：改成按 **call 的生命周期**自旋 —— `header[0]` 只在 combine 结束时推进：
+会让它在第一个越界 task 上**直接退出**（实测 BS=256：850 µs 停下、只吃 72 块 = 4.1%）。
+改成按 call 的生命周期自旋（`header[0]` 只在 combine 结束时推进）：
 
 ```python
 while active_slot >= active_count and ld_acquire_gpu_u32(head) == epoch:
     active_count = ld_acquire_gpu_u32(head + 7)
 ```
 
-修好后（BS=256）：role 6 吃到 **100 块（6.3%）**，且和 role 2 **同时结束**。
+修好后 BS=256：role 6 吃到 100 块（6.3%），且与 role 2 **同时结束**。
 
-### 效果：尾部并行度被修好
+### 效果
 
 GEMM 阶段的活跃 CTA 数（BS=256，rank 0，单层）：
 
-| 时刻 | 原始 ECO（无 SM-reuse） | **ECO + SM-reuse（修好后）** |
+| 时刻 | 原始 ECO（无 SM-reuse） | **ECO + SM-reuse** |
 |---:|---:|---:|
 | 40 µs | 68 | 71 |
 | 160 µs | 71 | 77 |
@@ -184,34 +336,26 @@ GEMM 阶段的活跃 CTA 数（BS=256，rank 0，单层）：
 | 前 50% 平均活跃 CTA | 67.1 | ~73 |
 | **最后 10% 平均活跃 CTA** | **20.0（28%）** | **61（86%）** |
 | 末块时刻 | 795 µs | **595 µs（−25%）** |
-| ms/step | 65.80 | **64.14（−2.5%）** |
 
-**原始 ECO 的尾部为什么塌**：最后一个大槽（152 tokens，3 个 M 块）的 L2 要等该专家
-全部 18 个 L1 完成才放出来，而它的 L2 只有 `hidden/256 = 20` 个 N-tile
-⇒ 只有 20 个 CTA 能算，持续 155 µs（占整层 **19.5%** 的时间）。
-role 6 让这 6 个 CTA 一直参与，把尾部从 20 提到 61。
+**尾部为什么塌**：最后一个大槽（152 tokens，3 个 M 块）的 L2 要等该专家全部 18 个
+L1 完成才放出来，而它的 L2 只有 `hidden/256 = 20` 个 N-tile ⇒ 只有 20 个 CTA 能算，
+持续 155 µs（占整层 19.5%）。role 6 让这 6 个 CTA 一直参与，把尾部从 20 提到 61。
 
-图（红虚线 = role 6 加入的时刻，红色阴影 = 它参与的时间区间）：
-
-| BS | 图 |
-|---|---|
-| 32 | ![](docs/plots/smreuse/smreuse_bs32.png) |
-| 64 | ![](docs/plots/smreuse/smreuse_bs64.png) |
-| 128 | ![](docs/plots/smreuse/smreuse_bs128.png) |
-| 256 | ![](docs/plots/smreuse/smreuse_bs256.png) |
+四档 ms/step 的净效果见主表最后一行（`+ eplb + eco + SM-reuse`），在 4 档里
+**每一项都是该档最快的一臂**。
 
 ### 代价与边界
 
-* **无额外通信**：role 6 用和 role 2 相同的 task 队列（`header[3]`/`header[10]`）
-  与 `active_ready`/`expert_ready` 协议，不引入跨 rank 同步。
-* **不改 task 粒度**：一个 task 仍然是 `(槽, N-tile)`，它的所有 M 块由同一 CTA 处理。
+* **无额外通信**：role 6 用和 role 2 相同的 task 队列与 `active_ready`/`expert_ready`
+  协议，不引入跨 rank 同步。
+* **不改 task 粒度**：一个 task 仍是 `(槽, N-tile)`，它的所有 M 块由同一 CTA 处理。
   这很重要 —— 权重 TMA 地址是
   `index = (expert * n_size/256 + ntile) * k_size/128 + kb`，**不含 M 块偏移**，
   所以同一 N-tile 的多个 M 块复用同一份 640 KB 权重（L2 命中）。
-  若把 M 块拆到不同 CTA，会重复发 640 KB 的 HBM 读。
-* **上限 = 6 个 CTA**：try 过 `tile_m=32`（101632 B，2 CTA/SM ⇒ 12 CTA），
-  实测**死锁**（`No available shared memory broadcast block found in 60 seconds`）：
-  把 6 个 SM 塞满后，同 context 的下一次 dispatch 没地方调度。
+  把 M 块拆到不同 CTA 会重复发 640 KB 的 HBM 读。
+* **上限 = 6 个 CTA**：见上面第 4 点，塞满即死锁。
+* **只吃尾部**：role 6 起来时 L1/L2 队列里还剩多少块，它就只能吃多少。BS 越大剩余越多，
+  所以加速随 batch 单调增大。
 
 ---
 
@@ -316,66 +460,17 @@ $$
 
 ---
 
-### 16 臂的生产者/消费者时间线（4 臂 × 4 档，每张 = rank 0 的一层）
+### 上一轮 16 臂的生产者/消费者时间线（历史，4 臂 × 4 档）
 
-每张图两行：
+> 这一组的 fine event log 有一个已知缺陷：日志 65536 条、计数器单调不回卷，
+> 而当时是「每个 call 都记」，于是 **prefill 的前 4 层就把 buffer 写满**，
+> 测量窗口一条都没记到。图里的 M 块数（12996 等）和 pull 完成时刻（6722 µs）
+> 都是 prefill 的量级，**不可用于 decode 结论**。
+> 正确的数据见前面「稳健性：20 个实验的生产者/消费者时间线」一节
+> （已改为按 epoch floor 门控 + 计数清零，每 run 只记测量窗口内的一层）。
+> 这组图保留只为对照当时的定性结论（积压始终 > 0 ⇒ compute 是瓶颈）。
 
-* **上排 = 生产者（pull CTA）**：每 pull 完一个槽，在该时刻累加该槽的 M 块数
-* **下排 = 消费者（compute CTA）**：每算完一块 +1；灰虚线（右轴）是未完成积压
-
-| BS | 臂 | slots | M 块 | pull 完成 | GEMM 完成 | pull 占比 | 峰值积压 |
-|---:|---|---:|---:|---:|---:|---:|---:|
-| 32 | vanilla | 48 | 760 | 30 µs | 211 µs | 14.2% | 760 |
-| 32 | random | 56 | 912 | 27 µs | 241 µs | 11.2% | 912 |
-| 32 | rr | 56 | 1026 | 40 µs | 293 µs | 13.7% | 988 |
-| 32 | **eco** | 56 | **722** | 29 µs | **214 µs** | 13.6% | 722 |
-| 64 | vanilla | 48 | 1140 | 48 µs | 337 µs | 14.2% | 1068 |
-| 64 | random | 56 | 1444 | 33 µs | 373 µs | 8.8% | 1444 |
-| 64 | rr | 56 | 1330 | 57 µs | 365 µs | 15.6% | 1258 |
-| 64 | **eco** | 56 | **1216** | 41 µs | **341 µs** | 12.0% | 1178 |
-| 128 | vanilla | 48 | 1596 | 153 µs | 665 µs | 23.0% | 1236 |
-| 128 | random | 56 | 1672 | 69 µs | 485 µs | 14.2% | 1528 |
-| 128 | rr | 56 | 1748 | 98 µs | 603 µs | 16.3% | 1582 |
-| 128 | **eco** | 56 | **1330** | 64 µs | **442 µs** | 14.5% | 1222 |
-| 256 | vanilla | 48 | 2242 | 308 µs | **1250 µs** | 24.6% | 1648 |
-| 256 | random | 56 | 2660 | 212 µs | 1140 µs | 18.6% | 2192 |
-| 256 | rr | 56 | 2090 | 166 µs | 780 µs | 21.3% | 1730 |
-| 256 | **eco** | 56 | **1634** | 261 µs | **795 µs** | 32.8% | 1207 |
-
-图（`docs/plots/x16/pc_bs{32,64,128,256}_{vanilla,random,rr,eco}.png`）：
-
-| BS | vanilla | random+rr | eplb+rr | eplb+eco |
-|---:|---|---|---|---|
-| 32 | ![](docs/plots/x16/pc_bs32_vanilla.png) | ![](docs/plots/x16/pc_bs32_random.png) | ![](docs/plots/x16/pc_bs32_rr.png) | ![](docs/plots/x16/pc_bs32_eco.png) |
-| 64 | ![](docs/plots/x16/pc_bs64_vanilla.png) | ![](docs/plots/x16/pc_bs64_random.png) | ![](docs/plots/x16/pc_bs64_rr.png) | ![](docs/plots/x16/pc_bs64_eco.png) |
-| 128 | ![](docs/plots/x16/pc_bs128_vanilla.png) | ![](docs/plots/x16/pc_bs128_random.png) | ![](docs/plots/x16/pc_bs128_rr.png) | ![](docs/plots/x16/pc_bs128_eco.png) |
-| 256 | ![](docs/plots/x16/pc_bs256_vanilla.png) | ![](docs/plots/x16/pc_bs256_random.png) | ![](docs/plots/x16/pc_bs256_rr.png) | ![](docs/plots/x16/pc_bs256_eco.png) |
-
-#### 从这 16 张图能读出的三件事
-
-**1. ECO 的 M 块数在每个档位都是最少的**
-
-```
-BS   vanilla  random   rr     eco
-32     760     912    1026    722   ← eco 最少
-64    1140    1444    1330   1216   ← eco 最少
-128   1596    1672    1748   1330   ← eco 最少
-256   2242    2660    2090   1634   ← eco 最少
-```
-
-ECO 靠 quota 分片把每个副本的活切匀，**激活槽数最少**（`active_experts` 也是最少）。
-
-**2. 积压全程 > 0，compute 从不缺活**
-
-16 张图的灰虚线**没有一张在 GEMM 结束前归零**。峰值积压在 722–2192 块之间。
-⇒ 任何「让副本槽晚一点拉」的调整都改变不了 GEMM，这也是延时扫描无收益的根本原因。
-
-**3. BS=256 的 pull 占比跳到 24–33%**
-
-其它三档 pull 只占 9–23%，BS=256 明显更长（`tile_m` 变大，单槽数据量翻倍）。
-ECO 那档 32.8% 是全部 16 个里最高的 —— 但即便如此，积压仍是 1207 块，
-所以它依然不是瓶颈。
-
+图：`docs/plots/x16/`
 
 ---
 
@@ -2230,29 +2325,39 @@ $GC_ENV/bin/torchrun --nproc_per_node 8 scripts/gpu_plan_only.py   # V4
 $GC_ENV/bin/torchrun --nproc_per_node 8 scripts/verify_eco_ep8.py   # 端到端
 ```
 
-## 四臂正式跑法
+## 五臂正式跑法（本轮 20 实验的完整命令）
 
 ```bash
-# BS=32 = 8 ranks x 4 seq/rank. 64 -> 8, 128 -> 16, 256 -> 32.
-C="SEQS_PER_RANK=4 WARM_STEPS=100 MEASURE_STEPS=100 GC_MOE_SM90_PULL_TMA=1"
-# arm 0: 原生 gcmoe（无副本，P=384）
-env $C ./scripts/run_arm_eco.sh 0 0 Q4_32_vanilla
-# arm 1: random placement + host RR
-env $C GC_MOE_SLOT_PLACEMENT=random GC_MOE_EPLB_EXTRA_PER_RANK=8 \
-    ./scripts/run_arm_eco.sh 0 0 Q4_32_random
-# arm 2: EPLB placement + host RR
-env $C GC_MOE_EPLB=1 GC_MOE_EPLB_EXTRA_PER_RANK=8 \
-    ./scripts/run_arm_eco.sh 1 0 Q4_32_rr
-# arm 3: EPLB placement + kernel plan (add GC_MOE_ECO_TRACE=1 for the timeline)
-env $C GC_MOE_EPLB=1 GC_MOE_EPLB_EXTRA_PER_RANK=8 GC_MOE_ECO=1 \
-    GC_MOE_ECO_TRACE=1 GC_MOE_ECO_WB=260 GC_MOE_ECO_WA=111 \
-    ./scripts/run_arm_eco.sh 1 1 Q4_32_eco
+B=/home/admin/workspace/aop_lab/app_source/gcmoe_exp/gcmoe_ir20_trace_20261111
+cd $B
+# 4 档 BS = 32/64/128/256 -> SEQS_PER_RANK = 4/8/16/32
+C="WARM_STEPS=1000 MEASURE_STEPS=1000 GC_MOE_SM90_PULL_TMA=1
+   GC_MOE_EPLB_REDUNDANCY=0.10 GC_MOE_EPLB_EXTRA_PER_RANK=8
+   GC_MOE_ECO_WB=260 GC_MOE_ECO_WA=111 GC_MOE_ECO_MAX_COPIES=8
+   GC_MEASURE_IR_STEP=1 GC_MOE_IR_STEP=1 GC_IRSTEP_STEPS=1024 GC_MOE_LAYERS=40
+   GC_MOE_ECO_TRACE=1 GC_MOE_PULL_TRACE=1
+   GC_MOE_FINE_TRACE=1 GC_MOE_FINE_FLOOR=1 GC_MOE_FINE_EPOCHS=1"
+
+# 臂 0：原生 gcmoe（无副本，P=384）
+env $C SEQS_PER_RANK=4 ./scripts/run_arm_eco.sh 0 0 V4_vanilla
+# 臂 1：random placement + host RR
+env $C SEQS_PER_RANK=4 GC_MOE_SLOT_PLACEMENT=random GC_MOE_EPLB_REARRANGE=0 \
+    ./scripts/run_arm_eco.sh 1 0 V4_random
+# 臂 2：EPLB placement + host RR
+env $C SEQS_PER_RANK=4 ./scripts/run_arm_eco.sh 1 0 V4_rr
+# 臂 3：EPLB placement + kernel plan（role 5）
+env $C SEQS_PER_RANK=4 ./scripts/run_arm_eco.sh 1 1 V4_eco
+# 臂 4：同上 + SM-reuse（role 6 接管 dispatch 腾出的 6 个 SM）
+env $C SEQS_PER_RANK=4 GC_MOE_SM90_SM_REUSE=1 ./scripts/run_arm_eco.sh 1 1 V4_eco_smr
 ```
 
-`GC_MOE_EPLB_EXTRA_PER_RANK=n` sets redundant slots **per rank** directly
-(`physical = experts + n*ranks`); it overrides the older fraction knob
-`GC_MOE_EPLB_REDUNDANCY`. `GC_MOE_SLOT_PLACEMENT=random` scatters the same
-multiset of experts over the same slots with a fixed seed -- that is the
-placement control arm.
+要点：
 
-Dump the timeline: `python3 scripts/agg_eco_stages.py runs/C2_eco.json`.
+* `GC_MOE_EPLB_EXTRA_PER_RANK=n` 直接设**每 rank** 的冗余槽数
+  （`physical = experts + n*ranks`），覆盖旧的比例开关 `GC_MOE_EPLB_REDUNDANCY`。
+* `GC_MOE_SLOT_PLACEMENT=random` 用固定种子把同一组专家打散到同样的槽位，
+  并且必须配 `GC_MOE_EPLB_REARRANGE=0`，否则 EPLB 的重排会把它覆盖掉。
+* `GC_MOE_FINE_FLOOR=1` 是时间线图的开关（见上一节），对 `ms/step` 无可测影响：
+  每 run 只记 4 万层调用中的 1 层。
+* 产表：`python3 scripts/update_readme.py README.md`（读 `runs/V*.json`）；
+  产图：`python3 scripts/gen_20_plots.py`（写 `docs/plots/ir20/`）。
