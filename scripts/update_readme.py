@@ -73,17 +73,6 @@ def plots():
                 missing.append(png)
                 continue
             out.append(f'**BS{bs} · {arm}**\n\n![]({png})\n')
-    # the two numbers every figure marks, in one table
-    ann = os.path.join(ROOT, 'docs/plots/ir20/annotations.md')
-    if os.path.exists(ann):
-        body = open(ann).read()
-        tbl = body[body.find('| BS'):]
-        tbl = tbl.split('\n## Missing')[0].rstrip()
-        out.append('\n**每张图标注的两个时刻**（rank 0，测量窗口内某一层）：\n')
-        out.append(tbl + '\n')
-        out.append('`all slots pulled` = 该层最后一个槽 pull 完成的时刻（蓝虚线）；'
-                   '`role 6 joins` = role 6 第一次算完 M 块的时刻（红点线），'
-                   '非 SM-reuse 臂为空。\n')
     return '\n'.join(out), missing
 
 
