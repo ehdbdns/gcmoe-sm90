@@ -2408,15 +2408,28 @@ archive/      上一轮的 runs/logs（只读）
 ## 快速验证（都不加载模型）
 
 ```bash
-cd /home/admin/workspace/aop_lab/app_source/gcmoe_exp/gcmoe_eco-auction_20261105
+cd /home/admin/workspace/aop_lab/app_source/gcmoe_exp/gcmoe_ir20_trace_20261111
 P=/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/bin/python
-for f in eco_ref/test_*.py tests/test_eplb_logic_cpu.py; do $P $f | tail -1; done
 
+# 1) CPU：plan 与 unit_ref 逐位对拍 + EPLB 逻辑 + 新的 fine-floor 门控
+for f in eco_ref/test_*.py tests/test_eplb_logic_cpu.py tests/test_fine_floor_cpu.py; do
+    $P $f | tail -1
+done
+
+# 2) 只编译 role cubin（秒级，不加载模型）；SM_REUSE=1 会一并编译 role 6
 source scripts/env.sh
+GC_MOE_SM90_SM_REUSE=1 GC_MOE_FINE_TRACE=1 $P scripts/smoke_compile_eco.py
+#    -> roles [(1, ..), (2, ..), (5, ..), (6, 199680, 384, 6), (3, ..)]
+
+# 3) GPU：role 5 与 unit_ref 逐位对拍 / 8 卡端到端正确性
 export GC_MOE_SRC=$PWD/source PYTHONPATH=$GC_MOE_SRC:$GC_SHIM:$PWD/integration
 $GC_ENV/bin/torchrun --nproc_per_node 8 scripts/gpu_plan_only.py   # V4
 $GC_ENV/bin/torchrun --nproc_per_node 8 scripts/verify_eco_ep8.py   # 端到端
 ```
+
+`tests/test_fine_floor_cpu.py` 是这一轮新增的回归：它验证 epoch floor 的门控
+（prefill 的 15 个 layer 调用必须被丢掉、测量窗口只保留 1 层），以及绘图脚本在
+一个人造层上把 532 条 task 行正确收敛成 14 个 M 块（含 role 6 的 4 块）。
 
 ## 五臂正式跑法（本轮 20 实验的完整命令）
 
