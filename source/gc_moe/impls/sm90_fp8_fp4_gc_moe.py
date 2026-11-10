@@ -137,6 +137,16 @@ class SM90GCMoERoleKernel:
         # that wrote it otherwise would touch an offset that was never
         # reserved (that is exactly how `off_eco_tl_ctr` went missing).
         self.eco_trace = 'eco_tl' in getattr(layout, 'views', {})
+        # [IR-STEP] Per-(layer, step) rank load recorded BY THE DISPATCH ROLE.
+        # Compile-time off unless the layout reserved the table AND the env
+        # switch is on, so the default build pays nothing.
+        self.ir_step = ('ir_step' in getattr(layout, 'views', {})
+                        and _os.environ.get('GC_MOE_IR_STEP', '1') == '1')
+        self.IR_STEPS = int(_os.environ.get('GC_IRSTEP_STEPS', '1024'))
+        # Layers per forward: the dispatch epoch advances once per layer, so
+        # this is what turns an epoch into (layer, step). Must match the
+        # driver's layer count (`GC_MOE_LAYERS`, default 40).
+        self.n_layers = int(_os.environ.get('GC_MOE_LAYERS', '40'))
         # [PULL-TRACE] Independent of ECO: measures the pull phase on the
         # plain (no-replica) path too, which had no instrumentation before.
         self.pull_trace = _os.environ.get('GC_MOE_PULL_TRACE') == '1'
@@ -159,8 +169,20 @@ class SM90GCMoERoleKernel:
         # [ECO-FINE] Fine-grained event log for ONE representative call.
         # `GC_MOE_FINE_MOD=n` selects call n (epoch % n == 0); 0 = every call.
         # Recording is compile-time off unless the layout reserved the array.
-        self.fine_trace = 'fine_tl' in getattr(layout, 'views', {})
+        # [ECO-FINE-FLOOR] The fine event log costs one global atomic per
+        # event (~78k events per layer at BS=256), so it must be OFF for the
+        # metric sweep and ON only for the trace sweep. `GC_MOE_FINE_TRACE`
+        # controls BOTH the reservation and this flag: with the buffer present
+        # but the switch unset, every recorded event would still be paid for.
+        self.fine_trace = ('fine_tl' in getattr(layout, 'views', {})
+                           and _os.environ.get('GC_MOE_FINE_TRACE', '1') == '1')
         self.fine_mod = int(_os.environ.get('GC_MOE_FINE_MOD', '0'))
+        # [ECO-FINE-FLOOR] Number of CONSECUTIVE layer calls recorded once the
+        # measured window opens. One layer is all the timeline plot needs, and
+        # it is the most that fits: at BS=256 a layer carries ~39k records
+        # (M blocks x 2 N tiles x begin+end) against a 65536-record log, while
+        # a whole 40-layer step would need 6..23x the buffer.
+        self.FINE_EPOCHS = int(_os.environ.get('GC_MOE_FINE_EPOCHS', '1'))
         # [ECO-FINE] Only record calls whose epoch is >= this floor. The EPLB
         # rearrangement rewrites EcoMeta between the warm-up window and the
         # measured window, so anything captured before it describes the INITIAL
@@ -1223,33 +1245,57 @@ class SM90GCMoERoleKernel:
     @cute.jit
     def _fine_body(self, base: Uint64, epoch: Uint32, kind: cutlass.Constexpr,
                    ident: Uint32, a0: Uint32, a1: Uint32, a2: Uint32):
-        """[ECO-FINE] The write itself, after the epoch gates."""
+        """[ECO-FINE] The write itself, after the epoch gates.
+
+        Gating is by EPOCH FLOOR (`fine_floor`, published by the host right
+        before the measured loop), not by `epoch % mod`:
+
+          * `fine_ctr` is monotonic and the log holds 65536 records, so with
+            `GC_MOE_FINE_MOD=0` the prefill calls alone filled the buffer
+            (measured: the log stopped at epoch 4, i.e. four prefill layers,
+            and the entire 1000-step measured window recorded NOTHING -- the
+            plot then showed 12996 "M blocks" per rank where the real value is
+            ~128, and a 6.7 ms "pull done" that was really a prefill call).
+          * A floor keeps every call above it, so the log now holds decode
+            calls from the measured window and nothing else.
+
+        `floor == 0` (no measurement armed) means "record everything", which
+        is what the standalone CPU/GPU trace scripts expect.
+        """
         if cutlass.const_expr(self.fine_trace):
-            if cutlass.const_expr(self.fine_mod == 0):
-                ctr = self._field(base, 'fine_ctr', Uint32)
-                idx = atom_add_u32(ctr, Uint32(1))
-                if idx < Uint32(65536):
-                    rec = self._field(base, 'fine_tl', Uint32) + idx * Uint32(8)
-                    rec[0] = Uint32(read_globaltimer() // Uint64(1000))
-                    rec[1] = Uint32(kind)
-                    rec[2] = ident
-                    rec[3] = a0
-                    rec[4] = a1
-                    rec[5] = a2
-                    rec[6] = epoch
+            floor = Uint32(self._field(base, 'fine_floor', Uint32)[0])
+            if floor == Uint32(0):
+                # No window armed: record everything (standalone trace runs).
+                self._fine_store(base, epoch, kind, ident, a0, a1, a2)
             else:
-                if epoch % Uint32(self.fine_mod) == Uint32(0):
-                    ctr2 = self._field(base, 'fine_ctr', Uint32)
-                    idx2 = atom_add_u32(ctr2, Uint32(1))
-                    if idx2 < Uint32(65536):
-                        rec2 = self._field(base, 'fine_tl', Uint32) + idx2 * Uint32(8)
-                        rec2[0] = Uint32(read_globaltimer() // Uint64(1000))
-                        rec2[1] = Uint32(kind)
-                        rec2[2] = ident
-                        rec2[3] = a0
-                        rec2[4] = a1
-                        rec2[5] = a2
-                        rec2[6] = epoch
+                # EXACTLY the first `FINE_EPOCHS` layer calls at/after the
+                # measured-window anchor. One decode step is 40 layer calls and
+                # each carries ~38 task rows per M block, so a whole step is
+                # ~390k records (BS=32) to ~1.5M (BS=256) -- 6..23x the 65536
+                # records the log holds, and the counter never wraps. Restricting
+                # to one layer keeps ~10k (BS=32) .. ~39k (BS=256) records, which
+                # fits with margin and is exactly what the timeline plot needs
+                # ("one representative rank, one step, one layer").
+                if epoch >= floor:
+                    if epoch < floor + Uint32(self.FINE_EPOCHS):
+                        self._fine_store(base, epoch, kind, ident, a0, a1, a2)
+
+    @cute.jit
+    def _fine_store(self, base: Uint64, epoch: Uint32, kind: cutlass.Constexpr,
+                    ident: Uint32, a0: Uint32, a1: Uint32, a2: Uint32):
+        """[ECO-FINE] Append one record; the caller has already gated it."""
+        if cutlass.const_expr(self.fine_trace):
+            ctr = self._field(base, 'fine_ctr', Uint32)
+            idx = atom_add_u32(ctr, Uint32(1))
+            if idx < Uint32(65536):
+                rec = self._field(base, 'fine_tl', Uint32) + idx * Uint32(8)
+                rec[0] = Uint32(read_globaltimer() // Uint64(1000))
+                rec[1] = Uint32(kind)
+                rec[2] = ident
+                rec[3] = a0
+                rec[4] = a1
+                rec[5] = a2
+                rec[6] = epoch
 
     @cute.jit
     def _fine_spin(self, base: Uint64, epoch: Uint32, blk: Uint32,
@@ -1621,6 +1667,70 @@ class SM90GCMoERoleKernel:
         """Record this call's per-expert token count for the next warm start."""
         self._field(base, 'eco_state', Uint32)[Uint32(self.physical) + e] = \
             self._eco_s(slab, self.eco_n_off, e)
+
+    @cute.jit
+    def _ir_step_write(self, base: Uint64, epoch: Uint32, expert: Uint32,
+                       count: Uint32):
+        """[IR-STEP] Record this rank's token count for (layer, step).
+
+        Called from the dispatch role right where it updates `stats`, so the
+        value is exactly what the old window-summed table received -- only now
+        tagged by the step it belongs to, which is what makes a per-(step,
+        layer) IR possible at all.
+
+        `epoch` advances by ONE PER LAYER (verified on real traces: contiguous
+        across all 8 ranks and `epoch % 40` cycles 0..39), therefore
+
+            layer = epoch % layers
+            k     = (epoch - epoch0) // layers          # step inside the window
+
+        where `epoch0` is published by `irstep_begin()` when the measured
+        window opens. Rows outside [0, IR_STEPS) are ignored, so warmup,
+        prefill and the post-window teardown write nothing.
+
+        The cell is OVERWRITTEN, not accumulated: each (layer, step) pair is
+        written exactly once per forward.
+        """
+        if cutlass.const_expr(self.ir_step):
+            mark = cell(base, Uint64(self.off_ir_step_mark), Uint32)
+            e0 = mark[0]
+            n_layers = Uint32(self.n_layers)
+            if e0 != Uint32(0):
+                if epoch >= e0:
+                    k = (epoch - e0) // n_layers
+                    if k < Uint32(self.IR_STEPS):
+                        layer = epoch % n_layers
+                        idx = layer * Uint32(self.IR_STEPS) + k
+                        # [IR-STEP] ACCUMULATE, never store. The dispatch role
+                        # is a 24-CTA grid and each CTA owns a SLICE of this
+                        # rank's slots, so all 24 of them reach this line with
+                        # their own `owned` for the SAME (layer, step) cell.
+                        # Storing kept only the last CTA's slice (measured:
+                        # 102 instead of 24 tokens per rank per layer), which
+                        # turned the IR into noise about one slot rather than
+                        # about this rank. `atom_add` makes the cell the rank's
+                        # TOTAL for that layer and step -- the quantity the IR
+                        # definition needs.
+                        atom_add_u32(
+                            self._field(base, 'ir_step', Uint32) + idx,
+                            count)
+                        # [IR-STEP] M blocks: ceil(real_owned / block_m), where
+                        # real_owned = count / ranks because `count` carries
+                        # the world-size inflation (the pull sums every peer's
+                        # send_count, so the cell is ranks x this rank's
+                        # share; verified: ir_step/8 = 24 = 32*6/8 at BS=32).
+                        # Rounding UP after dividing by ranks*block_m gives the
+                        # same result as ceil on the un-inflated value.
+                        unit = Uint32(self.ranks) * Uint32(self.max_m)
+                        atom_add_u32(
+                            self._field(base, 'ir_step_mb', Uint32) + idx,
+                            (count + unit - Uint32(1)) // unit)
+                        # [IR-STEP] Active slots: a slot counts when it held at
+                        # least one token. Unaffected by the inflation.
+                        if count > Uint32(0):
+                            atom_add_u32(
+                                self._field(base, 'ir_step_ae', Uint32) + idx,
+                                Uint32(1))
 
     @cute.jit
     def _field(self, base: Uint64, name: cutlass.Constexpr, dtype: cutlass.Constexpr):
@@ -2161,6 +2271,8 @@ class SM90GCMoERoleKernel:
                 if cutlass.const_expr(self.has_stats):
                     recv_stats = cute.make_tensor(stats, cute.make_layout((self.local,)))
                     recv_stats[expert] += owned
+                    # [IR-STEP] same number, tagged by this call's (layer, step)
+                    self._ir_step_write(base, epoch, Uint32(expert), owned)
                 st_release_u32(self._field(base, 'expert_ready', Uint32) + Uint32(expert), epoch, False)
                 if owned > 0:
                     active_slot = atom_add_u32(head + 7, Uint32(1))
@@ -2251,6 +2363,8 @@ class SM90GCMoERoleKernel:
             if cutlass.const_expr(self.has_stats):
                 recv_stats = cute.make_tensor(stats, cute.make_layout((self.local,)))
                 recv_stats[expert] += total
+                # [IR-STEP] same number, tagged by this call's (layer, step)
+                self._ir_step_write(base, epoch, Uint32(expert), total)
             st_release_u32(self._field(base, 'expert_ready', Uint32) + Uint32(expert), epoch, False)
             if total > 0:
                 active_slot = atom_add_u32(head + 7, Uint32(1))

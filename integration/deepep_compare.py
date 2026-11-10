@@ -1452,61 +1452,88 @@ def _slot_count() -> int:
 
 
 def irstep_begin() -> None:
-    """# [IR-STEP] Arm per-(step, layer) sampling. Requires `_MEAS['has_stats']`
-    so the kernel is already feeding a per-layer accumulator."""
-    _IRSTEP['on'] = True
-    _IRSTEP['rows'] = []
-    _IRSTEP['prev'] = None
-    _IRSTEP['acc'] = None
+    """# [IR-STEP] Mark the start of the measured window.
 
+    The dispatch role records `ir_step[layer][step]` itself; the only thing it
+    needs from the host is WHERE the window starts, because `step` is derived
+    as `(epoch - epoch0) // layers`. Writing `epoch0 = eco_tl_step` here (a
+    plain device store, no sync) hands it that anchor.
 
-def _irstep_table():
-    """(table, slots) of the per-layer accumulator this rank feeds the kernel."""
-    live = [m for m in _EXPERT_REGISTRY if m._eplb is not None]
-    if live:
-        return live[0]._eplb['stats'], int(live[0]._eplb['stats'].shape[1])
-    if _MEAS['table'] is not None:
-        return _MEAS['table'], int(_MEAS['table'].shape[1])
-    return None, 0
-
-
-def irstep_sample() -> dict:
-    """# [IR-STEP] Snapshot ONE engine step's per-layer load on this rank.
-
-    Returns the per-layer token counts routed by the step that just finished,
-    computed as `acc_now - acc_prev` on the `[layers, slots]` accumulator the
-    kernel adds into. Divided by `world` to undo the same inflation `ir_end`
-    removes (send_count is replicated on every rank).
-
-    Must be called once per engine step and NOT during the timed window.
+    The epoch is already published by the dispatch role for the forward that
+    is in flight, so this must run BETWEEN forwards (it does: the driver calls
+    it right before the measured loop, with the queue drained).
     """
     import torch
 
-    if not _IRSTEP['on']:
-        return {'ok': False, 'reason': 'not armed'}
-    table, slots = _irstep_table()
-    if table is None:
-        return {'ok': False, 'reason': 'no stats table'}
+    live = [m for m in _EXPERT_REGISTRY if getattr(m, '_buffer', None) is not None]
+    if not live:
+        return False
+    buf = live[0]._get_buffer()
+    mark = getattr(buf, 'ir_step_mark', None)
+    if mark is None:
+        return False
     torch.cuda.synchronize()
-    acc = table.to(torch.float64).sum(dim=1)          # [layers]
-    prev = _IRSTEP['prev']
-    _IRSTEP['prev'] = acc.clone()
-    if prev is None:
-        return {'ok': True, 'warm': True, 'layers': int(acc.numel())}
-    delta = acc - prev
-    # The first snapshot only establishes the baseline; a step whose delta is
-    # all zeros means the counter did not advance (graph replay of a different
-    # batch), so it is reported but carries no information.
-    return {'ok': True, 'warm': False,
-            'layers': int(delta.numel()),
-            'per_layer_tokens': [float(x) for x in delta.tolist()],
-            'slots': slots}
+    # `header[0]` is the dispatch epoch, and it is the SAME value the dispatch
+    # role passes to `_ir_step_write` -- unlike `eco_tl_step`, which only the
+    # ECO arm publishes (the vanilla arm would anchor at 0).
+    with torch.inference_mode():
+        mark[0] = buf.header[0].to(mark.dtype)   # epoch0
+        mark[1] = 0
+    # [ECO-FINE-FLOOR] Anchor the FINE event log to the measured window too.
+    #
+    # `fine_ctr` is monotonic and `fine_tl` holds 65536 records, so with
+    # `GC_MOE_FINE_MOD=0` the prefill calls alone filled it: the log stopped at
+    # epoch 4 (four prefill layers) and the entire 1000-step measured window
+    # recorded NOTHING. The plot built from that data showed 12996 "M blocks"
+    # per rank where the real value is ~128, and a 6.7 ms "pull done" that was
+    # really a prefill call.
+    #
+    # Publishing the window's first epoch lets the kernel drop everything below
+    # it, and clearing the counter hands the whole 2 MB to the measured window.
+    # Both are plain device stores done with the queue drained, so this costs
+    # nothing measurable (it runs between forwards, never per step).
+    floor = getattr(buf, 'fine_floor', None)
+    ctr = getattr(buf, 'fine_ctr', None)
+    if floor is not None:
+        with torch.inference_mode():
+            floor[0] = buf.header[0].to(floor.dtype)
+            if ctr is not None:
+                ctr[0] = 0
+    return True
 
 
 def irstep_end() -> dict:
-    """# [IR-STEP] Hand back everything sampled (this rank only)."""
-    _IRSTEP['on'] = False
-    return {'ok': True, 'rows': _IRSTEP['rows']}
+    """# [IR-STEP] Hand back this rank's [layer][step] table.
+
+    One bulk device->host copy at the end of the window; no per-step RPC. The
+    reduction to an IR happens on the driver side, across ranks.
+    """
+    import os as _os
+    import torch
+
+    live = [m for m in _EXPERT_REGISTRY if getattr(m, '_buffer', None) is not None]
+    if not live:
+        return {'ok': False, 'reason': 'no buffer'}
+    buf = live[0]._get_buffer()
+    tbl = getattr(buf, 'ir_step', None)
+    mb_tbl = getattr(buf, 'ir_step_mb', None)
+    ae_tbl = getattr(buf, 'ir_step_ae', None)
+    mark = getattr(buf, 'ir_step_mark', None)
+    if tbl is None:
+        return {'ok': False, 'reason': 'no ir_step table'}
+    torch.cuda.synchronize()
+    layers = int(_os.environ.get('GC_MOE_LAYERS', '40'))
+    steps = int(_os.environ.get('GC_IRSTEP_STEPS', '1024'))
+    with torch.inference_mode():
+        rows = tbl[:layers * steps].view(layers, steps).cpu().tolist()
+        rows_mb = (mb_tbl[:layers * steps].view(layers, steps).cpu().tolist()
+                   if mb_tbl is not None else None)
+        rows_ae = (ae_tbl[:layers * steps].view(layers, steps).cpu().tolist()
+                   if ae_tbl is not None else None)
+        e0 = int(mark[0].item()) if mark is not None else 0
+    return {'ok': True, 'rank': int(buf.rank_idx), 'layers': layers,
+            'steps': steps, 'epoch0': e0, 'rows': rows,
+            'rows_mb': rows_mb, 'rows_ae': rows_ae}
 
 
 def ir_begin() -> None:
@@ -1653,24 +1680,15 @@ def _install_worker_rpc() -> None:
     if getattr(Worker, '_gc_moe_irstep_begin', None) is None:
 
         def gc_moe_irstep_begin(self) -> bool:
-            """# [IR-STEP] Arm per-step per-layer sampling on this worker."""
-            irstep_begin()
-            return True
+            """# [IR-STEP] Anchor the (layer, step) table at this window."""
+            return irstep_begin()
 
         Worker._gc_moe_irstep_begin = gc_moe_irstep_begin
-
-    if getattr(Worker, '_gc_moe_irstep_sample', None) is None:
-
-        def gc_moe_irstep_sample(self) -> dict:
-            """# [IR-STEP] One per-step snapshot (call after engine.step())."""
-            return irstep_sample()
-
-        Worker._gc_moe_irstep_sample = gc_moe_irstep_sample
 
     if getattr(Worker, '_gc_moe_irstep_end', None) is None:
 
         def gc_moe_irstep_end(self) -> dict:
-            """# [IR-STEP] Return the sampled rows for this rank."""
+            """# [IR-STEP] Dump this rank's [layer][step] table."""
             return irstep_end()
 
         Worker._gc_moe_irstep_end = gc_moe_irstep_end

@@ -31,8 +31,11 @@ export NVSHMEM_MAX_TEAMS=7 NVSHMEM_DISABLE_NVLS=1 NVSHMEM_IB_GID_INDEX=3 NVSHMEM
 export NVSHMEM_CUMEM_GRANULARITY=536870912 NVSHMEM_FCOLLECT_LL_THRESHOLD=4096
 export NCCL_IB_DISABLE=0 NCCL_IB_GID_INDEX=3 NCCL_NET=IB
 export NCCL_SOCKET_IFNAME=eth0 GLOO_SOCKET_IFNAME=eth0
-export NCCL_IB_HCA='mlx5_2:1,mlx5_8:1,mlx5_20:1,mlx5_24:1'
-export NVSHMEM_HCA_LIST='mlx5_2:1,mlx5_8:1,mlx5_20:1,mlx5_24:1'
+# [HCA] Device names are PER MACHINE (`ibdev2netdev` lists them). They were
+# mlx5_2/8/20/24 on the first cluster and mlx5_5/10/23/25 after the rebuild;
+# override from the shell instead of editing this file.
+export NCCL_IB_HCA=${NCCL_IB_HCA:-'mlx5_2:1,mlx5_8:1,mlx5_20:1,mlx5_24:1'}
+export NVSHMEM_HCA_LIST=${NVSHMEM_HCA_LIST:-$NCCL_IB_HCA}
 export OMP_NUM_THREADS=8
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1

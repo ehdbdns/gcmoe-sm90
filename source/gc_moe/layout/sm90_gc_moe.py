@@ -127,6 +127,41 @@ class SM90GCBufferLayout:
             reserve('eco_tl_ctr', (16,), 'int32', 4)
             reserve('eco_tl_step', (1,), 'int32', 4)
 
+        # [IR-STEP] [layer][step] per-rank token counts, filled by the
+        # dispatch role ITSELF while the measured window runs.
+        #
+        # Its own switch, NOT tied to `trace`: the ECO timeline is a debugging
+        # aid, whereas this table IS the measurement. Binding them together
+        # silently produced `pairs=0` on a run that forgot GC_MOE_ECO_TRACE=1.
+        #
+        # Why in-kernel: decode replays a captured CUDA graph, so no Python
+        # hook can sample per step, and an out-of-band RPC per step costs
+        # ~60 ms (it would either pollute ms/step or force a SECOND window
+        # that burns `max_tokens` budget -- at BS=256 that second window is
+        # what made the run not fit in KV at all).
+        #
+        # Indexing: the dispatch epoch advances by ONE PER LAYER, verified on
+        # real traces (9305,9306,... contiguous across 8 ranks, and
+        # epoch % 40 cycles 0..39 exactly). So
+        #     layer = epoch %  layers
+        #     step  = (epoch - epoch0) // layers        (epoch0 = window start)
+        # The rows are OVERWRITTEN, not accumulated: one (layer,step) cell is
+        # written exactly once per forward.
+        #
+        # 40 layers x 1024 steps x 4 B = 160 KB per rank.
+        if os.environ.get('GC_MOE_IR_STEP', '1') == '1':
+            reserve('ir_step', (40 * 1024,), 'int32', 4)
+            reserve('ir_step_mark', (2,), 'int32', 4)
+            # [IR-STEP] Two companion tables, same (layer, step) indexing:
+            #   ir_step_mb[layer][step] += ceil(owned / block_m)   per unit
+            #   ir_step_ae[layer][step] += 1 if owned > 0           per unit
+            # They answer "how many M blocks / how many ACTIVE slots does this
+            # rank have in this layer of this step", which the token table
+            # cannot: tokens per slot are below block_m, so a rank's block count
+            # is NOT a function of its token count alone.
+            reserve('ir_step_mb', (40 * 1024,), 'int32', 4)
+            reserve('ir_step_ae', (40 * 1024,), 'int32', 4)
+
         # [PULL-TRACE] Pull-phase timing for EVERY arm, including the plain
         # (no replicas, no ECO) path -- the ECO trace above only exists when
         # `eco` is on, so the vanilla arm had no pull measurement at all.
@@ -166,6 +201,15 @@ class SM90GCBufferLayout:
             # [ECO-FINE] expert -> layer epoch (what `_consume_tasks` can see,
             # since its task record only carries the expert id).
             reserve('fine_epx', (experts,), 'int32', 4)
+            # [ECO-FINE-FLOOR] First epoch of the MEASURED window, written by
+            # the host in `irstep_begin()`. Without it the 2 MB log is consumed
+            # by prefill: `fine_ctr` is monotonic and stops at 65536 records, so
+            # with GC_MOE_FINE_MOD=0 the buffer was already full after the first
+            # four prefill layers and the whole 1000-step measurement produced
+            # ZERO records (verified: an "M blocks = 12996" plot for BS=32 whose
+            # real value is ~128). Records below the floor are dropped in the
+            # kernel, so the log holds decode calls only.
+            reserve('fine_floor', (1,), 'int32', 4)
 
         reserve('x', (capacity, hidden), 'float8_e4m3fn', 1)
         reserve('x_sf', (capacity, hidden // 128), 'float32', 4)

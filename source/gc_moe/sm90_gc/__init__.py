@@ -1,5 +1,6 @@
 """Public allocation and checkpoint conversion for the independent SM90 GC path."""
 from __future__ import annotations
+import os as _os
 import types
 import torch
 import torch.distributed as dist
@@ -55,6 +56,21 @@ class SM90GCSymmBuffer:
                     .view(getattr(torch, spec.dtype)).view(spec.shape))
         self.peer_table.copy_(torch.tensor(self.peer_addresses, dtype=torch.int64, device=self.buffer.device))
         self.header[0] = 1
+        # [ECO-FINE-FLOOR] Arm the fine event log BEFORE the first forward.
+        #
+        # `fine_ctr` is monotonic and `fine_tl` holds 65536 records, so if the
+        # log is left ungated the prefill calls alone consume it: at BS=256 one
+        # layer emits ~39k records, i.e. the whole buffer is gone after the
+        # first two prefill layers and the measured window records NOTHING.
+        # Starting the floor at the buffer's own epoch (`header[0] == 1`) plus
+        # `GC_MOE_FINE_EPOCHS=1` means prefill records exactly one layer, and
+        # `irstep_begin()` then resets both the floor and the counter so the
+        # measured window gets a clean, complete layer.
+        #
+        # Opt-in: standalone trace scripts (GC_MOE_FINE_MOD / _MIN_EPOCH) keep
+        # the old "record everything" behaviour when this is unset.
+        if _os.environ.get('GC_MOE_FINE_FLOOR') == '1' and 'fine_floor' in self.layout.views:
+            self.fine_floor[0] = self.header[0].to(self.fine_floor.dtype)
         group.barrier().wait()
         torch.cuda.synchronize()
 

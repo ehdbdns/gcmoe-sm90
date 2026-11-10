@@ -36,7 +36,8 @@ def main():
                            # [ECO-MEAS] gates, driven from the environment so
                            # one smoke run can prove every variant compiles
                            eco_null_plan=os.environ.get('SMOKE_NULL') == '1',
-                           eco_no_auction=os.environ.get('SMOKE_NOAUC') == '1')
+                           eco_no_auction=os.environ.get('SMOKE_NOAUC') == '1',
+                           sm_reuse=int(os.environ.get('GC_MOE_SM90_SM_REUSE', '0') or 0))
     torch.cuda.init()
     torch.cuda.set_device(0)
     torch.zeros(1, device='cuda')
