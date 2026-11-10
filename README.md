@@ -2113,6 +2113,30 @@ ir_step_layer_mean = mean(all pairs)
 在**计时窗口之后**另开一个窗口，每步发一次 `_gc_moe_irstep_sample`
 （RPC 约 60 ms，因此**不计入 ms/step**）。结果写在 run json 的 `ir_step` 字段。
 
+### [EPLB-FIX] 一个 logical expert 不能有两个副本落在同一 rank
+
+`eplb_placement.py` 的模块注释一直写着"the packer is never allowed to place a
+physical expert back on its home rank"，但 `_pack()` 只做了负载均衡，**没有落实这条约束**。
+实测（`physical=448, ranks=8`）：64 个被复制的专家里有 **5 个两个副本都在同一个 rank**
+（4/rank 的 424 槽布局是 3 个）。
+
+后果有两个，都是实测到的：
+
+* 重复的那个副本是 **passive**（`_eco_is_active == 0`），它不拉任何 token，
+  有效冗余悄悄从 64 缩到 59；
+* `replica_ranks[logical]` 塌缩成单个 rank，该专家根本没有第二个 rank 可以分流量
+  —— plan 算出来的 split 无处可去。
+
+修法（`source/gc_moe/layout/eplb_placement.py`）：
+
+1. `_pack()` 接收每个槽的 logical id，分配时排除**已经持有该专家副本**的 pack；
+2. `logcnt[e]` 上限设为 `ranks`，否则贪心"最热优先"会给单专家 9 个副本，
+   而 8 个 rank 无论如何都会撞车（偏斜负载下实测触发）。
+
+回归测试：`tests/test_eplb_placement_cpu.py`（6 个用例，含两个偏斜负载）。
+
+⚠️ 这个 bug 影响**之前所有 EPLB 实验**（16 臂 / 20 臂 / 四臂）的绝对数值。
+
 ## 权威规格
 
 `eco_ref/unit_ref.py` 是从 SM100 仓库逐字复制的 **bit-exact numpy 参考实现**。
