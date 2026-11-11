@@ -48,9 +48,9 @@ def main():
                   + ('   <<< SUSPECT (prefill-scale pull)' if info['suspect'] else ''))
     with open(os.path.join(OUT, 'annotations.md'), 'w') as f:
         f.write('# Timeline annotations (rank 0, one measured layer)\n\n')
-        f.write('| BS | arm | slots | M blocks | all slots pulled (us) | '
-                'role 6 joins (us) | role 2 blocks | role 6 blocks | '
-                'first consumer block (us) | last block done (us) | backlog>0 |\n')
+        f.write('| BS | arm | slots | GEMM tasks | all slots pulled (us) | '
+                'role 6 joins (us) | role 2 tasks | role 6 tasks | '
+                'first task start (us) | last task done (us) | backlog>0 |\n')
         f.write('|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n')
         for r in rows:
             f.write(f"| {r['bs']} | {r['arm']} | {r['slots']} | {r['total_mblocks']} | "
