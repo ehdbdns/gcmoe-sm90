@@ -122,7 +122,7 @@ def plot(path, rank, out):
             label='released (cumulative)')
     a1.scatter(pt, pv, s=9, color='tab:blue', zorder=3)
     a1.axhline(total, color='tab:blue', ls=':', lw=.8, alpha=.55)
-    a1.set_ylabel('producer: released GEMM tasks\n(cumulative)')
+    a1.set_ylabel('producer (pull CTAs):\nreleased GEMM tasks (cumulative)')
     a1.set_ylim(0, max(total, 1) * 1.08)
     a1.grid(alpha=.25)
 
@@ -135,7 +135,7 @@ def plot(path, rank, out):
     if done:
         a2.step(done, range(1, len(done) + 1), where='post', color='0.45',
                 lw=.9, ls='--', label=f'finished ({len(done)} tasks, both roles)')
-    a2.set_ylabel('consumer: started GEMM tasks\n(cumulative, per role)')
+    a2.set_ylabel('consumer (compute CTAs):\nstarted GEMM tasks (cumulative, per role)')
     a2.set_ylim(0, max(max(len(c2), len(c6)), 1) * 1.10)
     a2.grid(alpha=.25)
     a2.set_xlabel('absolute time (us, relative to first slot_begin)')
