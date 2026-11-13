@@ -2870,10 +2870,17 @@ IR 改善 ir_win -2.4%、ir_step -5.2%，ms 略快。
 | BIG=0（原顺序） | **68.75** | **1.0253** | 678 µs | 72.4 | 60.1 | 108 µs |
 | BIG=1（大槽先拉） | 71.72 | 1.0325 | 646 µs | 71.8 | 57.6 | 106 µs |
 
-![compare](docs/t4/compare_parallelism_BIG0_vs_BIG1.png)
+**并行度对比（同一层，rank0，两臂叠加）**
 
-单臂图（含逐 CTA 甘特）：[BIG=0](docs/t4/par_T4L2_BIG0_rank0.png) ·
-[BIG=1](docs/t4/par_T4L_BIG1_rank0.png)
+![BIG=0 vs BIG=1 parallelism](docs/t4/compare_parallelism_BIG0_vs_BIG1.png)
+
+**BIG=0（原顺序）**：上=并行度随时间，下=逐 CTA 甘特
+
+![BIG=0](docs/t4/par_T4L2_BIG0_rank0.png)
+
+**BIG=1（大槽先拉）**
+
+![BIG=1](docs/t4/par_T4L_BIG1_rank0.png)
 
 **并行度曲线几乎重合，这解释了为什么它没有收益：**
 
