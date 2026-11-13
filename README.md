@@ -2859,6 +2859,39 @@ eco 的 ms 与 IR 在三档上全部优于 vanilla，且 batch 越大 IR 收益�
 两臂 `gen_tokens_total` **完全相同** ⇒ ECO 的 split-plan 没有丢/重 token。
 IR 改善 ir_win -2.4%、ir_step -5.2%，ms 略快。
 
+#### 并行度实测：为什么它不成立
+
+两次对照都没有开 trace，所以补跑了一组**两臂都开** full trace
+（`GC_MOE_ECO_TRACE=1 GC_MOE_PULL_TRACE=1 GC_MOE_FINE_TRACE=1`，
+`GC_MOE_FINE_MIN_EPOCH=20000` 锁在重排之后，BS=256，1000+1000）：
+
+| 臂 | ms/step | ir_win | 单层 makespan | plateau(mid 50%) | last 20% | pull 全部完成 |
+|---|---:|---:|---:|---:|---:|---:|
+| BIG=0（原顺序） | **68.75** | **1.0253** | 678 µs | 72.4 | 60.1 | 108 µs |
+| BIG=1（大槽先拉） | 71.72 | 1.0325 | 646 µs | 71.8 | 57.6 | 106 µs |
+
+![compare](docs/t4/compare_parallelism_BIG0_vs_BIG1.png)
+
+单臂图（含逐 CTA 甘特）：[BIG=0](docs/t4/par_T4L2_BIG0_rank0.png) ·
+[BIG=1](docs/t4/par_T4L_BIG1_rank0.png)
+
+**并行度曲线几乎重合，这解释了为什么它没有收益：**
+
+1. **pull 早在 108 µs 就全部结束了**，而整层要跑 678 µs —— pull 只占 16%。
+   重排 pull 顺序最多只能影响这 16% 里的负载分布，动不了剩下的 84%。
+2. **中间段（位相 100–600 µs）两臂都在 71–77 CTA**，即 role-2 的 71 个 CTA
+   加 role-6 的 6 个已经基本打满。原顺序并没有在中间段制造空闲。
+3. **尾部塌陷两臂都有**，BIG=1 甚至略差（last 20%：57.6 vs 60.1 CTA）。
+   原因是尾部由"最后几个 M 块"决定，而不是"哪个槽先被拉"——
+   按 token 数排序**并不能**把尾部的小任务提前。
+4. 单层 makespan BIG=1 反而短 32 µs，但 ms/step 慢 3 ms：
+   **两者不是同一个量**（单层采样 vs 2000 步平均），说明层间波动远大于这个差异，
+   也说明这个"优化"落在噪声里。
+
+⇒ 结论：**「大槽先拉」不成立**。它想修的尾部塌陷，其成因是 M 块粒度与
+  N-tile 并行度（见"尾部并行度低，究竟是哪个专家/M 块在拖"一章），
+  不是 pull 顺序。
+
 ### 5. 其它任务的结论
 
 | 任务 | 结论 |
