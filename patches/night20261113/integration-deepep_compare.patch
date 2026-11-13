@@ -1,0 +1,329 @@
+--- gcmoe_ir20_trace_20261111/integration/deepep_compare.py	2026-11-11 00:45:23.870547084 +0800
++++ t13_pullbig/integration/deepep_compare.py	2026-11-13 06:52:37.386912607 +0800
+@@ -543,6 +543,23 @@
+             raise RuntimeError(
+                 'GC MoE weights were not packed; process_weights_after_loading '
+                 'must run before the first forward.')
++        # [T13-LAYERIDX3] Resolve this layer's row HERE, where `w1` (the stub
++        # parameter) is actually in scope, and hand it to `_launch` by stamping
++        # the packed tensor. `_launch` only has `packed`, so the previous
++        # `getattr(w1, ...)` there raised `name 'w1' is not defined`, and the
++        # `id(packed[0][0])` lookup it fell back to collapsed every layer onto
++        # one row (signature: `per_layer_median_tokens=[0,...,159.7]`,
++        # `max_copies=53`).
++        _li = getattr(w1, '_gc_layer_idx', None)
++        if _li is None:
++            _li = getattr(packed[0][0], '_gc_layer_idx', None)
++        if _li is None:
++            _li = _LAYER_OF.get(id(packed[0][0]))
++        if _li is not None:
++            packed[0][0]._gc_layer_idx = _li
++        _vi = getattr(w1, '_gc_vanilla_idx', None)
++        if _vi is not None:
++            packed[0][0]._gc_vanilla_idx = _vi
+         tokens = hidden_states.shape[0]
+         if os.environ.get('GC_MOE_ROUTE_DBG') == '1':
+             _TRACE['apply'] = _TRACE.get('apply', 0) + 1
+@@ -629,7 +646,12 @@
+             _t0.record()
+         buf.x[:tokens].copy_(xq.view(tokens, -1))
+         buf.x_sf[:tokens].copy_(xsf.view(tokens, -1))
+-        if self._eplb is not None and _eco_enabled():
++        # [PLAN-COST] A-arm: role 5 exists and its replica slots still block on
++        # `eco_ready[1]`, but the DISTRIBUTION is plain RR (topk_idx points at
++        # a concrete physical slot), exactly like the no-plan arm. Comparing
++        # this against `eco=0` isolates the plan's structural cost.
++        _rr_only = os.environ.get('GC_MOE_ECO_RR_WAITPLAN') == '1'
++        if self._eplb is not None and _eco_enabled() and not _rr_only:
+             # [ECO-SM90] ECO dispatch: `topk_idx` keeps the LOGICAL expert id.
+             # The kernel pushes every route to each active copy of that expert
+             # and the plan decides how many tokens each copy keeps, so doing
+@@ -786,10 +808,14 @@
+                     (int(os.environ.get('GC_MOE_LAYERS', '40')),
+                      buf0.physical // buf0.group.size()),
+                     dtype=torch.int32, device=buf0.buffer.device)
+-            if id(packed[0][0]) not in _MEAS['vanilla_idx']:
+-                _MEAS['vanilla_idx'][id(packed[0][0])] = len(_MEAS['vanilla_idx'])
++            # [T13-LAYERIDX] same stable-index rule as the EPLB arm
++            _vi = getattr(packed[0][0], '_gc_vanilla_idx', None)
++            if _vi is None:
++                _vi = len(_MEAS['vanilla_idx'])
++                _MEAS['vanilla_idx'][id(packed[0][0])] = _vi
++                packed[0][0]._gc_vanilla_idx = _vi
+                 _LAYER_REFS.append(packed[0][0])
+-            stats = _MEAS['table'][_MEAS['vanilla_idx'][id(packed[0][0])]]
++            stats = _MEAS['table'][_vi]
+         if self._eplb is None and _MEAS['has_stats'] and _MEAS['table'] is None:
+             # lazily size the vanilla counter table to (layers, slots/rank)
+             buf0 = self._get_buffer()
+@@ -798,18 +824,25 @@
+             _MEAS['table'] = torch.zeros((n_layers, per), dtype=torch.int32,
+                                          device=buf0.buffer.device)
+         if self._eplb is None and _MEAS['has_stats']:
+-            if id(packed[0][0]) not in _MEAS['vanilla_idx']:
+-                _MEAS['vanilla_idx'][id(packed[0][0])] = len(_MEAS['vanilla_idx'])
++            _vi = getattr(packed[0][0], '_gc_vanilla_idx', None)
++            if _vi is None:
++                _vi = len(_MEAS['vanilla_idx'])
++                _MEAS['vanilla_idx'][id(packed[0][0])] = _vi
++                packed[0][0]._gc_vanilla_idx = _vi
+                 _LAYER_REFS.append(packed[0][0])
+             # vanilla arm: still feed the kernel a per-layer counter table so
+             # the same load measurement works without EPLB.
+-            _idx = _MEAS['vanilla_idx'].get(id(packed[0][0]), 0)
+-            stats = _MEAS['table'][_idx]
++            stats = _MEAS['table'][_vi]
+         if self._eplb is not None:
+             table = self._eplb['stats']
+             # keyed by the packed w1 payload object (strong refs are held in
+             # _LAYER_REFS so the id cannot be recycled)
+-            idx = _LAYER_OF.get(id(packed[0][0]))
++            idx = getattr(packed[0][0], '_gc_layer_idx', None)
++            if idx is None:
++                # Last resort only: an unstamped tensor (e.g. one produced
++                # before EPLB installed). `id()` is NOT reliable here -- that
++                # is the whole point of the stamps above.
++                idx = _LAYER_OF.get(id(packed[0][0]))
+             if os.environ.get('GC_MOE_LAYER_DBG') == '1':
+                 _TRACE['lc'] = _TRACE.get('lc', 0) + 1
+                 if _TRACE['lc'] <= 80:
+@@ -968,6 +1001,17 @@
+             while m._pending_eplb:
+                 layer, packed = m._pending_eplb.pop()
+                 pair = sm90.gather_slot_weights(packed, buf, plan, group)
++                # [T13-LAYERIDX4] `pair` is a BRAND NEW tensor set (the
++                # per-physical-slot view) and does NOT carry the stamp the
++                # logical-row `packed` got in `process_weights_after_loading`.
++                # `apply()` resolves its packed pair from `w1._gc_packed`, i.e.
++                # THIS object, so without a stamp here every layer fell back to
++                # the `id()` map and collapsed onto one row -- measured only in
++                # the ECO arm (`per_layer_median_tokens=[0,...,159.7]`,
++                # `max_copies=53`) while the RR arm, which keeps the original
++                # `packed`, stayed healthy.
++                pair[0][0]._gc_layer_idx = getattr(
++                    packed[0][0], '_gc_layer_idx', None)
+                 m._packed[id(layer)] = pair
+                 m._packed_layers.append((layer, pair))
+                 layer.w13_weight._gc_packed = pair
+@@ -988,6 +1032,39 @@
+                 # reference: data_ptr keys are not stable because the caching
+                 # allocator reuses freed addresses, which made several layers
+                 # share one stats row.
++                # [T13-LAYERIDX] STAMP the row index on the packed tensor
++                # itself instead of looking it up through `id()`.
++                #
++                # `id()` is only unique while the object lives, and the lookup
++                # happens on EVERY forward from a *different* code path
++                # (`apply`), so a recycled id silently routes one layer's
++                # counters into another layer's row. Measured symptom: layer 0
++                # accumulated 2.5 tokens/layer-step while slots 39-43 of one
++                # row got 9811 (500x), which made `demand_from_stats` wildly
++                # skewed and EPLB place 10 copies of one expert
++                # (`max_copies=10` vs the correct 2).
++                # [T13-LAYERIDX] Stamp the row index on BOTH the packed tensor
++                # and the stub parameter that `apply()` receives as `w1`.
++                #
++                # `apply()` resolves the packed pair from `w1._gc_packed` (set
++                # in `process_weights_after_loading`) and then indexes
++                # `packed[0][0]`, so the packed tensor is the object that has
++                # to carry the stamp -- but the stub is cheap to stamp too and
++                # protects against a future path that keys off it.
++                #
++                # Why this matters at all: `_launch` runs per forward per layer
++                # and used to resolve the row with `id(packed[0][0])`. `id()` is
++                # only unique while the object lives, and the map was built on a
++                # different code path, so a recycled id silently collapsed
++                # every layer onto ONE row. Signature of that failure:
++                # `per_layer_median_tokens = [0,0,...,159.7]` and
++                # `max_copies=53` (the placement was computed from one layer's
++                # stats).
++                pair[0][0]._gc_layer_idx = idx
++                try:
++                    layer.w13_weight._gc_layer_idx = idx
++                except Exception:
++                    pass
+                 _LAYER_REFS.append(pair[0][0])
+                 layer_of[id(pair[0][0])] = idx
+                 # Each layer gets its own window row.
+@@ -1136,11 +1213,47 @@
+     from eplb_logic import demand_from_stats
+     layout = m._eplb['layout']
+     stats = m._eplb['stats']               # [layers, per_rank]
++    if buf.rank_idx == 0:
++        # [T13-LAYERDBG] How many DISTINCT rows did the 40 layers actually use?
++        # One row per layer is required; anything less means the per-layer
++        # counters were written into shared rows and the placement is computed
++        # from a collapsed demand (signature: max_copies=53).
++        _nz = (stats != 0).any(dim=1).sum().item()
++        _sums = stats.sum(1).float()
++        print(f'[layer-dbg] stats shape={tuple(stats.shape)} '
++              f'rows_with_data={int(_nz)}/{stats.shape[0]} '
++              f'row_sum min={float(_sums.min()):.0f} max={float(_sums.max()):.0f}',
++              flush=True)
+     demand = demand_from_stats(stats, layout, buf.rank_idx, per_rank, experts)
+     dist.all_reduce(demand, group=dist.group.WORLD)
++    if buf.rank_idx == 0:
++        _dv = demand.float()
++        _m = float(_dv.mean()) or 1.0
++        _top = torch.topk(_dv, 6)
++        print(f'[layer-dbg] demand sum={float(_dv.sum()):.0f} mean={_m:.1f} '
++              f'max={float(_dv.max()):.0f} ({float(_dv.max())/_m:.1f}x) '
++              f'zero={int((_dv == 0).sum())} '
++              f'top6={[round(float(v)/_m, 1) for v in _top.values]}', flush=True)
+ 
+     # B arm feeds [num_steps, num_moe_layers, num_logical_experts].
+     hist = demand.view(1, 1, experts)
++    if os.environ.get('GC_MOE_EPLB_DBG') == '1' and buf.rank_idx == 0:
++        # [T13-EPLBDBG] A placement that makes 10 copies of one expert means
++        # `demand` itself was extremely skewed. Print the shape of it so a bad
++        # run is identifiable without a second run.
++        _d = demand.float()
++        _m = float(_d.mean()) or 1.0
++        _top = torch.topk(_d, 8)
++        print(f'[eplb-dbg] demand sum={float(_d.sum()):.0f} mean={_m:.2f} '
++              f'max={float(_d.max()):.0f} ({float(_d.max())/_m:.2f}x mean) '
++              f'min={float(_d.min()):.0f} zero={(int((_d==0).sum()))} '
++              f'top8={[(int(i), round(float(v)/_m,2)) for i,v in zip(_top.indices, _top.values)]}',
++              flush=True)
++        _st = m._eplb['stats']
++        _row = _st.sum(1)
++        print(f'[eplb-dbg] stats rows: per-layer sum min={float(_row.min()):.0f} '
++              f'max={float(_row.max()):.0f} ratio={float(_row.max())/max(1e-9,float(_row.min())):.2f}',
++              flush=True)
+ 
+     # --- 2. plan on rank 0, broadcast -------------------------------------
+     if buf.rank_idx == 0:
+@@ -1701,6 +1814,117 @@
+ 
+         Worker._gc_moe_ir_end = gc_moe_ir_end
+ 
++    if getattr(Worker, '_gc_moe_eco_tbl_begin', None) is None:
++        def gc_moe_eco_tbl_begin(self) -> dict:
++            """[ECO-TABLE] Anchor the offline plan table at the window start.
++
++            The table is keyed by `epoch`, which advances once per LAYER, so the
++            replay arm must be told which epoch the measured window starts at.
++            `mark[0] = E0` arms the replay path; before that the plan runs
++            online (prefill + warm-up are never replayed, they BUILD the warm
++            state the first measured call needs).
++            """
++            import torch
++            live = [m for m in _EXPERT_REGISTRY
++                    if getattr(m, '_buffer', None) is not None]
++            if not live:
++                return {'ok': False, 'reason': 'no buffer'}
++            buf = live[0]._get_buffer()
++            mark = getattr(buf, 'eco_tbl_mark', None)
++            if mark is None:
++                return {'ok': False, 'reason': 'no eco_tbl_mark view'}
++            torch.cuda.synchronize()
++            anchor = int(os.environ.get('GC_MOE_ECO_TABLE_ANCHOR', '0') or 0)
++            with torch.inference_mode():
++                # DO NOT write mark[1] here. `buf.header[0]` inside a captured
++                # CUDA graph reads the frozen constant, not the live epoch, so
++                # the anchor ended up 3742 calls too small and the table rows
++                # started at 3742 instead of 0 (measured: 4450 rows, every one
++                # of them a wrong-shape plan).
++                #
++                # mark[1] is instead written by the KERNEL on the first call
++                # it sees after arming -- that epoch IS E0 by definition.
++                #
++                # mark[2] = the epoch the TABLE's row 0 belongs to (uploaded
++                # from the capture run), used by the replay arm.
++                # mark[1] = number of ROWS the uploaded table carries. Mode 3
++                # (in-process check) wraps phase 2's epoch by this so the
++                # comparison lands on the same layer/step of phase 1.
++                mark[1] = int(os.environ.get('GC_MOE_ECO_TABLE_ROWS', '0') or 0)
++                if anchor:
++                    mark[2] = anchor
++                mark[0] = 1
++            return {'ok': True, 'e0': int(mark[1].item()),
++                    'anchor': int(mark[2].item())}
++
++        Worker._gc_moe_eco_tbl_begin = gc_moe_eco_tbl_begin
++
++    if getattr(Worker, '_gc_moe_eco_tbl_dump', None) is None:
++        def gc_moe_eco_tbl_dump(self) -> dict:
++            """[ECO-TABLE] Dump the captured offline plan table of THIS rank.
++
++            Returns the three rows per call (`quota`, `quota_start`, `D_e`) for
++            every layer that was captured, so the CPU reference can be replayed
++            against exactly the demand the GPU saw.
++            """
++            import torch
++            live = [m for m in _EXPERT_REGISTRY
++                    if getattr(m, '_buffer', None) is not None]
++            if not live:
++                return {'ok': False, 'reason': 'no buffer'}
++            buf = live[0]._get_buffer()
++            q = getattr(buf, 'eco_q_tbl', None)
++            qs = getattr(buf, 'eco_qs_tbl', None)
++            n = getattr(buf, 'eco_n_tbl', None)
++            if q is None:
++                return {'ok': False, 'reason': 'no eco_q_tbl view'}
++            torch.cuda.synchronize()
++            P = int(buf.layout.physical)
++            E = int(buf.layout.experts)
++            with torch.inference_mode():
++                anchor = int(buf.eco_tbl_mark[2].item())   # kernel-latched
++                replayed = int(buf.eco_tbl_mark[3].item())
++                cmp_calls = int(buf.eco_cmp[0].item())
++                cmp_bad = int(buf.eco_cmp[1].item())
++                return {'ok': True, 'rank': int(buf.rank_idx),
++                        'physical': P, 'experts': E, 'anchor': anchor, 'replayed': replayed,
++                        'cmp_calls': cmp_calls, 'cmp_bad': cmp_bad,
++                        'q': q.view(-1, P).cpu().tolist(),
++                        'qs': qs.view(-1, P).cpu().tolist(),
++                        'n': n.view(-1, E).cpu().tolist()}
++
++        Worker._gc_moe_eco_tbl_dump = gc_moe_eco_tbl_dump
++
++    if getattr(Worker, '_gc_moe_eco_tbl_load', None) is None:
++        def gc_moe_eco_tbl_load(self, payload: dict) -> dict:
++            """[ECO-TABLE] Upload an offline plan table into THIS rank.
++
++            One table for all ranks: the plan is rank-invariant (every rank
++            computes the identical split), so the CPU reference produces a
++            single table and every rank replays the same one.
++            """
++            import torch
++            live = [m for m in _EXPERT_REGISTRY
++                    if getattr(m, '_buffer', None) is not None]
++            if not live:
++                return {'ok': False, 'reason': 'no buffer'}
++            buf = live[0]._get_buffer()
++            q = getattr(buf, 'eco_q_tbl', None)
++            if q is None:
++                return {'ok': False, 'reason': 'no eco_q_tbl view'}
++            P = int(buf.layout.physical)
++            E = int(buf.layout.experts)
++            qq = torch.as_tensor(payload['q'], dtype=torch.int32)
++            ss = torch.as_tensor(payload['qs'], dtype=torch.int32)
++            nn = torch.as_tensor(payload['n'], dtype=torch.int32)
++            with torch.inference_mode():
++                q.view(-1, P)[:qq.shape[0]].copy_(qq.to(q.device))
++                buf.eco_qs_tbl.view(-1, P)[:ss.shape[0]].copy_(ss.to(q.device))
++                buf.eco_n_tbl.view(-1, E)[:nn.shape[0]].copy_(nn.to(q.device))
++            return {'ok': True, 'rows': int(qq.shape[0])}
++
++        Worker._gc_moe_eco_tbl_load = gc_moe_eco_tbl_load
++
+     if getattr(Worker, '_gc_moe_eco_trace_dump', None) is None:
+ 
+         def gc_moe_eco_trace_dump(self) -> dict:
+@@ -1735,10 +1959,13 @@
+                 out['slots'] = [int(v) for v in tr.cpu().tolist()]
+             ptl = getattr(buf, 'pull_tl', None)
+             if ptl is not None:
+-                out['pull_rows'] = ptl.view(256, 10).cpu().tolist()
++                out['pull_rows'] = ptl.view(256, 12).cpu().tolist()
+             ftl = getattr(buf, 'fine_tl', None)
+             if ftl is not None:
+-                out['fine_rows'] = ftl.view(65536, 8).cpu().tolist()
++                # [FINE-LOCKFREE] (128 CTA x 512 private slots) x 8 words.
++                # Slot k of CTA c is the (8*c + k)-th record, so an analyser
++                # reads a CTA's whole history without any global ordering.
++                out['fine_rows'] = ftl.view(128, 512, 8).cpu().tolist()
+             em = getattr(buf, 'eco_meta', None)
+             if em is not None:
+                 out['eco_meta'] = [int(v) for v in em.cpu().tolist()]

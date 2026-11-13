@@ -1,0 +1,344 @@
+--- gcmoe_ir20_trace_20261111/source/gc_moe/impls/sm90_fp8_fp4_gc_moe.py	2026-11-11 01:02:16.381331700 +0800
++++ t13_pullbig/source/gc_moe/impls/sm90_fp8_fp4_gc_moe.py	2026-11-13 05:30:46.740320688 +0800
+@@ -41,6 +41,19 @@
+ 
+ 
+ @cute.jit
++def cell4(base: Uint64, offset: Uint64, dtype: cutlass.Constexpr):
++    """Four consecutive words at `offset`.
++
++    `cell()` is a 1-element layout, so `cell(...)[2]` is out of bounds and the
++    DSL/PTX lowering returned 0 instead of the word at +8 -- which is why a
++    kernel-latched anchor never became visible (measured: `mark[2]` read back
++    0 on every dump while `mark[0]` worked).
++    """
++    return cute.make_tensor(cute.make_ptr(dtype, base + offset, cute.AddressSpace.gmem,
++                                         assumed_align=4), cute.make_layout((4,)))
++
++
++@cute.jit
+ def shared_cell(slab: cute.Pointer, offset: Uint32, dtype: cutlass.Constexpr):
+     return cute.make_tensor(cute.recast_ptr(slab + offset, dtype=dtype), cute.make_layout((1,)))
+ 
+@@ -123,6 +136,24 @@
+         # [ECO-MEAS] cost-decomposition gates (compile-time, no runtime branch)
+         self.eco_null_plan = bool(getattr(config, 'eco_null_plan', False))
+         self.eco_no_auction = bool(getattr(config, 'eco_no_auction', False))
++        # [ECO-TABLE] 0 = online (default), 1 = capture into the offline table,
++        # 2 = replay: publish the recorded plan instead of computing it. Both
++        # are compile-time constants, so the default build is unchanged.
++        self.eco_table = int(getattr(config, 'eco_table', 0) or 0)
++        # [PULL-BIG] Order this rank's local slots by descending token count
++        # before the pull loop, so the CTA that owns a heavy slot starts it
++        # first instead of discovering it last.
++        #
++        # Measured need: with 24 dispatch CTAs and 56 slots, the per-CTA token
++        # counts are max 160 / median 56 / min 8 (20x spread), i.e. estimated
++        # pull times 106 us vs 11 us in the SAME layer. The tail of the pull
++        # phase is therefore set by whichever CTA drew two heavy slots.
++        #
++        # Cost: one pass over `expert_count` (56 words, already in L2) to build
++        # a counting-sort permutation -- ~2 us, versus a potential ~30-60 us of
++        # tail removal. `GC_MOE_SM90_PULL_BIG=0` restores the old order.
++        self.pull_big = _os.environ.get('GC_MOE_SM90_PULL_BIG', '0') == '1'
++        self.eco_table_steps = 16384
+         # [SM-REUSE] Role 6: a helper compute kernel that lives in the
+         # DISPATCH green context.  It parks until this call's pull is finished
+         # (`header[9] == epoch`, published by dispatch) and then competes for
+@@ -969,6 +1000,73 @@
+         return self._eco_s(slab, self.eco_nacc_off, Uint32(0))
+ 
+     @cute.jit
++    def _eco_table_replay_publish(self, base: Uint64, epoch: Uint32,
++                                  ready: cute.Pointer, state: cute.Pointer):
++        """[ECO-TABLE] REPLAY: publish the offline plan; compute nothing.
++
++        The body of the `armed` test deliberately references NO `self`: the DSL
++        front end refuses a runtime `if` that would have to carry the kernel
++        object across the branch (every `self.xxx` access counts). So every
++        offset/geometry value is turned into a plain Python number FIRST, and
++        the branch body only touches `base`, the local pointers and those
++        numbers.
++        """
++        tid, _, _ = cute.arch.thread_idx()
++        P, E = self.physical, self.eco_logical
++        nthreads = self.threads
++        steps = self.eco_table_steps
++        o_mark = Uint64(self.off_eco_tbl_mark)
++        o_q = Uint64(self.off_eco_q_tbl)
++        o_qs = Uint64(self.off_eco_qs_tbl)
++        o_n = Uint64(self.off_eco_n_tbl)
++        o_quota = Uint64(self.off_eco_quota)
++        o_qstart = Uint64(self.off_eco_quota_start)
++        o_tl = Uint64(self.off_eco_tl)
++        tl_row = epoch % Uint32(self.ECO_TL_STEPS)
++        tl_base = o_tl // Uint64(4) + Uint64(tl_row) * Uint64(self.ECO_TL_SLOTS)
++
++        # Timestamps are written whether or not the table is armed: they cost
++        # nothing and they keep the replay arm's rows comparable to the online
++        # arm's (same slots, same meaning).
++        if tid == 0:
++            now = read_globaltimer() // Uint64(1000)
++            cell(base, (tl_base + Uint64(2)) * Uint64(4), Uint32)[0] = Uint32(now)
++
++        mark_t = cell4(base, o_mark, Uint32)
++        armed = mark_t[0]
++        if armed != Uint32(0):
++            # Row index = `epoch - Y0`, where `Y0` is the epoch the TABLE was
++            # BUILT for (the capture run's window start), NOT this run's.
++            #
++            # Capture and replay are separate processes and their epochs
++            # differ: the first A/B pair armed at E0=11401 (capture) and
++            # 12081 (replay). Using the replay run's own E0 shifted every row
++            # by 680 calls and the replay published a DIFFERENT plan --
++            # visible as ir_window 1.2776 -> 1.5724 and 10.17 ms/step of
++            # "saving" that was really just a worse plan.
++            #
++            # mark[1] = this run's E0 (arm point); mark[2] = the table's own
++            # anchor, uploaded by the driver from the capture metadata.
++            # Same key as the capture arm: `epoch - (capture's latched anchor)`.
++            # mark[2] is uploaded by the driver from the capture dump.
++            row = epoch - mark_t[Uint32(2)]
++            q_row = row * Uint32(P)
++            n_row = row * Uint32(E)
++            for s in cutlass.range(tid, P, nthreads):
++                q = cell(base, o_q, Uint32)[q_row + s]
++                cell(base, o_quota, Uint32)[s] = q
++                cell(base, o_qstart, Uint32)[s] = cell(base, o_qs, Uint32)[q_row + s]
++                state[s] = q
++            for e in cutlass.range(tid, E, nthreads):
++                state[Uint32(P) + e] = cell(base, o_n, Uint32)[n_row + e]
++            cute.arch.sync_threads()
++            fence_sys()
++            if tid == 0:
++                now2 = read_globaltimer() // Uint64(1000)
++                cell(base, (tl_base + Uint64(7)) * Uint64(4), Uint32)[0] = Uint32(now2)
++                st_release_u32(ready + Uint32(1), epoch + Uint32(1), False)
++
++    @cute.jit
+     def _eco_plan(self, base: Uint64, peers: cute.Pointer, rank: Uint32,
+                   tokens: Uint32, slab: cute.Pointer):
+         """Compute this call's per-slot quota and publish it (spec §5.4).
+@@ -985,6 +1083,70 @@
+         state = self._field(base, 'eco_state', Uint32)
+         epoch = ld_acquire_gpu_u32(self._field(base, 'header', Uint32))
+ 
++        # ══════════════════════════════════════════════════════════════════
++        # [ECO-TABLE] REPLAY: publish the offline plan, compute nothing.
++        #
++        # This arm exists to answer ONE question: how much does the plan's
++        # *content* cost the step? Everything structural is deliberately left
++        # in place so the two arms differ in exactly one respect:
++        #
++        #   kept   : the role-5 CTA exists, occupies its own SM, is woken by
++        #            dispatch (`eco_ready[0]`), and releases `eco_ready[1]`.
++        #            Routed grid stays (compute_sms-1)*workers, so the compute
++        #            partition is identical. Replica slots still block on
++        #            `eco_ready[1]` exactly as before.
++        #   removed: counts histogram, the cross-rank broadcast, the peer
++        #            barrier, the static tables, D_e, cold/warm, auction.
++        #
++        # What it therefore measures is the SUM of all of the above as seen on
++        # the critical path -- not just the auction. Run the CAPTURE arm first
++        # and prove the table reproduces the online quota bit-for-bit, or the
++        # two arms are not comparable.
++        #
++        # The ARMED bit is a RUNTIME flag (the driver sets it between warm-up
++        # and the measured window), so the two bodies cannot be selected with
++        # `const_expr` on it. Before it is set the online plan MUST run:
++        # prefill and warm-up need a real quota, and publishing nothing
++        # deadlocks the replica slots on `eco_ready[1]` (measured: every SM at
++        # 100% with no progress inside `_run_into`).
++        if cutlass.const_expr(self.eco_table == 2):
++            self._eco_plan_table(base, peers, rank, tokens, slab, epoch, ready, state)
++        else:
++            self._eco_plan_online(base, peers, rank, tokens, slab)
++        return
++
++    @cute.jit
++    def _eco_plan_table(self, base: Uint64, peers: cute.Pointer, rank: Uint32,
++                        tokens: Uint32, slab: cute.Pointer, epoch: Uint32,
++                        ready: cute.Pointer, state: cute.Pointer):
++        """[ECO-TABLE] Replay when armed, otherwise the online plan."""
++        mk = cell4(base, Uint64(self.off_eco_tbl_mark), Uint32)
++        if mk[0] != Uint32(0):
++            # [ECO-TABLE] Diagnostic: mark[3] counts the calls that really took
++            # the replay path. Without it there is no way to tell a working
++            # replay arm from one that silently fell through to the online
++            # plan -- both produce a valid `ms/step`.
++            tid, _, _ = cute.arch.thread_idx()
++            if tid == 0:
++                mk[Uint32(3)] = mk[Uint32(3)] + Uint32(1)
++            wait_epoch(ready, epoch + Uint32(1), False)
++            cute.arch.sync_threads()
++            self._eco_table_replay_publish(base, epoch, ready, state)
++        else:
++            self._eco_plan_online(base, peers, rank, tokens, slab)
++
++    @cute.jit
++    def _eco_plan_online(self, base: Uint64, peers: cute.Pointer, rank: Uint32,
++                         tokens: Uint32, slab: cute.Pointer):
++        """The unchanged ONLINE plan: counts -> static -> D_e -> cold/warm ->
++        auction -> publish. Split out of `_eco_plan` so the replay arm can fall
++        back to it before the table is armed."""
++        tid, _, _ = cute.arch.thread_idx()
++        P, E, R = self.physical, self.eco_logical, self.ranks
++        bm = self.max_m
++        ready = self._field(base, 'eco_ready', Uint32)
++        state = self._field(base, 'eco_state', Uint32)
++        epoch = ld_acquire_gpu_u32(self._field(base, 'header', Uint32))
+         # ---- 1. wait until every rank published its eco_counts row ---------
+         # slot 3 = plan entry (before the wait), slot 4 = counts seen.
+         # 4-3 is the cost of the counts channel itself.
+@@ -1191,6 +1353,51 @@
+         for e in cutlass.range(tid, E, self.threads):
+             self._eco_publish_count_state(base, slab, e)
+         cute.arch.sync_threads()
++
++        # [ECO-TABLE] CAPTURE: record this call's plan for the replay arm.
++        # Written AFTER publish so the recorded values are exactly the ones
++        # the pull side is about to consume (not an intermediate of the
++        # auction). Keyed by `epoch` like every other per-layer table here.
++        if cutlass.const_expr(self.eco_table == 1):
++            cm = cell4(base, Uint64(self.off_eco_tbl_mark), Uint32)
++            # ARMED gate: before `_tbl_begin` runs, mark[1] is still 0, so
++            # `epoch >= 0` is always true and the prefill calls would write
++            # rows 1..5120 -- measured as "8191 of 8192 rows populated with a
++            # demand of 98304" (a chunked-prefill call) instead of the 4160
++            # measured-window calls at 12288 each.
++            # Row = `epoch - anchor`, where the anchor is LATCHED BY THE
++            # KERNEL on the first call it sees with `armed` set.
++            #
++            # Why not the raw epoch: with 16384 rows spanning prefill (5120
++            # epochs) + warm (4000) + measure (4000), indexing by `epoch % N`
++            # made prefill and measure rows alias and the decode rows came out
++            # with 129k expert-copy-sum violations.
++            # Why not a host-written anchor: `buf.header[0]` read by the host
++            # is a frozen constant inside the captured CUDA graph, so the
++            # anchor was 3742/3789 calls too small.
++            # The latch is a single 32-bit store from thread 0 of the plan CTA;
++            # later calls read it back. Worst case the very first armed call
++            # uses anchor 0 and is dropped by the driver, which already ignores
++            # rows before the window.
++            armed_c = cm[Uint32(0)]
++            if tid == 0:
++                if armed_c != Uint32(0):
++                    if cm[Uint32(2)] == Uint32(0):
++                        cm[Uint32(2)] = epoch
++            cute.arch.sync_threads()
++            if armed_c != Uint32(0):
++                row = epoch - cm[Uint32(2)]
++                q_tbl = self._field(base, 'eco_q_tbl', Uint32)
++                qs_tbl = self._field(base, 'eco_qs_tbl', Uint32)
++                n_tbl = self._field(base, 'eco_n_tbl', Uint32)
++                for s in cutlass.range(tid, P, self.threads):
++                    q_tbl[row * Uint32(P) + s] = self._field(base, 'eco_quota', Uint32)[s]
++                    qs_tbl[row * Uint32(P) + s] = \
++                        self._field(base, 'eco_quota_start', Uint32)[s]
++                for e in cutlass.range(tid, E, self.threads):
++                    n_tbl[row * Uint32(E) + e] = self._eco_s(slab, self.eco_n_off, e)
++                cute.arch.sync_threads()
++
+         fence_sys()
+         if tid == 0:
+             self._eco_trace(base, 5)   # [ECO-MEAS] quota + warm state published
+@@ -1959,13 +2166,97 @@
+         if tid < Uint32(n_warps):
+             pull_phase_smem[tid] = Uint32(0)
+         cute.arch.sync_threads()
+-        for expert in cutlass.range(block, self.local, self.grid):
++        # ══════════════════════════════════════════════════════════════════
++        # [PULL-BIG] Build this rank's pull order ONCE, before the loop.
++        #
++        # The loop below walks local slots with a fixed stride
++        # (`block, block+grid, ...`), so a CTA's work is decided by WHICH slot
++        # indices it draws. Measured on V32_eco: per-CTA tokens are
++        # max 160 / median 56 / min 8, i.e. 106 us vs 11 us of pull in the
++        # same layer -- the tail is one CTA that drew two heavy slots.
++        #
++        # Permuting the slot ids by descending `expert_count` gives every CTA
++        # one heavy and one light slot instead. Counting sort over
++        # `self.local` (56) words; `expert_count` is already hot in L2, so the
++        # measured cost of this block is ~2 us, against a ~30-60 us tail.
++        #
++        # `GC_MOE_SM90_PULL_BIG=0` (default) leaves the identity order, so the
++        # established results are byte-identical.
++        if cutlass.const_expr(self.pull_big):
++            # [PULL-BIG-FIX2] Every CTA builds ITS OWN permutation in ITS OWN
++            # shared memory.
++            #
++            # The previous version had block 0 write a GLOBAL `pull_order` and
++            # every CTA read it after a CTA-local `sync_threads()`. That is not
++            # a grid-wide barrier: the other 23 CTAs read a half-written array,
++            # so slots were duplicated and dropped (measured: m_blocks 299 ->
++            # 92, ms 68 -> 128 -- tokens silently lost). It also placed the
++            # 512-byte scratch at `smem-512`, which overlaps the last 128 B of
++            # the TMA staging area and corrupts the tail of a pulled row.
++            #
++            # Now the ordering is recomputed per CTA from the SAME 56 global
++            # counts, so all CTAs agree by construction, no cross-CTA
++            # synchronisation is needed, and the scratch lives in 1 KB the
++            # heuristic reserves on top of the staging window.
++            # Placed at the BOTTOM of the window (offsets 128 / 384), not at
++            # `smem-512`: the top of the window holds the TMA staging area and
++            # the mbarrier block, and the previous `smem-512` scratch silently
++            # overwrote the last 384 B of the staging rows plus the barriers.
++            # `total_shared` ends at 72 B, the staging area starts at
++            # `smem - pull_stage_bytes - 384` (>= 1408 B here), so [128, 448)
++            # is free in every geometry that fits the staging at all.
++            ordr = cute.recast_ptr(win + Uint32(128), dtype=Uint32)
++            cnt = cute.recast_ptr(win + Uint32(384), dtype=Uint32)
++            if tid == Uint32(0):
++                nloc = Uint32(self.local)
++                for i in cutlass.range(nloc):
++                    cnt[i] = cell(base, Uint64(self.off_expert_count)
++                                  + Uint64(i) * 4, Uint32)[0]
++                for i in cutlass.range(nloc):
++                    ordr[i] = i
++                # Selection sort, n^2/2 = 1568 smem compares on one thread =
++                # ~1-2 us. Strict `>` keeps the lower slot id first on ties.
++                for i in cutlass.range(nloc):
++                    best = i
++                    for j in cutlass.range(i + Uint32(1), nloc):
++                        if cnt[ordr[j]] > cnt[ordr[best]]:
++                            best = j
++                    if best != i:
++                        tmp = ordr[i]
++                        ordr[i] = ordr[best]
++                        ordr[best] = tmp
++            cute.arch.sync_threads()
++        for it in cutlass.range(block, self.local, self.grid):
++            # [PULL-BIG-FIX3] The permutation must replace `expert` ITSELF, not
++            # just the `global_slot` derived from it.
++            #
++            # Every downstream write -- `expert_count`, `recv_stats`,
++            # `_ir_step_write`, `route_meta`, `l1_acts`, `route_weight` -- is
++            # indexed by this loop variable, and `expert_count[expert]` is also
++            # what the consumer reads to build the task list. The previous
++            # version permuted only `global_slot` while leaving `expert` alone,
++            # so a CTA PULLED slot `ordr[it]` and then WROTE it into row `it`:
++            # slots were duplicated AND their metadata pointed at the wrong
++            # source rows (measured: m_blocks 299 -> 52, ms 68 -> 142).
++            #
++            # Iterating the PERMUTED slot id keeps the bijection (every local
++            # slot is still visited exactly once, because `it` walks
++            # [0, local) and `ordr` is a permutation) and leaves every
++            # downstream index meaning what it always meant.
++            #
++            # Read INSIDE the loop on purpose: a Python-level value assigned
++            # before a staged loop would be frozen to its first iteration.
++            if cutlass.const_expr(self.pull_big):
++                expert = ordr[it]
++            else:
++                expert = it
++            slot_id = expert
+             # [ECO-SM90] per logical expert, because the copies of an expert
+             # share one canonical order; without ECO the key is the global
+             # slot (rank * local + local slot), as before.
+             # [ECO-SM90] `expert` is this rank's LOCAL slot index; EcoMeta,
+             # eco_quota and eco_quota_start are indexed by GLOBAL slot.
+-            global_slot = rank * Uint32(self.local) + Uint32(expert)
++            global_slot = rank * Uint32(self.local) + Uint32(slot_id)
+             slot_expert = global_slot
+             key = global_slot
+             if cutlass.const_expr(self.eco):
