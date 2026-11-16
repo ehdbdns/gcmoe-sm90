@@ -2711,6 +2711,52 @@ combine push 在这层累计 1000 个片段、跨越整个 compute 阶段，
 说明「推回」是和 GEMM 交织进行的，而不是集中在层尾。
 
 
+## ★ 尾部并行度塌陷：领取粒度从 (expert, ntile) 改成 (expert, ntile, mblock)
+
+前面的并行度图和 absolute trace 都显示层尾有一段并行度塌陷。
+**根因不是任务总量不均衡，而是同一个 ntile 的多个 M 块被同一个 CTA 串行包办。**
+
+基线 trace（BS256/ECO/rank0）里：940 个 tile 中有 40 个含多个 M 块，
+这 40 个**全部（40/40）**落在同一个 CTA 上；最长的例子是 E46T10，
+3 个 M 块（valid 64/64/56）连续 76 µs 都由同一个 CTA 执行，
+同期其余 51 个 CTA 空转。
+
+原因在任务领取的两级结构：`_claim_command` 用单调票号取一个 active 条目，
+而该条目是 `(expert, ntile)`；`_produce_tasks` 领到后用
+`for start in range(0, count, max_m)` 遍历**该 tile 的全部 M 块**。
+`_publish_task` 与 `_load_persistent_tile` 是配对的、逐块串行，
+所以这些块只能由这一个 CTA 依次 load，consumer 半边也只能依次算。
+
+### 改法：让票号本身带 M 块
+
+| 位置 | 改动 |
+|---|---|
+| `layout/sm90_gc_moe.py` | `active_expert` / `active_ready` 由 `local` 扩到 `local*64`，新增 `active_mb`；`fine_lay` 同步扩容 |
+| dispatch（两处发布点） | `owned>0` 时按 `ceil(owned/max_m)` 发布多条 active 票号，每条带自己的 `mblk` |
+| `_claim_command` | 直接读 `active_mb[active_slot]`，不再用 per-tile 游标 |
+| `_produce_tasks` | 只 load `command[3]` 那**一个** M 块，然后立刻再领 |
+| command 张量 | 3 字 → 4 字（新增 mblock） |
+
+为什么不用 per-tile 游标：`head+7` 是**单调**票号，一个票号发出后
+不能回到同一个 tile，所以"同一 tile 领多次"必须由 dispatch 多发票号。
+
+### 结果（BS256 / ECO / 8×H20 / 1000+1000）
+
+| 指标 | 基线 | MB-CLAIM | 变化 |
+|---|---|---|---|
+| ms/step | 62.39 | **58.59** | **−6.1%** |
+| 生成 token 总数 | 513280 | 513280 | 一致 |
+| 每步 token | 256 | 256 | 一致 |
+| 层结束（trace） | 746.6 µs | **687.5 µs** | −59 µs |
+| M 块总数/step | 309.7 | 309.5 | 一致 |
+| **多块 tile 全压一个 CTA** | **40/40** | **0/60** | 修复 |
+| **最长同 tile 串行** | **3 块** | **0** | 修复 |
+| 多块 tile 墙钟跨度 | 57 µs（max 76） | 26 µs（max 34） | 摊开 |
+
+关键正确性证据：`gen_tokens_total` 与每步 token 数**完全一致**，
+`mb_total_mean` 只差 0.2/step（0.06%，正常放置抖动）——
+既没有丢块，也没有重复计算。细节见 `docs/MB_CLAIM.md`。
+
 ## ★ 代价函数的目标之争：M 块 vs token（三目标 × 四档 BS）
 
 ECO 的 plan 最小化 `Σ_rank cost`，而 `cost` 怎么写决定了它在优化什么：
