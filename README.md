@@ -2613,6 +2613,70 @@ pull 窗口 0 → 64 µs；单副本最早 0 µs，副本最早 25 µs
 | **GEMM** | 33 → 466 | **93%** |
 | combine | 473 → 486 | 3% |
 
+## ★ Absolute trace：pull CTA 与 compute CTA 的同框全过程时间线
+
+前面「逐时刻的 compute CTA 并行度」只画了**并行度曲线 + 每 CTA 一行**，
+看不到「这个 CTA 此刻在算哪个专家的第几个 ntile 的第几个 M 块」，
+也看不到 **combine push** 那段（GEMM 算完后写回 owner rank 的时间）。
+本节补上：一张图里同时画出
+
+* **compute CTA**：橙色 = 一个 M 块的 GEMM，绿色（叠在橙下方）= 该块的 combine push
+* **pull CTA**：蓝色 = 这个 CTA 正在拉一个槽
+
+横轴是**层内绝对时间（µs）**，纵轴是 CTA 行，两类 CTA 共用同一时间尺度。
+
+### 图（BS256 / ECO / rank 0 / 实测 decode 层）
+
+![](docs/abstrace/AT256_eco_rank0_full.png)
+
+> 整层 0–732 µs（绘图轴留 2% 边距）。1900 个 GEMM 片段、1000 个 push 片段、56 个 pull 片段全部画出。
+
+**放大到 23–103 µs（每个片段都带编号，用于读数）**：
+
+![](docs/abstrace/AT256_eco_rank0_zoom23-103us.png)
+
+### 标注规则
+
+| 颜色 | 事件 | 标签 | 含义 |
+|---|---|---|---|
+| 蓝 | `slot_begin → slot_end` | `E<逻辑专家> s<全局槽>` | pull CTA 拉完这个槽 |
+| 橙 | `task_begin → task_end` | `E<专家> T<ntile> M<M块序号>`，第二遍 GEMM 加 `L2i` | compute CTA 在算哪一块 |
+| 绿 | `push_begin → push_end` | `P<ntile>` | 该块的 combine 结果推回各 owner rank |
+
+* `M` = `start_row / block_m`，即该槽内第几个 M 块。
+* 一个 pull CTA 会**串行拉多个槽**，所以同一蓝色行上有多个片段（各自带槽号）。
+* 全量切片数据见 `docs/abstrace/AT256_eco_rank0_slices.csv`
+  （列：`kind,cta,begin_us,end_us,dur_us,expert,ntile,mblock,start_row,valid,phase,global_slot`），
+  图上因密度只能标一部分，CSV 里**一个都不少**。
+
+### 这一版 trace 的实现要点（三个坑）
+
+1. **记录从 8 字扩到 10 字**：原来的 `fine` 记录只有 `type/id/a0..a2/epoch`，
+   装不下 `ntile` 和 M 块序号，无法标注「第几号 ntile 的第几块」。
+   现在是 `[t_us, type, id, a0..a4, epoch, -]`。
+2. **`fine_tl` 必须是环形**：一个 BS256 层就产生 ~59k 条记录（`type 6/7` 占大头），
+   前缀缓冲只会留下 prefill 的尾巴。改成 `slot = counter % FINE_RECS`。
+3. **时间戳不能直接存 `globaltimer//1000`**：它会溢出 int32
+   （实测 -7.2e8 µs）。改成首次锁存 64 位原点、之后存相对微秒；
+   而且 `irstep_begin` 会清零 `fine_ctr`，所以**重建次序只能靠时间戳排序**，
+   不能靠计数器判回绕。
+
+### 关键读数（BS256 / rank 0 / 该层）
+
+| 项 | 数值 |
+|---|---|
+| pull 全部拉完 | **149.0 µs** |
+| 第一个 GEMM 开始 | **28 µs**（pull 还在进行中）|
+| 层结束（最后片段结束）| **732 µs** |
+| pull 片段 / GEMM 片段 / push 片段 | 56 / 1900 / 1000 |
+| 配对失败 | **0 / 0 / 0** |
+
+⇒ pull 只占整层的 **20%**（149 / 732），而且第一个 GEMM 在 pull 完成前 121 µs 就开始了
+——**compute 与 pull 是流水重叠的**，这也是为什么后面优化 pull 的收益有限。
+combine push 在这层累计 1000 个片段、跨越整个 compute 阶段，
+说明「推回」是和 GEMM 交织进行的，而不是集中在层尾。
+
+
 ## ★ 代价函数的目标之争：M 块 vs token（三目标 × 四档 BS）
 
 ECO 的 plan 最小化 `Σ_rank cost`，而 `cost` 怎么写决定了它在优化什么：
