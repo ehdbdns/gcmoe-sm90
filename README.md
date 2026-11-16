@@ -2620,10 +2620,12 @@ pull 窗口 0 → 64 µs；单副本最早 0 µs，副本最早 25 µs
 也看不到 **combine push** 那段（GEMM 算完后写回 owner rank 的时间）。
 本节补上：一张图里同时画出
 
-* **compute CTA**：橙色 = 一个 M 块的 GEMM，绿色（叠在橙下方）= 该块的 combine push
+* **compute CTA**：橙色 = 一个 M 块的 GEMM，绿色 = 该块的 combine push（**独立时间段**）
 * **pull CTA**：蓝色 = 这个 CTA 正在拉一个槽
 
 横轴是**层内绝对时间（µs）**，纵轴是 CTA 行，两类 CTA 共用同一时间尺度。
+**每个 M 块都标出 `valid` 行数**（`v8` … `v64`），因为 valid 同时决定
+GEMM 时长和 push 时长，是这张图里最需要看的变量。
 
 ### 图（BS256 / ECO / rank 0 / 实测 decode 层）
 
@@ -2632,19 +2634,27 @@ pull 窗口 0 → 64 µs；单副本最早 0 µs，副本最早 25 µs
 > 整层 0–732 µs。1900 个 GEMM 片段、1000 个 push 片段、56 个 pull 片段全部画出（画布 22486×10869 px）。
 > 每个片段都带编号，**标签居中且字号按各自方框自适应**（9–12 pt），全部落在框内、互不重叠。
 
-**放大到 60–80 µs（同一层，字号可放大到 40+ pt，便于逐个读数）**：
+**起始窗口放大到 23–48 µs**（pull 与第一批 L1 GEMM 重叠；L1 没有 push）：
 
-![](docs/abstrace/AT256_eco_rank0_zoom23-103us.png)
+![](docs/abstrace/AT256_eco_rank0_zoom23-48us.png)
+
+**L2 窗口放大到 606–636 µs**（橙色 compute 在 push 起点截断，绿色 push 独立成段；
+这一窗口的 valid 覆盖 8/16/32/40，可直接比出 push 长短）：
+
+![](docs/abstrace/AT256_eco_rank0_zoom606-636us_L2push.png)
 
 ### 标注规则
 
 | 颜色 | 事件 | 标签 | 含义 |
 |---|---|---|---|
 | 蓝 | `slot_begin → slot_end` | `E<逻辑专家>s<全局槽>` | pull CTA 拉完这个槽 |
-| 橙 | `task_begin → task_end` | `E<专家>T<ntile>M<M块序号>`，第二遍 GEMM 末尾加 `+` | compute CTA 在算哪一块 |
-| 绿 | `push_begin → push_end` | `P<ntile>` | 该块的 combine 结果推回各 owner rank |
+| 橙 | `task_begin → push起点` | `E<专家>T<ntile>M<M块序号>v<valid>`，第二遍 GEMM 加 `+` | compute CTA 的**纯计算** |
+| 绿 | `push_begin → push_end` | `p<ntile>v<valid>` | 该块的 combine 推回各 owner rank（**独立阶段**）|
 
-* `M` = `start_row / block_m`，即该槽内第几个 M 块。
+* `M` = `start_row / block_m`，即该槽内第几个 M 块；`v` = 该块的有效行数 valid。
+* **橙色与绿色首尾相接、不重叠**：橙条的右端被裁到 `min(gemm_end, push_begin)`，
+  所以橙色只代表计算，绿色只代表搬运。此前版本把绿色画成橙条下方的
+  0.55 高细条，视觉上会被误读成「计算的一部分」，也无法看出 push 时长差异。
 * 一个 pull CTA 会**串行拉多个槽**，所以同一蓝色行上有多个片段（各自带槽号）。
 * 全量切片数据见 `docs/abstrace/AT256_eco_rank0_slices.csv`
   （列：`kind,cta,begin_us,end_us,dur_us,expert,ntile,mblock,start_row,valid,phase,global_slot`），
@@ -2671,6 +2681,17 @@ pull 窗口 0 → 64 µs；单副本最早 0 µs，副本最早 25 µs
 | 层结束（最后片段结束）| **732 µs** |
 | pull 片段 / GEMM 片段 / push 片段 | 56 / 1900 / 1000 |
 | 配对失败 | **0 / 0 / 0** |
+
+| combine push 累计时长 | 1000 片段，均值 1.9 µs/块，全部落在 L2（L1 无 push） |
+
+combine push 时长随 valid 单调增长，这正是把 push 拆成独立阶段才看得出的结论：
+
+| valid | 8 | 16 | 24 | 32 | 40 | 48 | 56 | 64 |
+|---|---|---|---|---|---|---|---|---|
+| push 均值 (µs) | 1.12 | 1.31 | 1.71 | 1.88 | 1.82 | 2.32 | 2.38 | 2.46 |
+
+（交叉校验：1000 个 push **全部**落在各自 GEMM 区间内，push 起点比 GEMM 结束早
+1–4 µs，即内核在最后几个 n-iter 就已开始搬运；配对失败 0 个。）
 
 ⇒ pull 只占整层的 **20%**（149 / 732），而且第一个 GEMM 在 pull 完成前 121 µs 就开始了
 ——**compute 与 pull 是流水重叠的**，这也是为什么后面优化 pull 的收益有限。
