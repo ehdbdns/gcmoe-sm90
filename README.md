@@ -2629,10 +2629,11 @@ pull 窗口 0 → 64 µs；单副本最早 0 µs，副本最早 25 µs
 
 ![](docs/abstrace/AT256_eco_rank0_full.png)
 
-> 整层 0–732 µs（绘图轴留 2% 边距）。1900 个 GEMM 片段、1000 个 push 片段、56 个 pull 片段全部画出。
-> 画布 22486×10869 px，标签 8–13 pt，放大到 100% 可读。
+> 整层 0–732 µs。1900 个 GEMM 片段、1000 个 push 片段、56 个 pull 片段全部画出（画布 22486×10869 px）。
+> 这一版**只给够宽的片段加标签**：全轴上一条 25 µs 的 bar 只占 3.3% 宽度，
+> 9 个字符在任何画布下都放不进，硬标只会变成一团。编号请看下面的放大图与 CSV。
 
-**放大到 23–103 µs（每个片段都带编号，20 pt 字，可直接读数）**：
+**放大到 60–80 µs（该区间所有 GEMM 片段都 ≥25 µs 宽，标签居中且字号按各自方框自适应，最大 48 pt）**：
 
 ![](docs/abstrace/AT256_eco_rank0_zoom23-103us.png)
 
@@ -2640,8 +2641,8 @@ pull 窗口 0 → 64 µs；单副本最早 0 µs，副本最早 25 µs
 
 | 颜色 | 事件 | 标签 | 含义 |
 |---|---|---|---|
-| 蓝 | `slot_begin → slot_end` | `E<逻辑专家> s<全局槽>` | pull CTA 拉完这个槽 |
-| 橙 | `task_begin → task_end` | `E<专家> T<ntile> M<M块序号>`，第二遍 GEMM 加 `L2i` | compute CTA 在算哪一块 |
+| 蓝 | `slot_begin → slot_end` | `E<逻辑专家>s<全局槽>` | pull CTA 拉完这个槽 |
+| 橙 | `task_begin → task_end` | `E<专家>T<ntile>M<M块序号>`，第二遍 GEMM 末尾加 `+` | compute CTA 在算哪一块 |
 | 绿 | `push_begin → push_end` | `P<ntile>` | 该块的 combine 结果推回各 owner rank |
 
 * `M` = `start_row / block_m`，即该槽内第几个 M 块。
