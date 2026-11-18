@@ -70,8 +70,14 @@ valid 总和差 17.6%，实测耗时差 12.5% —— **两者方向一致且量�
 ## 文件
 
 - `one_layer_epoch87200.json` — 本层全部原始数字（4.9 KB）
-- `one_layer_epoch87200.perfetto.json` — 拖进 <https://ui.perfetto.dev> 可看 8 rank × 4 role 时间轴
-
-> perfetto 文件里的 role 时段来自 `pull_tl` 打点（本次运行没开完整 torch trace）：
-> `dispatch=[10]→[3]`、`pull=[4]→[5]`、`compute=[5]→[11]`、`combine=[12]→[13]`。
-> `shared(role4)` 和 `plan(role5)` 在这套配置里没有独立打点，故未画出。
+> ⚠️ **本目录不含 perfetto 时间轴文件。**
+>
+> 本次运行是 graph 模式且没有开完整 torch trace，只能用 `pull_tl` 打点凑时间轴，
+> 但 `pull_tl` 是**每 rank 独立的 256 行环形缓冲**：等程序结束再读时，8 个 rank 上
+> 标记为同一 epoch 的行，实际来自**不同时刻**的调用（实测 `[10]` 相差 16.8 秒）。
+> 跨 rank 画时间轴必然错位，所以该文件已删除。
+>
+> **表格里的数字不受影响**：每个 rank 的「实测耗时」是同一行内的差值
+> (`[11]-[10]`)，不需要跨 rank 对齐。
+>
+> 需要可交互时间轴时，必须用 `--profile-out` 跑一次完整 torch trace。
