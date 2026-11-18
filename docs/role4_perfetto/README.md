@@ -17,16 +17,21 @@ torch profile 里共 **4600 次** gc_moe 调用。EPLB 重排发生在第 4359 �
 
 ## 轨道布局：和 `phases5_role4_trace.png` 完全一致
 
-- **process = rank 0 … rank 7**（8 个 lane，一个 rank 一组）
-- **thread = role**，顺序与图一致：
+每个 (rank, role) 组合是**独立的一条轨道**，共 40 条，用
+`process_sort_index` / `thread_sort_index` 强制成图中顺序
+（rank0 dispatch → rank0 shared → … → rank7 combine），
+每根 bar 的**名称里直接写着阶段描述和耗时**，所以 Perfetto 会把文字画在条内。
 
 | tid | 角色 | 启动几何 |
 |---:|---|---|
-| 0 | role1 dispatch（routing/count-exchange + token pull） | grid=24 block=256 |
-| 1 | **role4 shared expert L1+L2** | grid=71 block=256 |
-| 2 | role5 ECO plan | grid=1 block=512 |
-| 3 | role2 routed GEMM | grid=71 block=384 |
-| 4 | role3 combine | grid=288 block=384 |
+
+| 顺序 | 角色 | 启动几何 |
+|---:|---|---|
+| 1 | role1 dispatch（routing/count-exchange + token pull） | grid=24 block=256 |
+| 2 | **role4 shared expert L1+L2** | grid=71 block=256 |
+| 3 | role5 ECO plan | grid=1 block=512 |
+| 4 | role2 routed GEMM | grid=71 block=384 |
+| 5 | role3 combine | grid=288 block=384 |
 
 每一根 bar 都是 profile 里**真实的 gc_moe kernel 时间区间**，没有任何合成。
 `wait_for(role4)` 的箭头（role4 结束 → role2 开始）标出 `wait_for=(4,)` 依赖。
