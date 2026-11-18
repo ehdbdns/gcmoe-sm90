@@ -63,3 +63,17 @@ torch profile 里共 **4600 次** gc_moe 调用。EPLB 重排发生在第 4359 �
 本文件的 5 条轨道只含 gc_moe 的 kernel。shared expert 已由 role4 接管，
 所以看不到 vLLM 的 marlin/nvjet；如果看的是重排前或 role4 未启用的运行，
 shared 会出现在 aux stream（stream 51）上的 marlin 里。
+
+## 图片与 Perfetto 文件的关系
+
+`phases5_role4_from_perfetto.png` **直接读 `one_decode_layer_postrearr.perfetto.json` 画出来的**，
+脚本是同目录的 `plot_from_perfetto.py`：
+
+```
+python plot_from_perfetto.py one_decode_layer_postrearr.perfetto.json out.png
+```
+
+所以图里的每一根条都对应 JSON 里的一个 `ph:"X"` slice，数值必然一致。
+
+关于 Perfetto 界面：它只按 slice 的 `name` 渲染文字，且轨道背景/条高/字体是它前端固定的，
+**无法做到和这张图完全一样的观感**。要"像图一样"请看 PNG；要在时间轴上交互排查请用 Perfetto。
