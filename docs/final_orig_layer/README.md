@@ -7,7 +7,7 @@
 | token / 激活专家 / M块数 | `ir_step.layer_detail` | dispatch kernel 设备侧按 (layer,step) 记录 |
 | 每 M 块的 valid | `eco_trace.fine_rows` type=6 | 61k 条记录，覆盖整层 |
 | 预测 T[r] | `pull_tl[epoch][24+r]` | plan 自己的 cost |
-| 实测耗时 | `pull_tl[epoch][10] → [11]` | dispatch 入口 → compute 退出 |
+| 实测耗时 | `pull_tl[epoch][10] → [11]` | dispatch 入口 → compute 退出（同一 rank 的设备时间戳，均来自 `pull_tl`，有效） |
 
 ## 配置
 
@@ -69,6 +69,12 @@ rank 7 的 token 最少（186）却只有 15 块，rank 2 用 189 个 token 摊�
 
 rank 1 块更多但每块 valid 更小（36.2 vs 42.3），valid 总和反而更低（55k vs 61k），
 最终 routed 耗时几乎相同（609 vs 610 µs）。**块数 × 单块 valid 才是耗时驱动量。**
+
+## 时序图（单层）请看 GROUPED.md
+
+本目录的 `one_layer.perfetto.json` 是早期版本；当前正确的单层时序图是
+`one_layer_grouped.png` / `one_layer_grouped.perfetto.json`，说明见 **`GROUPED.md`**。
+其中记录了旧版 wait 切分的错误（把"内核还没启动"的时间算进了 role2 内部等待）及修正。
 
 ## 文件
 
