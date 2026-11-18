@@ -1,40 +1,52 @@
 # 单层 8-rank torch profile 切片（epoch 14673）
 
-从 BS256 + `GC_MOE_ECO_COSTFN=1` + EPLB 重排 + `ENFORCE_EAGER=1` 的
-torch profile 中，切出**同一层**（epoch tag `14673`，对应 trace 内的
-call #128）在 8 个 rank 上的全部事件。
+从 BS256 + `GC_MOE_ECO_COSTFN=1` + EPLB 重排 + `ENFORCE_EAGER=1` 的 torch profile
+中，切出**同一层**（epoch tag `14673`，trace 内 call #128）在 8 个 rank 上的全部事件。
 
-- 源目录：`prof/prof_eco_bs256_v3/traces/`（每 rank 1.18 GB 全量 chrome trace）
-- 切片窗口：`4077691964997 .. 4077691966987`（绝对 µs，长约 **1990 µs**，含 20 µs 上下文）
-- 每文件：~62–68 KB，含该层该 rank 的全部 `cpu_op` / `kernel` / `cuda_runtime` / `ac2g`
+- 源：`prof/prof_eco_bs256_v3/traces/rankN.json`（每 rank 1.18 GB 全量 chrome trace）
+- 切片窗口：绝对 µs `4077691964997 .. 4077691966987`（约 1990 µs）
+- 每文件约 58–64 KB
+
+## 这个切片修正了什么
+
+上一版切片**在 Perfetto / chrome tracing 里打开是空的**，原因有三：
+
+1. **缺 `process_name` / `thread_name` 元数据（`ph:"M"`）** —— 没有这些，查看器不建轨道。
+   现在每个文件都补了 8 条：host 进程 + 5 条设备 stream（`stream 23` 是主 stream，
+   `2082/2083/2084` 是 gc_moe 的 green-context stream）。
+2. **时间戳是 4.08e12 绝对 µs** —— 查看器时间轴会缩放到不可用。
+   现在全部 **rebase 到 0**（相对本层第一次 dispatch）。
+3. **`ac2g` flow 事件只剩一端** —— 按窗口过滤时成对事件会被拆开。现在成对保留。
+
+另外附了 `layer_timeline_from_slice.png`：**直接由这些切片文件画出来**，
+所以 PNG 与 JSON 内容必然一致，可用它交叉校验查看器的显示。
 
 ## 怎么打开
 
-把任意 `rankN.json` 拖进
-[`chrome://tracing`](chrome://tracing) 或 <https://ui.perfetto.dev> 即可。
+任选其一，把 `rankN.json` 拖进去：
 
-- 先按 `name` 过滤 `gc_moe`，可以看到该层的 4 个 role：
-  `grid=24` dispatch / `grid=71` routed compute / `grid=1` ECO plan / `grid=288` combine
-- 过滤 `Marlin` 或 `nvjet` 可以看到 shared expert（vLLM aux stream，**不在 gc_moe 内**）
-- `ac2g` 事件可看出 kernel 落在哪条 stream（gc_moe 的 role 用独立 green-context stream）
+- <https://ui.perfetto.dev>（推荐，chrome://tracing 已在新版 Chrome 移除）
+- 本地 `python -m perfetto` 或任意支持 chrome trace JSON 的查看器
 
-## 这一层的时间结构（单位 µs，相对各 rank 自己的 dispatch 起点）
+打开后应看到 5 条轨道：`stream 23` 上有 shared（marlin/nvjet）和大部分 elementwise；
+`2082` = dispatch（grid 24）、`2083` = routed compute（grid 71）+ combine（grid 288）、
+`2084` = ECO plan（grid 1）。
 
-| 阶段 | 起 | 止 | 说明 |
-|---|---|---|---|
-| count exchange | `[10]` | `[21]` | 各 rank 都 ~16 µs，但**结束时刻不齐**（散 438 µs） |
-| wait for peers | `[21]` | `[4]` | 各 rank 等待量不同（1–439 µs），**吸收掉 launch 错峰** |
-| token pull | `[4]` | `[5]` | 跨 rank 同步点 `[4]` 对齐在 **1 µs** |
-| shared L1+L2 | — | — | 跑在 aux stream，比 dispatch 早 ~1.2 ms 结束 |
-| wait token | compute kernel launch | `[15]` | **parking 时间**，中位 285 µs，81% 的调用 >100 µs |
-| routed GEMM | `[15]` | compute exit | 真正在算 |
-| combine | `[12]` | `[13]` | role 3 |
+## 这一层的时间结构（µs）
 
-见 `layer_timeline_8rank.png`。
+| 阶段 | 定义 | 实测（rank0..7 范围） |
+|---|---|---|
+| count exchange | `[10]` → `[21]`（本 rank 24 CTA 齐） | 16–19 |
+| wait for peers | `[21]` → `[4]`（跨 rank rendezvous） | **1–439** |
+| token pull | `[4]` → `[5]` | 49–97 |
+| shared L1+L2 | marlin/nvjet 首末 kernel | 193–219 |
+| **wait token** | compute kernel launch → `[15]` | **30–500** |
+| routed GEMM | `[15]` → compute exit | 42–120 |
+| combine | `[12]` → `[13]` | 8–56 |
 
-## 注意
+两个容易误读的点：
 
-`[10]`（dispatch kernel 第一个 CTA 落地）与 `[21]`（本 rank 24 个 CTA 都到齐）
-之间隔着 `_dispatch_grid` 的 CTA 内 rendezvous；而 `[3]`/`[21]` 之后还有一次
-**跨 rank** 的 `wait_epoch(peer_table[tid]+1)`，其后的第一个时刻才是 `[4]`。
-所以「count exchange 的结尾」在 rank 间是不对齐的，**同步点在 `[4]`**。
+- **`count exchange` 的结尾在 rank 间不对齐**（散 438 µs）。真正同步点是 `[4]`，对齐在 1 µs。
+  各 rank 的 `wait for peers` 长度恰好吸收了这个错峰。
+- **`wait token` 不是 GEMM**。routed compute kernel 是 graph 根节点，很早就被 launch，
+  但 CTA 停在 mbarrier 上等第一个 M 块落地。把它算进 GEMM 会让 GEMM 看起来长 5–10 倍。
