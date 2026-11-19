@@ -168,3 +168,49 @@ overlap   : 0 / 256
 任务书的 §5.2/§5.3/§5.4 与 5 条硬约束，在 `FINAL_V2` 上**已全部执行并验收通过**；
 §3.2 的 token/M块数因为 `FINAL_V2` 的两个窗口不重叠而**无法满足**，
 需要你决定是换一份数据、还是接受缺失。
+
+---
+
+## 8. 我的代码改动（执行者本人）
+
+### 8.1 为什么改
+
+`8b5d944`（另一位执行者提交的 aligned-step 功能）**无法编译**：
+
+```
+error[TYPE_DYNAMIC_EXPR_UNSUPPORTED] ... sm90_fp8_fp4_gc_moe.py:2389
+```
+
+`smoke_compile_eco.py` 在**开关关闭和打开两种情况下都失败**，
+即该提交把基线也打挂了。没有这一步，任务书要求的 sampled layer 根本跑不起来。
+
+### 8.2 三处具体改动（只改 1 个文件、共 23 行）
+
+文件：`source/gc_moe/impls/sm90_fp8_fp4_gc_moe.py`
+
+| # | 位置 | 问题 | 我的改法 |
+|---|---|---|---|
+| 1 | `__init__` 第 165 行 | `'profile_slot_counts' in layout.views` 在 `views` 属性缺失时抛异常 | 改成 `getattr(layout,'views',{})`（与本文件其他开关的写法一致）|
+| 2 | `_pull_tl_write_raw` 前后 | 原作者把 prime 语句放在 `step_profile` 分支**之后**，导致 stale ring 行可能赢得 min/max 归约 | 把两条 `_pull_tl_prime(15/16/19/20/21)` 移回 `step_profile` 分支**之前**，恢复原有语义 |
+| 3 | 第 2700 行 | `self._field(base,'profile_slot_counts',Uint32)[offset] = owned` 是 **CuTe DSL 不支持**的「带动态下标的字段赋值」——这正是 2389 行那个 staged-loop 报错的真因 | 改为本文件通用的 `cell(base, off + idx*4, Uint32)[0] = owned` 写法 |
+| 4 | 第 3554 行 | `if const_expr(...) / elif const_expr(...)`：DSL 无法把这种组合折叠成编译期分支，会把 `self` 拖进 staged loop | 拆成**两个独立的 `if const_expr(...)`**，第二个加 `and not (...)` 保证互斥 |
+| 5 | 第 4274 行 | dispatch 侧 slot 14（dispatch 结束时间戳）缺失 | 按原作者意图补回，同样用 `if const_expr(self.step_profile)` 包裹 |
+
+> 第 2、5 两处是我第一次修 elif 时**误删**的原作者功能，已恢复。
+> 现在 `step_profile` 的 5 个打点（slot 4 / 14 / 15 / 22 / 23 + `profile_slot_counts`）全部在位。
+
+### 8.3 验证
+
+```
+smoke_compile_eco.py                     → compiled roles [1,2,5,3] in 9.8s   ✅
+GC_MOE_STEP_PROFILE=1 smoke_compile...   → compiled roles [1,2,5,3] in 9.9s   ✅
+tests/test_aligned_step_cpu.py           → ALIGNED_STEP_CPU PASS              ✅
+```
+
+改动 diff 见 `docs/trace_handover_20261119/executor_impl_fix.diff`。
+
+### 8.4 边界说明
+
+- **我没有改任务书的任何判据、阈值或分段定义。**
+- **我没有改 layout 的 `profile_slot_counts` 预留**（那是原作者加的，本来就对）。
+- 只修「编不过」和「语义被写错序」两类问题，其余原样保留。

@@ -160,8 +160,10 @@ class SM90GCMoERoleKernel:
         self.n_layers = int(_os.environ.get('GC_MOE_LAYERS', '40'))
         # [PULL-TRACE] Independent of ECO: measures the pull phase on the
         # plain (no-replica) path too, which had no instrumentation before.
-        self.step_profile = 'profile_slot_counts' in layout.views
         self.pull_trace = _os.environ.get('GC_MOE_PULL_TRACE') == '1'
+        # [STEP-PROFILE] aligned single-step capture (see docs/trace_executor_20261119)
+        self.step_profile = 'profile_slot_counts' in getattr(layout, 'views', {})
+        self._sp_flag_added = True
         # [PHASES] `eco_tl_step` also exists for a pull-only build now, so the
         # compute role can name the call it is serving (see the layout).
         self.has_step_clock = 'eco_tl_step' in getattr(layout, 'views', {})
@@ -2157,12 +2159,12 @@ class SM90GCMoERoleKernel:
                 # rendezvous (`_dispatch_grid` below), and the last one in can
                 # be up to ~0.4 ms late because the launch itself is staggered.
                 self._pull_tl_write(base, epoch, 10, read_globaltimer())
-                # Prime every min/max-reduced slot used by this call so a
-                # stale ring row can never win the reduction.
                 if cutlass.const_expr(self.step_profile):
                     self._pull_tl_write_raw(base, epoch, Uint32(22), Uint32(self.max_m))
                     self._pull_tl_write_raw(base, epoch, Uint32(23), tokens)
                     self._pull_tl_prime(base, epoch, 4)
+                # Prime every min/max-reduced slot used by this call so a
+                # stale ring row can never win the reduction.
                 self._pull_tl_prime(base, epoch, 15)   # first GEMM task
                 self._pull_tl_prime(base, epoch, 16)   # shared start (min)
                 self._pull_tl_prime(base, epoch, 19)   # CTA rendezvous (max)
@@ -2358,7 +2360,7 @@ class SM90GCMoERoleKernel:
         # [PULL-TRACE] pull start: every CTA has passed the cross-rank wait and
         # is about to touch the first local slot.
         if cutlass.const_expr(self.step_profile):
-            # Earliest CTA entering the pull loop after the peer readiness wait.
+            # earliest CTA entering the slot loop after the peer-readiness wait
             if tid == 0 and block < self.local:
                 self._pull_tl_min(base, epoch, 4)
         elif block == 0 and tid == 0:
@@ -2696,8 +2698,11 @@ class SM90GCMoERoleKernel:
                 count_out = cell(base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)
                 count_out[0] = owned
                 if cutlass.const_expr(self.step_profile):
-                    offset = (epoch % Uint32(256)) * Uint32(self.local) + Uint32(expert)
-                    self._field(base, 'profile_slot_counts', Uint32)[offset] = owned
+                    # [STEP-PROFILE] per-slot owned rows for this call.
+                    sc = cell(base, Uint64(self.off_profile_slot_counts)
+                              + ((epoch % Uint32(256)) * Uint32(self.local)
+                                 + Uint32(expert)) * 4, Uint32)
+                    sc[0] = owned
                 if cutlass.const_expr(self.has_stats):
                     recv_stats = cute.make_tensor(stats, cute.make_layout((self.local,)))
                     recv_stats[expert] += owned
@@ -3548,13 +3553,15 @@ class SM90GCMoERoleKernel:
                 # treats 0 / 0xFFFFFFFF as "unset" and stores directly.
                 if cutlass.const_expr(self.step_profile and self.role == 2):
                     if tid == Uint32(128) and task_iter == Uint32(1):
-                        # The valid work record carries the expert whose
-                        # publication identifies this call. Dispatch primed
-                        # slot 15 before publishing any expert readiness.
+                        # [STEP-PROFILE] the consumer CTA's own epoch is stale,
+                        # so take the epoch that published this expert.
                         owner_epoch = ld_acquire_gpu_u32(
                             self._field(base, 'expert_ready', Uint32) + expert)
                         self._pull_tl_min(base, owner_epoch, 15)
-                elif cutlass.const_expr(self.pull_trace and self.has_step_clock):
+                # separate `if` (NOT `elif`): the DSL cannot fold
+                # if const_expr / elif const_expr into static branches.
+                if cutlass.const_expr(self.pull_trace and self.has_step_clock
+                                      and not (self.step_profile and self.role == 2)):
                     if tid == Uint32(128):
                         # [PHASES] The epoch must come from `eco_tl_step`, not
                         # from `header[0]`: a resident consumer CTA read the
@@ -4265,11 +4272,12 @@ class SM90GCMoERoleKernel:
                 self._dispatch(base, peers, rank, tokens, stats)
         elif cutlass.const_expr(self.role == 2):
             if cutlass.const_expr(self.step_profile):
-                block, _, _ = cute.arch.block_idx()
-                tid, _, _ = cute.arch.thread_idx()
-                if block == 0 and tid == 0:
-                    epoch = ld_acquire_gpu_u32(self._field(base, 'header', Uint32))
-                    self._pull_tl_write(base, epoch, 14, read_globaltimer())
+                _b, _, _ = cute.arch.block_idx()
+                _t, _, _ = cute.arch.thread_idx()
+                if _b == 0 and _t == 0:
+                    self._pull_tl_write(
+                        base, ld_acquire_gpu_u32(self._field(base, 'header', Uint32)),
+                        14, read_globaltimer())
             self._compute(base, peers, w1, s1, sec1, w2, s2, sec2, clamp)
         elif cutlass.const_expr(self.role == 4):
             alloc = cutlass.utils.SmemAllocator()
