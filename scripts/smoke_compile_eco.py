@@ -29,7 +29,7 @@ def main():
     layout = SM90GCBufferLayout(ranks, E, CAP, TOPK, H, I, shared, physical, eco, True)
     config = ValidatedCall(ranks=ranks, experts=E, capacity=CAP, topk=TOPK,
                            hidden=H, intermediate=I, tokens=8, bound=CAP,
-                           clamp=10.0, fast_math=True, shared_experts=0,
+                           clamp=10.0, fast_math=True, shared_experts=shared,
                            physical=physical,
                            eco_logical_experts=(E if eco else 0),
                            eco_max_copies=8 if step_profile else 4,
