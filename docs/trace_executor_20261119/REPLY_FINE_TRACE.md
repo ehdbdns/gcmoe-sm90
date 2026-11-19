@@ -265,3 +265,59 @@ pull ──(等L1)── L1(162 tiles) ──(空档 96/157 µs)── L2(180 ti
 3. L2 tile 的领取排队（票号/`active_ready`）。
 
 **这是本轮最值得继续追的一条线索**，需要跨 rank 的 L1 完成时刻，或 L2 tile 的领取打点。
+
+---
+
+## 9. layer 8 / rank 6 的 CTA 时间轴（用仓库现成脚本）
+
+按要求未自写，直接使用仓库里已有的 `scripts/plot_absolute_trace.py`
+（它的 docstring 就是「pull CTAs and compute CTAs on a shared time axis, with
+every slice labelled」，正是「所有 CTA 时间轴 + compute CTA 任务归属」那一张）。
+
+**输入适配**：该脚本吃 `run.json → eco_trace.ranks[r].fine_rows`，而本轮采集
+把细粒度记录放在 `raw/fine.json → ranks[r].epochs[e]`。用 6 行代码把两份 epoch
+拼成脚本期望的结构（**未改脚本本身**）：
+
+```python
+f = json.load(open('raw/fine.json'))
+ranks = [{'fine_rows': (r['epochs'].get('14729') or []) + (r['epochs'].get('14741') or []),
+          'fine_count': ..., 'fine_recs': ...} for r in f['ranks']]
+json.dump({'eco_trace': {'ranks': ranks}}, open('/tmp/rt/for_plot_rank6.json', 'w'))
+```
+
+**运行**：
+
+```bash
+python scripts/plot_absolute_trace.py /tmp/rt/for_plot_rank6.json 6 <out.png>
+```
+
+脚本自检输出（全部通过）：
+
+```
+unpaired: pull=0 gemm=0 push=0
+spans: pull=56 (56 CTAs)  gemm=684 (71 CTAs)  push=360
+timeline: pull_done=393.0us  end=689.5us
+```
+
+### 产出（原尺寸大图，未压缩）
+
+| 文件 | 尺寸 | 内容 |
+|---|---|---|
+| `step002_layer08_epoch14729.rank6.absolute.png` | 22486×10975（247 Mpx, 5.3 MB）| 整层：上部 71 个 compute CTA 各一行（每个 GEMM tile 带 `E<expert>T<ntile>M<mblock>` 标签），下部 56 个 pull CTA 各一行（每槽带 `E<e> s<slot>`）|
+| `...rank6.zoom_open.png` | 16486×22062（364 Mpx, 2.7 MB）| 放大 168–193 µs：pull 仍在跑、首批 L1 GEMM 落地、尚无 push |
+| `...rank6.zoom_l2push.png` | 16486×22062（364 Mpx, 4.3 MB）| 放大 558–588 µs：橙色 compute 条在 push 起点截断，紧跟绿色 push |
+
+### 时间基准
+
+该脚本以**本层第一个 slot_begin** 为 0，比 `detail.json` 的 dispatch 入口基准早 **24 µs**：
+
+```
+plot 0 µs  = detail 24 µs
+plot end 689.5 µs  = detail 713.5 µs   （≈ 热点槽 L2 开始 714 µs）
+```
+
+所以这张图画到「最后一个 GEMM tile 结束」为止，**不含 combine push 与 kernel 退出**
+（那部分见 `*.tail.png` 与 `*.detail.png`，它们以 dispatch 入口为 0，覆盖到 805.3 µs）。
+
+两张图对照着看：`absolute` 回答「每个 CTA 在做什么、属于哪个专家/tile」，
+`tail` 回答「热点槽的 pull→L1→空档→L2→exit 各占多少」。
