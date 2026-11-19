@@ -71,7 +71,11 @@ if [ "$GC_MOE_SM90_STREAM_M_BLOCKS" = 1 ]; then
       TL_TOKENS=17 TL_CAP=128 TL_HOT_BLOCKS=1 \
       timeout 300 "$GC_ENV/bin/torchrun" --standalone --nproc-per-node=8 \
       scripts/verify_eco_capture.py 2>&1 | tee "$out/hot-parity-$mode.log"
-    grep '^STREAM_CHECK rank=' "$out/hot-parity-$mode.log" | sort > "$out/hot-parity-$mode.sha"
+    # torchrun interleaves the eight ranks' stdout without adding newlines, so
+    # two STREAM_CHECK records can land on one physical line. Split them out
+    # before counting; one record per rank is what the gate actually requires.
+    grep -o 'STREAM_CHECK rank=[0-7] sha256=[0-9a-f]*' "$out/hot-parity-$mode.log" \
+      | sort > "$out/hot-parity-$mode.sha"
     test "$(wc -l < "$out/hot-parity-$mode.sha")" -eq 8
     for rank in {0..7}; do
       grep -q "^STREAM_CHECK rank=$rank sha256=" "$out/hot-parity-$mode.sha"
