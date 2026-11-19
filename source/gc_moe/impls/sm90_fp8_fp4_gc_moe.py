@@ -2710,9 +2710,106 @@ class SM90GCMoERoleKernel:
                         self._publish_l1_batch(base, head, epoch, Uint32(expert),
                                                mblk, row_hi - Uint32(row_lo), rank)
             else:
-                self._pull_slot_rows(base, peer_table, prefix, stage, pull_bar,
-                                     pull_phase_smem, warp_row_bytes, meta_base,
-                                     weight_base, Uint32(expert), lo, lo, hi)
+                # Keep the full-slot loops inline: passing lo as both the
+                # slot origin and slice start through the JIT helper fails
+                # to lower in this path on the executor's CuTe DSL.
+                for row in cutlass.range(lo + tid, hi, self.threads):
+                    source = Uint32(0)
+                    for candidate in cutlass.range_constexpr(1, self.ranks):
+                        if row >= prefix[candidate]:
+                            source = Uint32(candidate)
+                    source_slot = Uint32(row) - prefix[source]
+                    route = cell(base, Uint64(self.off_source_index) + ((Uint64(expert) * self.ranks + source) * self.capacity + source_slot) * 4, Uint32)[0]
+                    source_token, route_slot = route // self.topk, route % self.topk
+                    local_row = Uint32(row) - lo
+                    rank_out = cell(base, meta_base + Uint64(local_row * 3) * 4, Uint32)
+                    rank_out[0] = source
+                    token_out = cell(base, meta_base + Uint64(local_row * 3 + 1) * 4, Uint32)
+                    token_out[0] = source_token
+                    slot_out = cell(base, meta_base + Uint64(local_row * 3 + 2) * 4, Uint32)
+                    slot_out[0] = route_slot
+                    weight_out = cell(base, weight_base + Uint64(local_row) * 4, Float32)
+                    weight_out[0] = cell(Uint64(peer_table[source]), Uint64(self.off_topk_weights) + Uint64(route) * 4, Float32)[0]
+                cute.arch.sync_threads()
+                # A warp retains one source/token pair while copying an entire
+                # route, avoiding metadata reloads for every sixteen data bytes.
+                # [ECO-PULL] TMA copy, structurally identical to SM100
+                # (impls/sm100_fp8_fp4_gc_moe.py L1184-1200):
+                #
+                #     if (elect_one_sync()) {
+                #         bulk_g2s_1d(smem, src, N, bar);        // issue the TMA
+                #         mbarrier_arrive_and_expect_tx(bar, N); // THEN expect
+                #         mbarrier_wait(bar, phase);             // drain
+                #         phase ^= 1;
+                #         bulk_s2g_1d(dst, smem, N);             // write back
+                #         cp_async_bulk_commit_group();
+                #         cp_async_bulk_wait_group(0);
+                #     }
+                #
+                # The old loop moved a token with 320 synchronous
+                # `ld.global.v4`/`st.global.v4` pairs of 16 bytes (one per lane per
+                # row) and measured 4.4 GB/s -- about 90x below NVLink.
+                #
+                # Order matters: the arrive/expect goes AFTER the bulk issue, and
+                # `elect_one_sync()` pins the work to one lane so `pull_phase`
+                # (hoisted above the slot loop, as in SM100 L1072) advances once
+                # per row.
+                warp_row = Uint32(warp) * Uint32(warp_row_bytes)
+                for pull_row in cutlass.range(lo + warp, hi, self.threads // 32):
+                    local_row = Uint32(pull_row) - lo
+                    source_rank = cell(base, meta_base + Uint64(local_row * 3) * 4, Uint32)[0]
+                    token = cell(base, meta_base + Uint64(local_row * 3 + 1) * 4, Uint32)[0]
+                    remote = Uint64(peer_table[source_rank])
+                    src = remote + Uint64(self.off_x) + Uint64(token) * self.hidden
+                    dst = base + Uint64(self.off_l1_acts) + \
+                        (Uint64(expert) * self.rows + Uint64(local_row)) * self.hidden
+                    smem_row = stage + warp_row
+                    my_bar = pull_bar + Uint64(warp)
+                    if cutlass.const_expr(self.pull_tma):
+                      if elect_one_sync():
+                        bulk_g2s_1d(smem_row,
+                                    cute.make_ptr(Uint8, src, cute.AddressSpace.gmem,
+                                                  assumed_align=16),
+                                    Uint32(self.hidden), my_bar)
+                        cute.arch.mbarrier_arrive_and_expect_tx(
+                            my_bar, Uint32(self.hidden))
+                        ph = pull_phase_smem[warp]
+                        cute.arch.mbarrier_wait(my_bar, ph)
+                        pull_phase_smem[warp] = ph ^ Uint32(1)
+                        bulk_s2g_1d(cute.make_ptr(Uint8, dst, cute.AddressSpace.gmem,
+                                                  assumed_align=16),
+                                    smem_row, Uint32(self.hidden))
+                        cute.arch.cp_async_bulk_commit_group()
+                        cute.arch.cp_async_bulk_wait_group(0)
+                    else:
+                        # upstream path: 320 synchronous 16-byte ld/st per row
+                        for k in cutlass.range(lane, self.hidden // 16, 32):
+                            copy_global_16(dst + Uint64(k) * 16, src + Uint64(k) * 16)
+                    cute.arch.sync_warp()
+                    # [ECO-BLKRDY] Publish this M block as soon as its last row has
+                    # landed. SM100 does exactly this with
+                    # `l1_full_count[ring_block]` (sm100_fp8_fp4_gc_moe.py L1330):
+                    #   full_increment = block_m - (pull_token % block_m)
+                    #                                   if is_last_token else 1
+                    # Here the rows of one slot arrive one warp-row at a time, so
+                    # the increment is 1 per row and the producer compares the
+                    # running total against `block_m * (blocks_done + 1)`.
+                    if cutlass.const_expr(self.block_ready):
+                        if lane == Uint32(0):
+                            atom_release_gpu_add_u32(
+                                self._field(base, 'l1_block_ready', Uint32) + expert,
+                                Uint32(1))
+                    # scales: 160 B per token, small enough to keep the direct path
+                    remote_sf = remote + Uint64(self.off_x_sf) + \
+                        Uint64(token) * Uint64(self.hidden // 128 * 4)
+                    for sf_k in cutlass.range(lane, self.hidden // 128, 32):
+                        sf_value = cell(Uint64(remote_sf), Uint64(sf_k) * 4, Float32)[0]
+                        sf_out = cell(base, Uint64(self.off_l1_acts_sf) +
+                                      ((Uint64(expert) * (self.hidden // 128) + Uint32(sf_k))
+                                       * self.rows + Uint64(local_row)) * 4, Float32)
+                        sf_out[0] = sf_value * Float32(64)
+                fence_gpu()
+                cute.arch.sync_threads()
             owned = hi - lo
             # [ECO-FINE] type 2 = this slot finished pulling (all its tokens
             # are in l1_acts). id = global slot, a0 = local slot,
