@@ -111,13 +111,24 @@ def install_eplb_plan(buffer, physical_to_logical):
     import torch as _t
     import numpy as _np
 
-    raw = _np.asarray(physical_to_logical, _np.int64)
+    given = _np.asarray(physical_to_logical, _np.int64)
+    want_shape = tuple(buffer.slot_logical.shape)
+    raw = given
     if raw.ndim == 1:
-        raw = raw[None, :]
+        # A single `[physical]` placement means "the same layout in every
+        # layer" -- the form every standalone script (`verify_eco_capture`,
+        # `measure_units`, `eco_triage`, ...) passes. Broadcast it to the
+        # buffer's own layer count, exactly like
+        # `eco.meta_sm90.install_into_buffer` does, instead of failing the
+        # shape check below. The returned `plan` still keeps the caller's
+        # 1-D form, which is what `gather_slot_weights` slices.
+        if len(want_shape) == 2 and want_shape[1] == raw.shape[0]:
+            raw = _np.broadcast_to(raw, want_shape).copy()
+        else:
+            raw = raw[None, :]
     layers, physical = raw.shape
     if physical != buffer.physical:
         raise ValueError(f'plan has {physical} slots, buffer has {buffer.physical}')
-    want_shape = tuple(buffer.slot_logical.shape)
     if want_shape != (layers, physical):
         raise ValueError(f'slot_logical is {want_shape}, expected '
                          f'{(layers, physical)} (layer count must match '
@@ -138,7 +149,7 @@ def install_eplb_plan(buffer, physical_to_logical):
             cnt[e] += 1
     buffer.slot_logical.copy_(plan)
     buffer.expert_slots.copy_(slots_of)
-    return plan, slots_of
+    return _t.as_tensor(given, dtype=_t.int32, device=buffer.buffer.device), slots_of
 
 
 def alloc_slot_weights(pair, buffer):
