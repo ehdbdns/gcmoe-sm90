@@ -4,14 +4,8 @@
 
 执行者的代码修复权限仅限保持原语义的最小编译兼容性修改。运行、采集或验收失败时，请按当前任务书回传证据。
 
-## 回执 ce91bb1 后续
+## 回执 92788ab 后续
 
-**当前只做原始 trace 诊断。** 五角色编译已经通过，八份 torch trace 已导出。此次无需占卡或重新加载模型，也无需改代码。请快进到包含诊断脚本的 `origin/main`，从仓库根目录运行下面这条命令，用上次保留的原始目录。
+旧采样中八份 torch trace 都有 40 层 × 5 角色，每 rank 一次 CUDA Graph Launch。设备快照推进量为 120，具体是哪一侧快照边界导致的偏差仍需设备证据。修订版把设备快照当候选范围，用每层设备打点和整步层间 dispatch 间隔与 torch trace 对照。只有八卡共同匹配唯一一组连续 40 个带标签 epoch 时才写入正式 `capture.json`，并保留原始快照边界及候选 epoch。匹配失败时保留 `capture.invalid.json` 供诊断。
 
-```bash
-python3 scripts/trace_layer/inspect_aligned_trace.py /tmp/gcmoe-aligned-fSc3IBre/raw   | tee /tmp/gcmoe-aligned-fSc3IBre/trace-summary.json
-```
-
-将 `trace-summary.json` 和回执更新提交到 [任务书目录](../trace_executor_20261119/)，保留原始八份 trace。回执附上采样前后几行完整日志，包括最后两个 flush iteration、`[trace]` 起止和异常。若文件已不存在，回报缺失路径。若同一 capture ID 下每种角色有 40 个 kernel，说明设备快照范围比 torch trace 多记了调用，需要定位边界。若每种角色有 120 个 kernel，则继续依据 trace 判断三组调用的来源。图和计数的 40 层验收仍适用。
-
-后续获准重跑时，新增的 `capture.invalid.json` 会在可读取的环形范围内保留不合格采样的 epoch、原始打点与每槽计数，用于定位问题。此文件只用于诊断。
+本轮恢复八卡采集。请按 [任务书](../trace_executor_20261119/README.md) 的单一入口运行，在步骤 2 通过后执行原定 BS256 采样。成功或失败按任务书回传。原始失败 run 保留作证据。

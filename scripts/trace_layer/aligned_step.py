@@ -66,6 +66,69 @@ def read_calls(trace, layers, dispatch_grid, rank):
     return calls
 
 
+def read_worker_trace(capture_dir, capture, dispatch_grid, rank):
+    trace = json.loads((capture_dir / f'rank{rank}.json').read_text())
+    require(trace.get('gcmoe_capture') == {'id': capture['id'], 'rank': rank},
+            f'rank {rank}: torch trace is from another capture')
+    return read_calls(trace, capture['layers'], dispatch_grid, rank), trace.get('baseTimeNanoseconds')
+
+
+def clock_residuals(call, dispatch, pull_end, routed, combine):
+    ts = call['dispatch']['ts']
+    return {
+        'routed_entry_us': (routed - dispatch) - (call['routed']['ts'] - ts),
+        'combine_entry_us': (combine - dispatch) - (call['combine']['ts'] - ts),
+        'last_pull_vs_dispatch_end_us': pull_end - dispatch - call['dispatch']['dur'],
+    }
+
+
+def resolve_epochs(capture_dir, capture, dispatch_grid):
+    """Select the unique tagged device window corroborated by all worker traces."""
+    layers, lower = capture['layers'], capture['first_epoch']
+    workers = capture['ranks']
+    require(len(workers) == RANKS and {worker['rank'] for worker in workers} == set(range(RANKS)),
+            'expected ranks 0–7')
+    windows = {}
+    for worker in workers:
+        rank = worker['rank']
+        calls, _ = read_worker_trace(capture_dir, capture, dispatch_grid, rank)
+        rows = {row['epoch']: row for row in worker['calls']
+                if len(row['stamps']) == 32 and row['stamps'][0] == row['epoch']}
+        eligible = {}
+        for start in range(lower, worker['next_epoch'] - layers + 1):
+            window = [rows.get(start + offset) for offset in range(layers)]
+            if any(row is None for row in window):
+                continue
+            # Align by relative dispatch times, since the device and CUPTI
+            # clocks have different origins. Include the whole step so an
+            # earlier flush with similar individual layer shapes cannot pass.
+            offsets = []
+            for call, row in zip(calls, window):
+                dispatch, pull_end, routed, combine = (
+                    row['stamps'][slot] & UNSET for slot in (10, 5, 14, 12))
+                if any(stamp in (0, UNSET) for stamp in (dispatch, pull_end, routed, combine)):
+                    break
+                residuals = clock_residuals(call, dispatch, pull_end, routed, combine)
+                if any(abs(value) > ENTRY_TOLERANCE_US for value in residuals.values()):
+                    break
+                offsets.append(call['dispatch']['ts'] - dispatch)
+            if len(offsets) == layers and max(offsets) - min(offsets) <= 2 * ENTRY_TOLERANCE_US:
+                eligible[start] = window
+        windows[rank] = eligible
+
+    common = set.intersection(*(set(items) for items in windows.values()))
+    candidates = {rank: sorted(items) for rank, items in windows.items()}
+    require(len(common) == 1,
+            f'expected one shared device epoch window, found {sorted(common)}; candidates={candidates}')
+    first = common.pop()
+    aligned = [dict(worker, next_epoch=first + layers, calls=windows[worker['rank']][first])
+               for worker in workers]
+    return dict(capture, first_epoch=first, ranks=aligned,
+                device_snapshot_epochs={
+                    'first': lower, 'next_by_rank': {w['rank']: w['next_epoch'] for w in workers}},
+                epoch_candidates_by_rank=candidates)
+
+
 def layer_timing(call, stamps, has_work, context):
     d, s, r, p, c = (call[role] for role in ROLES)
     dispatch, push_end, pull, pull_end, routed, first_claim, combine = (
@@ -77,11 +140,7 @@ def layer_timing(call, stamps, has_work, context):
             f'{context}: combine overlaps a producer')
     if stamps[22] >= 32:
         require(r['ts'] >= s['end'], f'{context}: routed starts before shared completes')
-    residuals = {
-        'routed_entry_us': (routed - dispatch) - (r['ts'] - d['ts']),
-        'combine_entry_us': (combine - dispatch) - (c['ts'] - d['ts']),
-        'last_pull_vs_dispatch_end_us': pull_end - dispatch - d['dur'],
-    }
+    residuals = clock_residuals(call, dispatch, pull_end, routed, combine)
     require(all(abs(value) <= ENTRY_TOLERANCE_US for value in residuals.values()),
             f'{context}: device and CUPTI disagree: {residuals}')
     pull_start = d['ts'] + pull - dispatch
@@ -136,11 +195,7 @@ def build(capture_dir, layers, dispatch_grid, require_overlap=False):
         require(worker['next_epoch'] == first + n_layers
                 and [call['epoch'] for call in worker['calls']] == list(range(first, first + n_layers)),
                 f'{prefix}: wrong epoch interval')
-        trace = json.loads((capture_dir / f'rank{rank}.json').read_text())
-        require(trace.get('gcmoe_capture') == {'id': capture['id'], 'rank': rank},
-                f'{prefix}: torch trace is from another capture')
-        bases[rank] = trace.get('baseTimeNanoseconds')
-        traces[rank] = read_calls(trace, n_layers, dispatch_grid, rank)
+        traces[rank], bases[rank] = read_worker_trace(capture_dir, capture, dispatch_grid, rank)
         for layer, call in enumerate(worker['calls']):
             require(call['stamps'][0] == first + layer and len(call['stamps']) == 32,
                     f'{prefix}: wrong device tag at layer {layer}')
