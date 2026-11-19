@@ -1563,19 +1563,15 @@ class SM90GCMoERoleKernel:
             slot = idx % Uint32(self.FINE_RECS)
             if True:
                 rec = self._field(base, 'fine_tl', Uint32) + slot * Uint32(10)
-                # [ABSTRACE] `globaltimer//1000` overflows int32 (a decode run's
-                # raw value is ~-7.2e8), so latch a 64-bit origin on the FIRST
-                # record and store microseconds SINCE it. idx==0 is written by
-                # exactly one CTA (the global counter is monotonic), so there is
-                # no race on t0.
-                t0p = cell(base, Uint64(self.off_fine_t0), Uint32)
-                now_us = read_globaltimer() // Uint64(1000)
-                base_us = t0p[0]
-                if idx == Uint32(0):
-                    t0p[0] = Uint32(now_us)     # this record IS the origin
+                # The aligned collector seeds a device-clock origin before
+                # launch. Legacy standalone tracing still latches on idx 0.
+                t0p = self._field(base, 'fine_t0', Uint32)
+                now_us = Uint32(read_globaltimer() // Uint64(1000))
+                if idx == Uint32(0) and t0p[1] == Uint32(0):
+                    t0p[0] = now_us
                     rec[0] = Uint32(0)
                 else:
-                    rec[0] = now_us - base_us
+                    rec[0] = now_us - t0p[0]
                 rec[1] = Uint32(kind)
                 rec[2] = ident
                 rec[3] = a0

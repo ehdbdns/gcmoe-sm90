@@ -2227,7 +2227,7 @@ def _install_worker_rpc() -> None:
 
     if getattr(Worker, '_gc_moe_eco_trace_dump', None) is None:
 
-        def gc_moe_eco_trace_dump(self) -> dict:
+        def gc_moe_eco_trace_dump(self, include_fine=True) -> dict:
             """# [ECO-TRACE] Raw 30-slot timeline + per-step rows of THIS rank.
 
             Read once at the end of the measured window (never per step, which
@@ -2265,7 +2265,7 @@ def _install_worker_rpc() -> None:
                 _n = int(ptl.numel()) // 256
                 out['pull_rows'] = ptl.view(256, _n).cpu().tolist()
             ftl = getattr(buf, 'fine_tl', None)
-            if ftl is not None:
+            if ftl is not None and include_fine:
                 # [ABSTRACE] 10 words per record now (ntile / phase added for
                 # the absolute-time figure). The capacity matches the layout
                 # reserve (GC_MOE_FINE_RECS, default 262144).
@@ -2312,14 +2312,17 @@ def _install_worker_rpc() -> None:
 
         Worker._gc_moe_eco_trace_dump = gc_moe_eco_trace_dump
 
-    def gc_moe_profile_snapshot(self, first_epoch=None):
-        """Read the live workspace after draining this worker's GPU."""
-        torch.cuda.synchronize()
+    def profile_buffer():
         buffers = {id(m._buffer): m._buffer for m in _EXPERT_REGISTRY
                    if getattr(m, '_buffer', None) is not None}
         if len(buffers) != 1:
             raise RuntimeError(f'aligned profiling needs one shared buffer, got {len(buffers)}')
-        buf = next(iter(buffers.values()))
+        return next(iter(buffers.values()))
+
+    def gc_moe_profile_snapshot(self, first_epoch=None):
+        """Read the live workspace after draining this worker's GPU."""
+        torch.cuda.synchronize()
+        buf = profile_buffer()
         next_epoch = int(buf.header[0].item())
         out = dict(rank=int(buf.rank_idx), next_epoch=next_epoch, topk=int(buf.num_topk))
         if first_epoch is not None:
@@ -2340,9 +2343,28 @@ def _install_worker_rpc() -> None:
 
     Worker._gc_moe_profile_snapshot = gc_moe_profile_snapshot
 
+    def gc_moe_profile_fine_dump(self, epochs):
+        """Export just the requested epochs from the armed fine-trace window."""
+        torch.cuda.synchronize()
+        buf = profile_buffer()
+        count = int(buf.fine_ctr[0].item())
+        ring = buf.fine_tl.view(-1, 10)
+        out = dict(rank=int(buf.rank_idx), count=count, capacity=len(ring),
+                   origin_us=int(buf.fine_t0[0].item()) & 0xFFFFFFFF,
+                   hidden=int(buf.hidden), intermediate=int(buf.intermediate_hidden))
+        if not 0 < count <= len(ring):
+            return dict(out, error='fine ring is empty or overwritten')
+        rows = ring[:count]
+        out['epochs'] = {
+            str(epoch): rows[rows[:, 8] == epoch].cpu().tolist() for epoch in epochs
+        }
+        return out
+
+    Worker._gc_moe_profile_fine_dump = gc_moe_profile_fine_dump
+
     if getattr(Worker, '_gc_moe_prof_start', None) is None:
 
-        def gc_moe_prof_start(self, out_dir: str, capture_id=None) -> bool:
+        def gc_moe_prof_start(self, out_dir: str, capture_id=None, fine=False) -> bool:
             """[PROF] Begin a torch profile on THIS worker's stream.
 
             Under ENFORCE_EAGER=1 gc_moe launches its four roles as separate
@@ -2364,6 +2386,23 @@ def _install_worker_rpc() -> None:
                     r = dist.get_rank()
             except Exception:                       # noqa: BLE001
                 pass
+            if fine:
+                torch.cuda.synchronize()
+                buf = profile_buffer()
+                # Any completed dispatch supplies a clock origin on this GPU.
+                # It need not be the actual pre-step epoch; resolve_epochs
+                # independently matches the captured forward.
+                epoch = int(buf.eco_tl_step[0].item())
+                row = buf.pull_tl.view(256, 32)[epoch % 256]
+                if epoch <= 0 or int(row[0].item()) != epoch or int(row[10].item()) == 0:
+                    raise RuntimeError(f'rank {r}: no completed dispatch for a fine-trace origin')
+                with torch.inference_mode():
+                    buf.fine_t0[0].copy_(row[10])
+                    buf.fine_t0[1] = 1
+                    buf.fine_ctr.zero_()
+                    buf.fine_spin.zero_()
+                    buf.fine_floor.zero_()
+                torch.cuda.synchronize()
             os.makedirs(out_dir, exist_ok=True)
             self._gc_prof_path = os.path.join(out_dir, f'rank{r}.json')
             self._gc_prof = profile(

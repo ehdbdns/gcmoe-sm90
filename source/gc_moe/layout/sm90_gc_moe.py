@@ -290,9 +290,8 @@ class SM90GCBufferLayout:
             # real value is ~128). Records below the floor are dropped in the
             # kernel, so the log holds decode calls only.
             reserve('fine_floor', (1,), 'int32', 4)
-            # [ABSTRACE] 64-bit origin for the record timestamps: the raw
-            # globaltimer//1000 overflows int32 (measured: negative us), so
-            # every record stores `now_us - t0` and t0 lives here as two words.
+            # Low 32 bits of globaltimer in µs, plus a flag for a host-seeded
+            # origin. Fine timestamps are offsets modulo 2^32 from this origin.
             reserve('fine_t0', (2,), 'int32', 4)
 
         reserve('x', (capacity, hidden), 'float8_e4m3fn', 1)

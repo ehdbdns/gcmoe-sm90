@@ -611,10 +611,17 @@ def main():
                     help='profile only the first N measured steps (0 = all)')
     ap.add_argument('--profile-aligned-step', action='store_true',
                     help='capture exactly one post-rearrangement decode step and device rows')
+    ap.add_argument('--fine-layers', type=int, nargs='+', default=[],
+                    help='export fine rows for these zero-based layers of the aligned step')
     a = ap.parse_args()
 
     ranks = int(os.environ.get('WORLD', '8'))
     aligned_layers = int(os.environ.get('GC_MOE_LAYERS', '40'))
+    if a.fine_layers:
+        if not a.profile_aligned_step or any(not 0 <= i < aligned_layers for i in a.fine_layers):
+            ap.error('--fine-layers requires aligned profiling and layer indices inside the step')
+        os.environ.update(GC_MOE_FINE_TRACE='1', GC_MOE_FINE_FLOOR='1',
+                          GC_MOE_FINE_EPOCHS='1', GC_MOE_FINE_MIN_EPOCH='0')
     if a.profile_aligned_step:
         required = ('GC_MOE_EPLB', 'GC_MOE_ECO', 'GC_MOE_ECOPLB_PER_LAYER',
                     'GC_MOE_PULL_TRACE', 'GC_MOE_ECO_TRACE', 'GC_MOE_SHARED_IN_GC')
@@ -882,7 +889,7 @@ def main():
             if len(first_epochs) != 1 or {item['rank'] for item in before} != set(range(ranks)):
                 raise RuntimeError('ranks disagree on the pre-step workspace epoch')
             first_epoch = first_epochs.pop()
-            engine.collective_rpc('_gc_moe_prof_start', args=(a.profile_out, capture_id))
+            engine.collective_rpc('_gc_moe_prof_start', args=(a.profile_out, capture_id, bool(a.fine_layers)))
         else:
             os.makedirs(a.profile_out, exist_ok=True)
             engine.collective_rpc('_gc_moe_prof_start', args=(a.profile_out,))
@@ -924,6 +931,17 @@ def main():
             (directory / 'capture.json').write_text(json.dumps(capture))
             print(f'[trace] matched {aligned_layers} calls at epoch {capture["first_epoch"]} '
                   f'within snapshot {capture["device_snapshot_epochs"]}', flush=True)
+            if a.fine_layers:
+                epochs = [capture['first_epoch'] + layer for layer in sorted(set(a.fine_layers))]
+                fine_ranks = engine.collective_rpc('_gc_moe_profile_fine_dump', args=(epochs,))
+                (directory / 'fine.json').write_text(
+                    json.dumps(dict(id=capture_id, epochs=epochs, ranks=fine_ranks)))
+                if len(fine_ranks) != ranks or {worker['rank'] for worker in fine_ranks} != set(range(ranks)):
+                    raise RuntimeError('missing or duplicate fine-trace ranks; see fine.json')
+                for worker in fine_ranks:
+                    if worker.get('error') or any(not worker['epochs'].get(str(epoch)) for epoch in epochs):
+                        raise RuntimeError(f'rank {worker["rank"]}: '
+                                           f'{worker.get("error", "missing target fine rows")}; see fine.json')
     _sync()                       # last real work still queued on the GPUs
     window_s = time.perf_counter() - t0
     ir = {}
@@ -951,7 +969,7 @@ def main():
     if os.environ.get('GC_MOE_ECO_TRACE') == '1' \
             or os.environ.get('GC_MOE_PULL_TRACE') == '1':
         try:
-            trs = engine.collective_rpc('_gc_moe_eco_trace_dump')
+            trs = engine.collective_rpc('_gc_moe_eco_trace_dump', args=(not a.fine_layers,))
             eco_trace = {'ranks': [x for x in trs if isinstance(x, dict) and x.get('ok')]}
         except Exception as exc:  # noqa: BLE001 - never fail a run over telemetry
             eco_trace = {'error': str(exc)}

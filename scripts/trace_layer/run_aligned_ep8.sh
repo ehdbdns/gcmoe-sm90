@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run the fixed EP8 task from the validated revision; keep evidence on failure.
 set -eo pipefail
-if [ "$#" -ne 1 ]; then
-  echo "Usage: bash scripts/trace_layer/run_aligned_ep8.sh <execution-sha>" >&2
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ] || { [ "$#" -eq 2 ] && [ "$2" != "--fine-trace" ]; }; then
+  echo "Usage: bash scripts/trace_layer/run_aligned_ep8.sh <execution-sha> [--fine-trace]" >&2
   exit 2
 fi
 cd "$(dirname "$0")/../.."
@@ -36,14 +36,23 @@ export GC_MOE_SHARED_IN_GC=1 GC_MOE_SM90_SM_REUSE=0 GC_MOE_SM90_DISPATCH_SMS=6
 export GC_MOE_CAPACITY=2048 GC_MOE_BOUND=2048 GC_MOE_BLOCK_M_FORCE=64 MAX_BATCHED=2048
 export GC_MOE_PULL_TRACE=1 GC_MOE_ECO_TRACE=1 GC_MOE_FINE_TRACE=0
 export GC_MOE_IR_STEP=0 GC_MEASURE_IR_STEP=0 GC_MEASURE_IR=0 GC_MEASURE_LOAD=0
+fine_args=()
+if [ "${2:-}" = "--fine-trace" ]; then
+  export GC_MOE_FINE_TRACE=1 GC_MOE_FINE_FLOOR=1 GC_MOE_FINE_EPOCHS=1
+  export GC_MOE_FINE_RECS=4194304 GC_MOE_FINE_MIN_EPOCH=0
+  fine_args=(--fine-layers 8 20)
+fi
 export GC_MOE_LAYERS=40 GC_MEASURE_FLUSH=2 ENFORCE_EAGER=0 CUDAGRAPH_MODE=FULL_DECODE_ONLY
 "$GC_ENV/bin/python" -c 'import torch, vllm; print(torch.__version__, torch.version.cuda, vllm.__version__); assert torch.cuda.device_count() == 8; assert all(torch.cuda.get_device_capability(i)[0] == 9 for i in range(8))' \
   | tee "$out/runtime.log"
 
 step="2: CPU regression and CUDA compile"
 "$GC_ENV/bin/python" tests/test_aligned_step_cpu.py 2>&1 | tee "$out/cpu.log"
-GC_MOE_STEP_PROFILE=0 "$GC_ENV/bin/python" scripts/smoke_compile_eco.py \
+GC_MOE_STEP_PROFILE=0 GC_MOE_FINE_TRACE=0 "$GC_ENV/bin/python" scripts/smoke_compile_eco.py \
   2>&1 | tee "$out/compile-base.log"
+if [ "${#fine_args[@]}" -gt 0 ]; then
+  "$GC_ENV/bin/python" tests/test_pull_gemm_detail_cpu.py 2>&1 | tee "$out/cpu-fine.log"
+fi
 GC_MOE_STEP_PROFILE=1 SMOKE_ECO_WB=26 "$GC_ENV/bin/python" scripts/smoke_compile_eco.py \
   2>&1 | tee "$out/compile-aligned.log"
 grep -Fq 'compiled roles [1, 2, 5, 3]' "$out/compile-base.log"
@@ -56,7 +65,7 @@ bash scripts/warm_page_cache.sh "$MODEL" 2>&1 | tee "$out/warm.log"
   --label ALIGNED_EP8 --output "$out/result.json" \
   --seqs-per-rank 32 --prefill-lo 256 --prefill-hi 2048 \
   --warm-steps 200 --measure-steps 1 --profile-aligned-step \
-  --profile-out "$out/raw" 2>&1 | tee "$out/run.log"
+  --profile-out "$out/raw" "${fine_args[@]}" 2>&1 | tee "$out/run.log"
 test -s "$out/raw/capture.json"
 for rank in {0..7}; do
   test -s "$out/raw/rank$rank.json"
@@ -68,5 +77,15 @@ step="4: parse and verify"
   2>&1 | tee "$out/parse.log"
 test "$(find "$out/deliver" -maxdepth 1 -name '*.perfetto.json' | wc -l)" -eq 2
 test "$(find "$out/deliver" -maxdepth 1 -name '*.counts.json' | wc -l)" -eq 2
-sha256sum "$out/raw"/capture.json "$out/raw"/rank*.json "$out/deliver"/*.json \
+raw_capture=("$out/raw/capture.json")
+if [ "${#fine_args[@]}" -gt 0 ]; then
+  step="5: validate and join fine trace"
+  test -s "$out/raw/fine.json"
+  "$GC_ENV/bin/python" scripts/trace_layer/pull_gemm_detail.py "$out/raw" "$out/deliver" \
+    2>&1 | tee "$out/detail.log"
+  test "$(find "$out/deliver" -maxdepth 1 -name '*.detail.perfetto.json' | wc -l)" -eq 2
+  test "$(find "$out/deliver" -maxdepth 1 -name '*.detail.json' | wc -l)" -eq 2
+  raw_capture+=("$out/raw/fine.json")
+fi
+sha256sum "${raw_capture[@]}" "$out/raw"/rank*.json "$out/deliver"/*.json \
   | tee "$out/sha256.txt"
