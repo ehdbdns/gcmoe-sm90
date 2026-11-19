@@ -14,7 +14,7 @@ from ..mma.sm90 import (
     wgmma_rs_issue, wgmma_rs_k128, wgmma_rs_k32_pair, wgmma_rs_wait,
 )
 from ..ptx.ld_st import (
-    atom_acq_rel_add_u32, atom_add_u32, atom_max_u32_global,
+    atom_acq_rel_add_u32, atom_add_u32, atom_claim_u32, atom_max_u32_global,
     atom_min_u32_global,
     st_global_u32,
     atom_release_gpu_add_u32,
@@ -98,6 +98,9 @@ class SM90GCMoERoleKernel:
                 and self.hidden % 512 == 0 and self.intermediate % 256 == 0)):
             raise ValueError('invalid SM90 routed N factor for the role geometry')
         self.routed_n_factor = routed_n_factor
+        self.stream_blocks = layout.stream_blocks
+        self.l1_tiles = self.intermediate // (128 * routed_n_factor)
+        self.l2_tiles = self.hidden // (256 * routed_n_factor)
         shared_layout = get_role_shared_layout(self.max_m, self.warp_specialized,
                                                self.routed_n_factor)
         for name in shared_layout.__dataclass_fields__:
@@ -181,7 +184,8 @@ class SM90GCMoERoleKernel:
         # Net effect was +5.4% ms/step. SM100 gets away with the per-token
         # atomic because it is a ring buffer with a single counter; here it is
         # one atomic per row per slot.
-        self.block_ready = _os.environ.get('GC_MOE_SM90_BLOCK_READY', '0') == '1'
+        self.block_ready = (not self.stream_blocks
+                            and _os.environ.get('GC_MOE_SM90_BLOCK_READY', '0') == '1')
         # [ECO-FINE] Fine-grained event log for ONE representative call.
         # `GC_MOE_FINE_MOD=n` selects call n (epoch % n == 0); 0 = every call.
         # Recording is compile-time off unless the layout reserved the array.
@@ -1593,14 +1597,17 @@ class SM90GCMoERoleKernel:
         """
         if cutlass.const_expr(self.fine_trace):
             st = self._field(base, 'fine_spin', Uint32)
+            trace_epoch = epoch
+            if cutlass.const_expr(not self.stream_blocks):
+                trace_epoch = ld_acquire_gpu_u32(self._field(base, 'eco_tl_step', Uint32))
             if waiting != Uint32(0):
                 if st[blk] != Uint32(1):
                     st[blk] = Uint32(1)
-                    self._fine_emit(base, Uint32(self._field(base, 'eco_tl_step', Uint32)[0]),
+                    self._fine_emit(base, trace_epoch,
                                     4, blk, Uint32(0), slot, seen)
             else:
                 st[blk] = Uint32(0)
-                self._fine_emit(base, Uint32(self._field(base, 'eco_tl_step', Uint32)[0]),
+                self._fine_emit(base, trace_epoch,
                                 5, blk, Uint32(0), slot, Uint32(0))
 
     @cute.jit
@@ -2132,6 +2139,123 @@ class SM90GCMoERoleKernel:
         cute.arch.sync_threads()
 
     @cute.jit
+    def _publish_l1_batch(self, base: Uint64, head: cute.Pointer, epoch: Uint32,
+                          expert: Uint32, mblk: Uint32, valid: Uint32, rank: Uint32):
+        batch = atom_add_u32(head + 7, Uint32(1))
+        self._field(base, 'active_expert', Uint32)[batch] = expert
+        self._field(base, 'active_mb', Uint32)[batch] = mblk
+        self._field(base, 'stream_l1_done', Uint32)[batch] = Uint32(0)
+        if cutlass.const_expr(self.fine_trace):
+            self._fine(base, epoch, 14, rank * Uint32(self.local) + expert,
+                       expert, mblk, valid, batch)
+        st_release_u32(self._field(base, 'active_ready', Uint32) + batch, epoch, False)
+
+    @cute.jit
+    def _pull_slot_rows(self, base: Uint64, peer_table: cute.Tensor, prefix: cute.Pointer,
+                        stage: cute.Pointer, pull_bar: cute.Pointer, pull_phase_smem: cute.Pointer,
+                        warp_row_bytes: cutlass.Constexpr, meta_base: Uint64, weight_base: Uint64,
+                        expert: Uint32, lo: Uint32, row_lo: Uint32, row_hi: Uint32):
+        tid, _, _ = cute.arch.thread_idx()
+        lane, warp = tid % 32, tid // 32
+        for row in cutlass.range(row_lo + tid, row_hi, self.threads):
+            source = Uint32(0)
+            for candidate in cutlass.range_constexpr(1, self.ranks):
+                if row >= prefix[candidate]:
+                    source = Uint32(candidate)
+            source_slot = Uint32(row) - prefix[source]
+            route = cell(base, Uint64(self.off_source_index) + ((Uint64(expert) * self.ranks + source) * self.capacity + source_slot) * 4, Uint32)[0]
+            source_token, route_slot = route // self.topk, route % self.topk
+            local_row = Uint32(row) - lo
+            rank_out = cell(base, meta_base + Uint64(local_row * 3) * 4, Uint32)
+            rank_out[0] = source
+            token_out = cell(base, meta_base + Uint64(local_row * 3 + 1) * 4, Uint32)
+            token_out[0] = source_token
+            slot_out = cell(base, meta_base + Uint64(local_row * 3 + 2) * 4, Uint32)
+            slot_out[0] = route_slot
+            weight_out = cell(base, weight_base + Uint64(local_row) * 4, Float32)
+            weight_out[0] = cell(Uint64(peer_table[source]), Uint64(self.off_topk_weights) + Uint64(route) * 4, Float32)[0]
+        cute.arch.sync_threads()
+        # A warp retains one source/token pair while copying an entire
+        # route, avoiding metadata reloads for every sixteen data bytes.
+        # [ECO-PULL] TMA copy, structurally identical to SM100
+        # (impls/sm100_fp8_fp4_gc_moe.py L1184-1200):
+        #
+        #     if (elect_one_sync()) {
+        #         bulk_g2s_1d(smem, src, N, bar);        // issue the TMA
+        #         mbarrier_arrive_and_expect_tx(bar, N); // THEN expect
+        #         mbarrier_wait(bar, phase);             // drain
+        #         phase ^= 1;
+        #         bulk_s2g_1d(dst, smem, N);             // write back
+        #         cp_async_bulk_commit_group();
+        #         cp_async_bulk_wait_group(0);
+        #     }
+        #
+        # The old loop moved a token with 320 synchronous
+        # `ld.global.v4`/`st.global.v4` pairs of 16 bytes (one per lane per
+        # row) and measured 4.4 GB/s -- about 90x below NVLink.
+        #
+        # Order matters: the arrive/expect goes AFTER the bulk issue, and
+        # `elect_one_sync()` pins the work to one lane so `pull_phase`
+        # (hoisted above the slot loop, as in SM100 L1072) advances once
+        # per row.
+        warp_row = Uint32(warp) * Uint32(warp_row_bytes)
+        for pull_row in cutlass.range(row_lo + warp, row_hi, self.threads // 32):
+            local_row = Uint32(pull_row) - lo
+            source_rank = cell(base, meta_base + Uint64(local_row * 3) * 4, Uint32)[0]
+            token = cell(base, meta_base + Uint64(local_row * 3 + 1) * 4, Uint32)[0]
+            remote = Uint64(peer_table[source_rank])
+            src = remote + Uint64(self.off_x) + Uint64(token) * self.hidden
+            dst = base + Uint64(self.off_l1_acts) + \
+                (Uint64(expert) * self.rows + Uint64(local_row)) * self.hidden
+            smem_row = stage + warp_row
+            my_bar = pull_bar + Uint64(warp)
+            if cutlass.const_expr(self.pull_tma):
+              if elect_one_sync():
+                bulk_g2s_1d(smem_row,
+                            cute.make_ptr(Uint8, src, cute.AddressSpace.gmem,
+                                          assumed_align=16),
+                            Uint32(self.hidden), my_bar)
+                cute.arch.mbarrier_arrive_and_expect_tx(
+                    my_bar, Uint32(self.hidden))
+                ph = pull_phase_smem[warp]
+                cute.arch.mbarrier_wait(my_bar, ph)
+                pull_phase_smem[warp] = ph ^ Uint32(1)
+                bulk_s2g_1d(cute.make_ptr(Uint8, dst, cute.AddressSpace.gmem,
+                                          assumed_align=16),
+                            smem_row, Uint32(self.hidden))
+                cute.arch.cp_async_bulk_commit_group()
+                cute.arch.cp_async_bulk_wait_group(0)
+            else:
+                # upstream path: 320 synchronous 16-byte ld/st per row
+                for k in cutlass.range(lane, self.hidden // 16, 32):
+                    copy_global_16(dst + Uint64(k) * 16, src + Uint64(k) * 16)
+            cute.arch.sync_warp()
+            # [ECO-BLKRDY] Publish this M block as soon as its last row has
+            # landed. SM100 does exactly this with
+            # `l1_full_count[ring_block]` (sm100_fp8_fp4_gc_moe.py L1330):
+            #   full_increment = block_m - (pull_token % block_m)
+            #                                   if is_last_token else 1
+            # Here the rows of one slot arrive one warp-row at a time, so
+            # the increment is 1 per row and the producer compares the
+            # running total against `block_m * (blocks_done + 1)`.
+            if cutlass.const_expr(self.block_ready):
+                if lane == Uint32(0):
+                    atom_release_gpu_add_u32(
+                        self._field(base, 'l1_block_ready', Uint32) + expert,
+                        Uint32(1))
+            # scales: 160 B per token, small enough to keep the direct path
+            remote_sf = remote + Uint64(self.off_x_sf) + \
+                Uint64(token) * Uint64(self.hidden // 128 * 4)
+            for sf_k in cutlass.range(lane, self.hidden // 128, 32):
+                sf_value = cell(Uint64(remote_sf), Uint64(sf_k) * 4, Float32)[0]
+                sf_out = cell(base, Uint64(self.off_l1_acts_sf) +
+                              ((Uint64(expert) * (self.hidden // 128) + Uint32(sf_k))
+                               * self.rows + Uint64(local_row)) * 4, Float32)
+                sf_out[0] = sf_value * Float32(64)
+        fence_gpu()
+        cute.arch.sync_threads()
+
+    @cute.jit
     def _dispatch(self, base: Uint64, peers: cute.Pointer, rank: Uint32,
                    tokens: Uint32, stats: cute.Pointer):
         tid, _, _ = cute.arch.thread_idx()
@@ -2562,103 +2686,24 @@ class SM90GCMoERoleKernel:
                         hi = total
             meta_base = Uint64(self.off_route_meta) + Uint64(expert) * self.rows * 12
             weight_base = Uint64(self.off_route_weight) + Uint64(expert) * self.rows * 4
-            for row in cutlass.range(lo + tid, hi, self.threads):
-                source = Uint32(0)
-                for candidate in cutlass.range_constexpr(1, self.ranks):
-                    if row >= prefix[candidate]:
-                        source = Uint32(candidate)
-                source_slot = Uint32(row) - prefix[source]
-                route = cell(base, Uint64(self.off_source_index) + ((Uint64(expert) * self.ranks + source) * self.capacity + source_slot) * 4, Uint32)[0]
-                source_token, route_slot = route // self.topk, route % self.topk
-                local_row = Uint32(row) - lo
-                rank_out = cell(base, meta_base + Uint64(local_row * 3) * 4, Uint32)
-                rank_out[0] = source
-                token_out = cell(base, meta_base + Uint64(local_row * 3 + 1) * 4, Uint32)
-                token_out[0] = source_token
-                slot_out = cell(base, meta_base + Uint64(local_row * 3 + 2) * 4, Uint32)
-                slot_out[0] = route_slot
-                weight_out = cell(base, weight_base + Uint64(local_row) * 4, Float32)
-                weight_out[0] = cell(Uint64(peer_table[source]), Uint64(self.off_topk_weights) + Uint64(route) * 4, Float32)[0]
-            cute.arch.sync_threads()
-            # A warp retains one source/token pair while copying an entire
-            # route, avoiding metadata reloads for every sixteen data bytes.
-            # [ECO-PULL] TMA copy, structurally identical to SM100
-            # (impls/sm100_fp8_fp4_gc_moe.py L1184-1200):
-            #
-            #     if (elect_one_sync()) {
-            #         bulk_g2s_1d(smem, src, N, bar);        // issue the TMA
-            #         mbarrier_arrive_and_expect_tx(bar, N); // THEN expect
-            #         mbarrier_wait(bar, phase);             // drain
-            #         phase ^= 1;
-            #         bulk_s2g_1d(dst, smem, N);             // write back
-            #         cp_async_bulk_commit_group();
-            #         cp_async_bulk_wait_group(0);
-            #     }
-            #
-            # The old loop moved a token with 320 synchronous
-            # `ld.global.v4`/`st.global.v4` pairs of 16 bytes (one per lane per
-            # row) and measured 4.4 GB/s -- about 90x below NVLink.
-            #
-            # Order matters: the arrive/expect goes AFTER the bulk issue, and
-            # `elect_one_sync()` pins the work to one lane so `pull_phase`
-            # (hoisted above the slot loop, as in SM100 L1072) advances once
-            # per row.
-            warp_row = Uint32(warp) * Uint32(warp_row_bytes)
-            for pull_row in cutlass.range(lo + warp, hi, self.threads // 32):
-                local_row = Uint32(pull_row) - lo
-                source_rank = cell(base, meta_base + Uint64(local_row * 3) * 4, Uint32)[0]
-                token = cell(base, meta_base + Uint64(local_row * 3 + 1) * 4, Uint32)[0]
-                remote = Uint64(peer_table[source_rank])
-                src = remote + Uint64(self.off_x) + Uint64(token) * self.hidden
-                dst = base + Uint64(self.off_l1_acts) + \
-                    (Uint64(expert) * self.rows + Uint64(local_row)) * self.hidden
-                smem_row = stage + warp_row
-                my_bar = pull_bar + Uint64(warp)
-                if cutlass.const_expr(self.pull_tma):
-                  if elect_one_sync():
-                    bulk_g2s_1d(smem_row,
-                                cute.make_ptr(Uint8, src, cute.AddressSpace.gmem,
-                                              assumed_align=16),
-                                Uint32(self.hidden), my_bar)
-                    cute.arch.mbarrier_arrive_and_expect_tx(
-                        my_bar, Uint32(self.hidden))
-                    ph = pull_phase_smem[warp]
-                    cute.arch.mbarrier_wait(my_bar, ph)
-                    pull_phase_smem[warp] = ph ^ Uint32(1)
-                    bulk_s2g_1d(cute.make_ptr(Uint8, dst, cute.AddressSpace.gmem,
-                                              assumed_align=16),
-                                smem_row, Uint32(self.hidden))
-                    cute.arch.cp_async_bulk_commit_group()
-                    cute.arch.cp_async_bulk_wait_group(0)
-                else:
-                    # upstream path: 320 synchronous 16-byte ld/st per row
-                    for k in cutlass.range(lane, self.hidden // 16, 32):
-                        copy_global_16(dst + Uint64(k) * 16, src + Uint64(k) * 16)
-                cute.arch.sync_warp()
-                # [ECO-BLKRDY] Publish this M block as soon as its last row has
-                # landed. SM100 does exactly this with
-                # `l1_full_count[ring_block]` (sm100_fp8_fp4_gc_moe.py L1330):
-                #   full_increment = block_m - (pull_token % block_m)
-                #                                   if is_last_token else 1
-                # Here the rows of one slot arrive one warp-row at a time, so
-                # the increment is 1 per row and the producer compares the
-                # running total against `block_m * (blocks_done + 1)`.
-                if cutlass.const_expr(self.block_ready):
-                    if lane == Uint32(0):
-                        atom_release_gpu_add_u32(
-                            self._field(base, 'l1_block_ready', Uint32) + expert,
-                            Uint32(1))
-                # scales: 160 B per token, small enough to keep the direct path
-                remote_sf = remote + Uint64(self.off_x_sf) + \
-                    Uint64(token) * Uint64(self.hidden // 128 * 4)
-                for sf_k in cutlass.range(lane, self.hidden // 128, 32):
-                    sf_value = cell(Uint64(remote_sf), Uint64(sf_k) * 4, Float32)[0]
-                    sf_out = cell(base, Uint64(self.off_l1_acts_sf) +
-                                  ((Uint64(expert) * (self.hidden // 128) + Uint32(sf_k))
-                                   * self.rows + Uint64(local_row)) * 4, Float32)
-                    sf_out[0] = sf_value * Float32(64)
-            fence_gpu()
-            cute.arch.sync_threads()
+            if cutlass.const_expr(self.stream_blocks):
+                if tid == 0:
+                    self._field(base, 'expert_count', Uint32)[expert] = hi - lo
+                    if cutlass.const_expr(self.fine_trace):
+                        self._field(base, 'fine_epx', Uint32)[expert] = epoch
+                for row_lo in cutlass.range(lo, hi, self.max_m):
+                    row_hi = cute.math.min(Uint32(row_lo) + Uint32(self.max_m), hi)
+                    self._pull_slot_rows(base, peer_table, prefix, stage, pull_bar,
+                                         pull_phase_smem, warp_row_bytes, meta_base,
+                                         weight_base, Uint32(expert), lo, Uint32(row_lo), row_hi)
+                    if tid == 0:
+                        mblk = (Uint32(row_lo) - lo) // Uint32(self.max_m)
+                        self._publish_l1_batch(base, head, epoch, Uint32(expert),
+                                               mblk, row_hi - Uint32(row_lo), rank)
+            else:
+                self._pull_slot_rows(base, peer_table, prefix, stage, pull_bar,
+                                     pull_phase_smem, warp_row_bytes, meta_base,
+                                     weight_base, Uint32(expert), lo, lo, hi)
             owned = hi - lo
             # [ECO-FINE] type 2 = this slot finished pulling (all its tokens
             # are in l1_acts). id = global slot, a0 = local slot,
@@ -2691,8 +2736,9 @@ class SM90GCMoERoleKernel:
                     if n_fixed > Uint32(0):
                         self._eco_tl_mark(base, epoch, 3, n_fixed, 11, False)
             if tid == 0:
-                count_out = cell(base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)
-                count_out[0] = owned
+                if cutlass.const_expr(not self.stream_blocks):
+                    count_out = cell(base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)
+                    count_out[0] = owned
                 if cutlass.const_expr(self.step_profile):
                     # [STEP-PROFILE] per-slot owned rows for this call.
                     sc = cell(base, Uint64(self.off_profile_slot_counts)
@@ -2705,34 +2751,40 @@ class SM90GCMoERoleKernel:
                     # [IR-STEP] same number, tagged by this call's (layer, step)
                     self._ir_step_write(base, epoch, Uint32(expert), owned)
                 st_release_u32(self._field(base, 'expert_ready', Uint32) + Uint32(expert), epoch, False)
-                if owned > 0:
-                    # [MB-CLAIM] Publish ONE TICKET PER M BLOCK.
-                    #
-                    # Tickets come from the monotonic `head+7` counter, so each
-                    # ticket is consumed by exactly one producer CTA and can
-                    # never be revisited. Publishing per tile therefore forced a
-                    # tile's extra blocks to be loaded by whichever CTA held its
-                    # single ticket -- the tail collapse in the trace (one CTA
-                    # busy 655->729 us on expert 46's 3 blocks while 51 idled).
-                    # Per block, any free CTA can take the 2nd/3rd block.
-                    if cutlass.const_expr(self.mb_claim):
-                        _nmb = (owned + Uint32(self.max_m - 1)) // Uint32(self.max_m)
-                        for _mb in cutlass.range(Uint32(0), _nmb):
+                if cutlass.const_expr(not self.stream_blocks):
+                    if owned > 0:
+                        # [MB-CLAIM] Publish ONE TICKET PER M BLOCK.
+                        #
+                        # Tickets come from the monotonic `head+7` counter, so each
+                        # ticket is consumed by exactly one producer CTA and can
+                        # never be revisited. Publishing per tile therefore forced a
+                        # tile's extra blocks to be loaded by whichever CTA held its
+                        # single ticket -- the tail collapse in the trace (one CTA
+                        # busy 655->729 us on expert 46's 3 blocks while 51 idled).
+                        # Per block, any free CTA can take the 2nd/3rd block.
+                        if cutlass.const_expr(self.mb_claim):
+                            _nmb = (owned + Uint32(self.max_m - 1)) // Uint32(self.max_m)
+                            for _mb in cutlass.range(Uint32(0), _nmb):
+                                active_slot = atom_add_u32(head + 7, Uint32(1))
+                                active_out = cell(base, Uint64(self.off_active_expert) + Uint64(active_slot) * 4, Uint32)
+                                active_out[0] = Uint32(expert)
+                                mb_out = cell(base, Uint64(self.off_active_mb) + Uint64(active_slot) * 4, Uint32)
+                                mb_out[0] = Uint32(_mb)
+                                st_release_u32(self._field(base, 'active_ready', Uint32) + active_slot, epoch, False)
+                        else:
+                            # historical: one ticket for the whole (expert, ntile) tile
                             active_slot = atom_add_u32(head + 7, Uint32(1))
                             active_out = cell(base, Uint64(self.off_active_expert) + Uint64(active_slot) * 4, Uint32)
                             active_out[0] = Uint32(expert)
                             mb_out = cell(base, Uint64(self.off_active_mb) + Uint64(active_slot) * 4, Uint32)
-                            mb_out[0] = Uint32(_mb)
+                            mb_out[0] = Uint32(0)
                             st_release_u32(self._field(base, 'active_ready', Uint32) + active_slot, epoch, False)
-                    else:
-                        # historical: one ticket for the whole (expert, ntile) tile
-                        active_slot = atom_add_u32(head + 7, Uint32(1))
-                        active_out = cell(base, Uint64(self.off_active_expert) + Uint64(active_slot) * 4, Uint32)
-                        active_out[0] = Uint32(expert)
-                        mb_out = cell(base, Uint64(self.off_active_mb) + Uint64(active_slot) * 4, Uint32)
-                        mb_out[0] = Uint32(0)
-                        st_release_u32(self._field(base, 'active_ready', Uint32) + active_slot, epoch, False)
-                finished = atom_release_gpu_add_u32(head + 8, Uint32(1))
+                finished = Uint32(0)
+                if cutlass.const_expr(self.stream_blocks):
+                    # The last CTA must acquire all other slots' publications.
+                    finished = atom_acq_rel_add_u32(head + 8, Uint32(1))
+                else:
+                    finished = atom_release_gpu_add_u32(head + 8, Uint32(1))
                 if finished == self.local - 1:
                     st_release_u32(head + 9, epoch, False)
                     # [PULL-TRACE] pull end: the LAST local slot finished.
@@ -3059,6 +3111,79 @@ class SM90GCMoERoleKernel:
                                    weights, offsets, secondary, clamp, 64, l1)
 
     @cute.jit
+    def _try_claim_ready_tile(self, cursor: cute.Pointer, count: cute.Pointer,
+                              ready: cute.Pointer, epoch: Uint32, ntiles: Uint32):
+        """Claim one (M block, N tile) only after the batch's release."""
+        ticket = ld_acquire_gpu_u32(cursor)
+        claimed = Uint32(0xFFFFFFFF)
+        if ticket < ld_acquire_gpu_u32(count) * ntiles:
+            if ld_acquire_gpu_u32(ready + ticket // ntiles) == epoch:
+                if atom_claim_u32(cursor, ticket) == ticket:
+                    claimed = ticket
+        return claimed
+
+    @cute.jit
+    def _claim_stream_command(self, base: Uint64, command: cute.Tensor,
+                               epoch: Uint32, first_claim: Boolean):
+        tid, _, _ = cute.arch.thread_idx()
+        if tid == 0:
+            head = self._field(base, 'header', Uint32)
+            l2_count = self._field(base, 'stream_l2_count', Uint32)
+            active_ready = self._field(base, 'active_ready', Uint32)
+            l2_ready = self._field(base, 'stream_l2_ready', Uint32)
+            n1, n2 = Uint32(self.l1_tiles), Uint32(self.l2_tiles)
+            cta = Uint32(cute.arch.block_idx()[0])
+            phase, batch, ntile = Uint32(0), Uint32(0), Uint32(0)
+            drained = False
+            while phase == Uint32(0) and not drained:
+                ticket = self._try_claim_ready_tile(head + 3, head + 7, active_ready, epoch, n1)
+                if ticket != Uint32(0xFFFFFFFF):
+                    phase, batch, ntile = Uint32(1), ticket // n1, ticket % n1
+                else:
+                    ticket = self._try_claim_ready_tile(head + 10, l2_count, l2_ready, epoch, n2)
+                    if ticket != Uint32(0xFFFFFFFF):
+                        phase, ntile = Uint32(2), ticket % n2
+                        batch = self._field(base, 'stream_l2_batch', Uint32)[ticket // n2]
+                    elif ld_acquire_gpu_u32(head + 9) == epoch:
+                        # Drain only after all pulled blocks have finished L1
+                        # and every L2 tile has been claimed. Already claimed
+                        # tiles retire in their CTA before combine can launch.
+                        total = ld_acquire_gpu_u32(head + 7)
+                        if ld_acquire_gpu_u32(l2_count) == total:
+                            drained = ld_acquire_gpu_u32(head + 10) >= total * n2
+                if cutlass.const_expr(self.fine_trace):
+                    if phase == Uint32(0) and not drained:
+                        self._fine_spin(base, epoch, cta, Uint32(1),
+                                        ld_acquire_gpu_u32(head + 3) // n1,
+                                        ld_acquire_gpu_u32(head + 7))
+            command[0] = phase
+            if phase != Uint32(0):
+                command[1] = self._field(base, 'active_expert', Uint32)[batch]
+                command[2] = ntile
+                command[3] = self._field(base, 'active_mb', Uint32)[batch]
+                command[4] = batch
+                if cutlass.const_expr(self.fine_trace):
+                    self._fine_spin(base, epoch, cta, Uint32(0), batch, Uint32(0))
+                if cutlass.const_expr(self.step_profile):
+                    if phase == Uint32(1) and first_claim:
+                        self._pull_tl_min(base, epoch, 15)
+
+    @cute.jit
+    def _release_stream_l2(self, base: Uint64, epoch: Uint32, batch: Uint32,
+                            expert: Uint32, start: Uint32, valid: Uint32):
+        # Acquire/release RMWs collect the stores of every L1 N tile of this
+        # M block. The final tile publishes the entire batch of L2 N tiles.
+        done = self._field(base, 'stream_l1_done', Uint32)
+        arrived = atom_acq_rel_add_u32(done + batch, Uint32(1))
+        if arrived == Uint32(self.l1_tiles - 1):
+            l2_index = atom_add_u32(self._field(base, 'stream_l2_count', Uint32), Uint32(1))
+            self._field(base, 'stream_l2_batch', Uint32)[l2_index] = batch
+            if cutlass.const_expr(self.fine_trace):
+                self._fine(base, epoch, 15, expert, expert,
+                           start // Uint32(self.max_m), valid, batch)
+            st_release_u32(self._field(base, 'stream_l2_ready', Uint32) + l2_index, epoch, False)
+
+    @cute.jit
     def _claim_command(self, base: Uint64, command: cute.Tensor,
                          epoch: Uint32, is_l1: Boolean, first_claim: Boolean,
                          late: cutlass.Constexpr = False):
@@ -3286,24 +3411,35 @@ class SM90GCMoERoleKernel:
                         w1: cute.Pointer, s1: cute.Pointer,
                         w2: cute.Pointer, s2: cute.Pointer,
                         late: cutlass.Constexpr = False):
-        # [MB-CLAIM] 4 words: 0 = kind, 1 = expert, 2 = ntile, 3 = M block.
-        command = cute.make_tensor(cute.recast_ptr(slab + self.command_offset, dtype=Uint32), cute.make_layout((4,)))
+        # Streaming adds the batch index used to release the corresponding L2.
+        command_words = 5 if self.stream_blocks else 4
+        command = cute.make_tensor(
+            cute.recast_ptr(slab + self.command_offset, dtype=Uint32),
+            cute.make_layout((command_words,)))
         is_l1, running = True, True
         task_iter, data_iter = Uint32(0), Uint32(0)
         while running:
-            self._claim_command(base, command, epoch, is_l1, task_iter == Uint32(0), late)
+            if cutlass.const_expr(self.stream_blocks):
+                self._claim_stream_command(base, command, epoch, task_iter == Uint32(0))
+            else:
+                self._claim_command(base, command, epoch, is_l1, task_iter == Uint32(0), late)
             sync_loader()
             if command[0] == 0:
-                if is_l1:
-                    is_l1 = False
-                else:
+                if cutlass.const_expr(self.stream_blocks):
                     running = False
+                else:
+                    if is_l1:
+                        is_l1 = False
+                    else:
+                        running = False
+                if not running:
                     # [ECO-MEAS] slot 13 (max) = role-2 leaves its loop.
-                    # 16-13 is the teardown (fence / sync) after the last tile.
                     if cutlass.const_expr(self.eco_trace and self.eco):
                         if cute.arch.thread_idx()[0] == 0:
                             self._eco_trace(base, 13, 2)
             else:
+                if cutlass.const_expr(self.stream_blocks):
+                    is_l1 = command[0] == Uint32(1)
                 expert = Uint32(command[1])
                 ntile = Uint32(command[2])
                 count = cell(base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)[0]
@@ -3313,8 +3449,11 @@ class SM90GCMoERoleKernel:
                     start = Uint32(command[3]) * Uint32(self.max_m)
                     valid = cute.math.min(Uint32(self.max_m), count - start)
                     last = Uint32(0)
-                    if start + valid == count:
-                        last = Uint32(1)
+                    if cutlass.const_expr(self.stream_blocks):
+                        last = Uint32(command[4])
+                    else:
+                        if start + valid == count:
+                            last = Uint32(1)
                     if cutlass.const_expr(self.block_ready):
                         rows_needed = start + valid
                         br = self._field(base, 'l1_block_ready', Uint32) + expert
@@ -3581,8 +3720,12 @@ class SM90GCMoERoleKernel:
                                    ntile, phase)
                 fence_gpu()
                 sync_math()
-                if math_tid == 0 and phase == 1 and last != 0:
-                    atom_release_gpu_add_u32(self._field(base, 'l1_done', Uint32) + expert, Uint32(1))
+                if math_tid == 0 and phase == 1:
+                    if cutlass.const_expr(self.stream_blocks):
+                        self._release_stream_l2(base, epoch, last, expert, start, valid)
+                    else:
+                        if last != 0:
+                            atom_release_gpu_add_u32(self._field(base, 'l1_done', Uint32) + expert, Uint32(1))
 
     @cute.jit
     def _select_persistent_tile(self, base: Uint64, peers: cute.Pointer, slab: cute.Pointer,
@@ -4129,6 +4272,8 @@ class SM90GCMoERoleKernel:
                 for c in cutlass.range_constexpr(8 if self.shared_experts > 0 else 6):
                     counter_out = cell(base, Uint64((3, 7, 8, 10, 11, 13, 20, 21)[c] * 4), Uint32)
                     counter_out[0] = Uint32(0)
+                if cutlass.const_expr(self.stream_blocks):
+                    self._field(base, 'stream_l2_count', Uint32)[0] = Uint32(0)
                 if cutlass.const_expr(self.eco):
                     # [ECO-SM90] Clear both plan handshake words for the next
                     # call. The plan waits on eco_ready[0] == epoch + 1 and the

@@ -1353,6 +1353,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                # them, and the extra views land on top of `eco_meta`
                # (measured: phy2log read back as the identity 0,1,2,3...).
                os.environ.get('GC_MOE_FINE_TRACE') == '1',
+               os.environ.get('GC_MOE_SM90_STREAM_M_BLOCKS') == '1',
                _eplb_enabled() and _eco_enabled())
         # Every layer of this model has identical expert shapes, so one
         # process-wide buffer serves all of them (calls are serialized).

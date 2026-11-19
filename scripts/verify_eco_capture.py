@@ -10,6 +10,7 @@ capture". This reproduces that in ~20 s:
 
 Usage: torchrun --nproc_per_node 8 scripts/verify_eco_capture.py
 """
+import hashlib
 import os, sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.environ['GC_SHIM'])
@@ -27,6 +28,7 @@ H, I, E, TOPK, B = 5120, 2304, 384, 6, 32
 CAP = int(os.environ.get('TL_CAP', '2048'))
 NSE = int(os.environ.get('SHARED_EXPERTS', '1'))
 T = int(os.environ.get('TL_TOKENS', '32'))
+HOT_BLOCKS = os.environ.get('TL_HOT_BLOCKS') == '1'
 
 
 def main():
@@ -61,19 +63,29 @@ def main():
     raw = torch.randn((T, H), dtype=torch.bfloat16, device=dev, generator=gen) * 0.5
     xq, xsf = per_token_cast_to_fp8(raw, use_ue8m0=False, gran_k=128)
     sc = torch.randn((T, E), dtype=torch.float32, device=dev, generator=gen)
-    tw, ti = torch.topk(sc, TOPK, dim=-1, largest=True, sorted=False)
-    weights = torch.softmax(tw, -1)
-
     demand = torch.ones(E, dtype=torch.float32)
     demand[7] = 2.0
     lay = build_eplb_layout(demand, E, R, 0.25)
+    if HOT_BLOCKS:
+        # A single-copy expert receives 8*17-1 rows in the runner. This
+        # exercises multiple full M blocks and the final partial block.
+        hot = next(e for e in range(E) if list(lay.phy2log).count(e) == 1)
+        sc[:, hot] = -float('inf')
+        tw, ti = torch.topk(sc, TOPK, dim=-1, largest=True, sorted=False)
+        ti[:, 0] = hot
+        tw[:, 0] = 1.0
+        if rank == 0:
+            tw[-1], ti[-1] = torch.topk(sc[-1], TOPK, largest=True, sorted=False)
+    else:
+        tw, ti = torch.topk(sc, TOPK, dim=-1, largest=True, sorted=False)
+    weights = torch.softmax(tw, -1)
+
     buf = gc_moe.get_symm_buffer_for_gc_moe_sm90(
         group, E, CAP, TOPK, H, I, activation='swiglu',
         num_shared_experts=NSE, physical=lay.physical, eco=True)
     plan, _ = sm90_gc.install_eplb_plan(buf, list(lay.phy2log))
-    from gc_moe.eco.meta_sm90 import build_eco_meta
-    buf.eco_meta.copy_(torch.as_tensor(build_eco_meta(list(lay.phy2log), R, E),
-                                       dtype=torch.int32, device=dev))
+    from gc_moe.eco.meta_sm90 import install_into_buffer
+    install_into_buffer(buf, list(lay.phy2log), R, E)
     w1b, w2b = sm90_gc.gather_slot_weights((w1, w2), buf, plan, group)
 
     out = torch.empty((T, H), dtype=torch.bfloat16, device=dev)
@@ -106,6 +118,15 @@ def main():
         g.replay()
     torch.cuda.synchronize()
     finite = bool(torch.isfinite(out.float()).all())
+    if HOT_BLOCKS:
+        assert finite, f'rank {rank}: nonfinite graph output'
+        owner, local = divmod(list(lay.phy2log).index(hot), lay.physical // R)
+        if rank == owner:
+            count = int(buf.expert_count[local].item())
+            assert count == R * T - 1 and count > 64 and count % 64, (rank, count)
+        digest = hashlib.sha256(out.view(torch.int16).cpu().numpy().tobytes()).hexdigest()
+        print(f'STREAM_CHECK rank={rank} sha256={digest}', flush=True)
+        dist.barrier()
     if rank == 0:
         q = buf.eco_quota[:lay.physical].to(torch.int64)
         print(f'[cap] replay ok finite={finite} quota_sum={int(q.sum())}', flush=True)

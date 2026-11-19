@@ -113,6 +113,27 @@ def rank_detail(row, fine, epoch):
     expected = {(slot, start, min(block_m, owned - start), ntile, phase)
                 for slot, owned in enumerate(slots) for start in range(0, owned, block_m)
                 for phase, count in n_tiles.items() for ntile in range(count)}
+    block_keys = {(slot, start // block_m): valid for slot, start, valid, _, _ in expected}
+    releases = {}
+    for rec in rows:
+        kind = rec[1]
+        if kind in (14, 15):
+            slot, mblk, valid, batch = rec[3:7]
+            key = (kind, slot, mblk)
+            require(block_keys.get((slot, mblk)) == valid and key not in releases,
+                    f'invalid or duplicate streamed block release: {key}')
+            releases[key] = dict(time_us=ts(rec), phase=kind - 13, slot=slot,
+                                 m_block=mblk, valid=valid, batch=batch)
+    if releases:
+        require(releases.keys() == {(kind, *block) for block in block_keys for kind in (14, 15)},
+                'missing streamed block releases')
+        l1_batches = {release['batch'] for key, release in releases.items() if key[0] == 14}
+        require(l1_batches == set(range(len(block_keys))), 'unexpected L1 batch identities')
+        for slot, mblk in block_keys:
+            l1, l2 = releases[(14, slot, mblk)], releases[(15, slot, mblk)]
+            require(l1['batch'] == l2['batch'] and l1['time_us'] <= l2['time_us'],
+                    f'inconsistent release order for slot {slot}, block {mblk}')
+
     ident = lambda rec: tuple(rec[2:8])
     tiles, observed = {}, set()
     first_l1_by_slot = {}
@@ -123,8 +144,12 @@ def rank_detail(row, fine, epoch):
         observed.add(key)
         item = dict(span(first, last), cta=cta, slot=slot, row_start=start,
                     m_block=start // block_m, valid=valid, ntile=ntile, phase=phase)
-        require(item['start_us'] >= pulls[slot]['end_us'],
-                f'tile started before its slot finished pulling: {key}')
+        ready_us = (releases[(13 + phase, slot, start // block_m)]['time_us']
+                    if releases else pulls[slot]['end_us'])
+        require(item['start_us'] >= ready_us, f'tile started before its input was ready: {key}')
+        if releases and phase == 1:
+            require(item['end_us'] <= releases[(15, slot, start // block_m)]['time_us'],
+                    f'L2 released before its L1 tile completed: {key}')
         if phase == 1:
             first_l1_by_slot[slot] = min(item['start_us'], first_l1_by_slot.get(slot, item['start_us']))
         tiles[ident(first)] = item
@@ -168,7 +193,8 @@ def rank_detail(row, fine, epoch):
                 tile_counts=dict(Counter(item['phase'] for item in tile_rows)),
                 active_compute_ctas=active_ctas(tile_rows),
                 pull_slots=ordered_slots, replica_plan_waits=plan_waits,
-                tiles=tile_rows, l2_pushes=list(pushes.values()), claim_events=claim_events)
+                tiles=tile_rows, l2_pushes=list(pushes.values()), claim_events=claim_events,
+                block_releases=list(releases.values()))
 
 
 def overlay(trace, details):
@@ -194,6 +220,13 @@ def overlay(trace, details):
                 events.append(dict(ph='X', name=name, cat=key, pid=r, tid=offset + item['cta'],
                                    ts=anchors[r] + item['start_us'],
                                    dur=item['end_us'] - item['start_us'], args=item))
+        if rank['block_releases']:
+            events.append(dict(ph='M', name='thread_name', pid=r, tid=600,
+                               args={'name': 'Ready M blocks'}))
+            for marker in rank['block_releases']:
+                events.append(dict(ph='i', s='t', name=f'L{marker["phase"]} publish',
+                                   cat='ready block', pid=r, tid=600,
+                                   ts=anchors[r] + marker['time_us'], args=marker))
         for marker in rank['claim_events']:
             events.append(dict(ph='i', s='t', name=marker['kind'], cat='claim queue',
                                pid=r, tid=200 + marker['cta'],
@@ -201,7 +234,7 @@ def overlay(trace, details):
     return dict(trace, traceEvents=events)
 
 
-def analyze(capture_dir, deliver_dir):
+def analyze(capture_dir, deliver_dir, require_streamed_blocks=False):
     manifest = json.loads((capture_dir / 'capture.json').read_text())
     fine = json.loads((capture_dir / 'fine.json').read_text())
     require(fine.get('id') == manifest['id'], 'fine rows are from another capture')
@@ -229,7 +262,10 @@ def analyze(capture_dir, deliver_dir):
                     and row['slots_owned'] == device_call['owned'],
                     f'epoch {epoch}, rank {rank}: counts differ from the device manifest')
             try:
-                details.append(rank_detail(row, workers[rank], epoch))
+                detail = rank_detail(row, workers[rank], epoch)
+                require(not require_streamed_blocks or len(detail['block_releases']) == 2 * row['m_blocks'],
+                        'missing early M-block release instrumentation')
+                details.append(detail)
             except ValueError as exc:
                 raise ValueError(f'epoch {epoch}, rank {rank}: {exc}') from exc
         stem = path.name.removesuffix('.counts.json')
@@ -255,9 +291,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('capture_dir', type=Path)
     parser.add_argument('deliver_dir', type=Path)
+    parser.add_argument('--require-streamed-blocks', action='store_true')
     args = parser.parse_args()
     try:
-        outputs = analyze(args.capture_dir, args.deliver_dir)
+        outputs = analyze(args.capture_dir, args.deliver_dir, args.require_streamed_blocks)
     except (KeyError, OSError, ValueError) as exc:
         parser.exit(1, f'pull/GEMM trace: {exc}\n')
     for stem, report, trace in outputs:

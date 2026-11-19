@@ -1,6 +1,6 @@
 """SM90-owned workspace ABI, independent of the SM100 ring layout."""
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from types import MappingProxyType
 
@@ -36,6 +36,8 @@ class SM90GCBufferLayout:
     # rows (plan_wake / push / pull) are identical for RR and ECO, so tracing
     # RR uses the same table and the two can be compared column by column.
     trace: bool = False
+
+    stream_blocks: bool = field(init=False)
 
     def __post_init__(self):
         ranks, experts, capacity, topk = self.ranks, self.experts, self.capacity, self.topk
@@ -81,10 +83,19 @@ class SM90GCBufferLayout:
         # tokens per expert, i.e. ceil(capacity/max_m) blocks; 64 covers
         # cap=2048 at block_m=64. `active_count` is compared against these
         # tickets only, so the extra rows cost nothing when unused.
-        reserve('active_expert', (local * 64,), 'int32', 4)
-        reserve('active_ready', (local * 64,), 'int32', 4)
-        # [MB-CLAIM] mblock carried alongside each ticket (one word per ticket).
-        reserve('active_mb', (local * 64,), 'int32', 4)
+        stream_blocks = os.environ.get('GC_MOE_SM90_STREAM_M_BLOCKS') == '1'
+        object.__setattr__(self, 'stream_blocks', stream_blocks)
+        # Streaming supports M >= 16. Across local slots there are at most
+        # ranks * capacity * topk routes plus one partial block per slot.
+        batches = ((rows * topk + 15) // 16 + local if stream_blocks else local * 64)
+        reserve('active_expert', (batches,), 'int32', 4)
+        reserve('active_ready', (batches,), 'int32', 4)
+        reserve('active_mb', (batches,), 'int32', 4)
+        if stream_blocks:
+            reserve('stream_l1_done', (batches,), 'int32', 4)
+            reserve('stream_l2_batch', (batches,), 'int32', 4)
+            reserve('stream_l2_ready', (batches,), 'int32', 4)
+            reserve('stream_l2_count', (1,), 'int32', 4)
         reserve('compute_ready', (ranks,), 'int32', 4)
         reserve('combine_block_done', (1024,), 'int32', 4)
         reserve('send_count', (physical,), 'int32', 4)

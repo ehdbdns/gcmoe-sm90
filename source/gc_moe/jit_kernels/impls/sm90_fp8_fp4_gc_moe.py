@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 import re
@@ -86,6 +87,12 @@ _POINTER_TYPES = (Uint8, Uint64, BFloat16, Uint8, Uint8, Float32,
 
 
 def _role_specs(config, layout, schedule, has_stats):
+    if layout.stream_blocks and (
+            os.environ.get('GC_MOE_MB_CLAIM') != '1' or 0 < config.bound < 32
+            or schedule.threads[1] != 384 or schedule.tile_m < 16
+            or getattr(config, 'sm_reuse', False)):
+        raise ValueError('SM90 M-block streaming requires MB-CLAIM, the 384-thread '
+                         'routed schedule with M >= 16 and SM-reuse disabled')
     routed = get_routed_role_config(config, schedule)
     # [SM-REUSE] Size of the DISPATCH green partition, which role 6 inherits.
     schedule_sms = int(getattr(config, 'dispatch_partition_sms', 0) or 0)

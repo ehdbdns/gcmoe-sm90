@@ -1,6 +1,6 @@
 # 八卡执行任务书 · EPLB 重排后单步采样
 
-> 新一轮慢 rank 诊断请执行 [pull 与 routed GEMM 细粒度任务书](PULL_GEMM_TASK.md)。本文件记录已验收的基线流程。
+> 当前执行 [按 M 块发布任务的八卡验收](STREAM_MBLOCK_TASK.md)。[细粒度诊断任务书](PULL_GEMM_TASK.md) 记录上一轮流程。
 
 本文件是本次执行的唯一操作入口。使用首次有效 CTA 领取打点提交 `cffe4835270f0d0bcc048b502a0b5716eac910b1` 及包含本任务书的后续提交。依次执行步骤 1 至 5。上一次的任务书、脚本命令和回执是历史记录。此次验收禁止使用 `prof_phases.py`、`FINAL_V2` 或任何旧 run。
 

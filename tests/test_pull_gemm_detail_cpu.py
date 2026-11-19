@@ -8,7 +8,7 @@ from aligned_step import build
 from pull_gemm_detail import MASK, analyze, signed_delta
 
 
-def fine_fixture(path, report):
+def fine_fixture(path, report, stream=False):
     epoch = report['epoch']
     workers = []
     for rank in report['ranks']:
@@ -20,14 +20,21 @@ def fine_fixture(path, report):
             padded = args + (0,) * (5 - len(args))
             rows.append([(dispatch + ts - origin) & MASK, kind, ident, *padded, epoch, 0])
 
+        batch = 0
         for slot, count in enumerate(rank['slots_owned']):
-            begin, end = ((12, 22), (14, 62), (18, 98))[slot]
+            begin, end = ((12, 70 if stream else 22), (14, 62), (18, 98))[slot]
             global_slot = rank['rank'] * 3 + slot
             emit(begin, 1, global_slot, slot, slot, 1)
             emit(end, 2, global_slot, slot, count, 0)
             for index, start in enumerate(range(0, count, rank['block_m'])):
                 valid = min(rank['block_m'], count - start)
                 base = max(end, 55) + index * 9
+                if stream:
+                    if slot == 0 and index == 0:
+                        base = 55
+                    emit(base - 1, 14, global_slot, slot, index, valid, batch)
+                    emit(base + 6, 15, slot, slot, index, valid, batch)
+                batch += 1
                 cta = slot * 2 + index
                 emit(base, 6, cta, slot, start, valid, 0, 1)
                 emit(base + 5, 7, cta, slot, start, valid, 0, 1)
@@ -71,6 +78,18 @@ def main():
             else:
                 raise AssertionError(f'invalid trace accepted: {expected}')
 
+        fine = fine_fixture(path, report, stream=True)
+        [(_, detail, _)] = analyze(path, path)
+        rank0 = detail['ranks'][0]
+        assert rank0['hot_slot']['first_l1_us'] < rank0['hot_slot']['end_us']
+        assert len(rank0['block_releases']) == 6
+        rows = fine['ranks'][0]['epochs'][str(report['epoch'])]
+        early = next(rec for rec in rows if rec[1] == 15)
+        early[0] -= 3
+        (path / 'fine.json').write_text(json.dumps(fine))
+        reject('L2 released before its L1 tile completed')
+
+        fine = fine_fixture(path, report)
         fine['ranks'][0]['count'] = 2000
         (path / 'fine.json').write_text(json.dumps(fine))
         reject('invalid fine ring')
