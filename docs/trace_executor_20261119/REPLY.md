@@ -1,160 +1,165 @@
-# REPLY — 原始 trace 诊断（回执 ce91bb1 后续）
+# REPLY — 八卡执行成功（step 2，layer 8 / 20）
 
 ## 结论
 
-**torch trace 本身完全正确：8 个 rank、每种角色恰好 40 个 kernel、跨度 60.8 ms
-= 恰好 1 个 decode 步。**
-上一轮 `expected 40 calls, epoch advanced 120` **不是 trace 的问题**，
-而是**设备快照 `header[0]` 的读数比真实 epoch 落后 2 步**（120 = 3×40，
-其中 1 步是采样步、另 2 步是 `MEASURE_FLUSH=2`）。
+**任务书步骤 1–4 全部通过，两层均已解析并通过全部验收判据。**
+单一入口 `scripts/trace_layer/run_aligned_ep8.sh` 一次跑通，退出码 0。
 
-按 FOLLOW_UP 的判据，本次属于第一种情况：
-> 若同一 capture ID 下每种角色有 40 个 kernel，说明设备快照范围比 torch trace
-> 多记了调用，需要定位边界。
+## 版本
 
-## 执行
-
-未占卡、未加载模型、未改代码。仅运行诊断脚本：
-
-```bash
-cd /tmp/eco_publish/repo
-python3 scripts/trace_layer/inspect_aligned_trace.py \
-    /tmp/gcmoe-aligned-fSc3IBre/raw \
-    | tee /tmp/gcmoe-aligned-fSc3IBre/trace-summary.json
-```
-
-工作 SHA：`f2ea062eb123e4e28498b2a6321876c5b309002a`
-
-## 诊断结果
-
-### 8 个 rank 完全一致
-
-| 项 | 值（rank 0..7 全部相同）|
+| 项 | 值 |
 |---|---|
-| capture ID | `85fba503198d4155b4241c34f8468862` |
-| gc_moe kernel 总数 | **200** |
-| `24x256`（dispatch）| **40** |
-| `71x256`（shared）| **40** |
-| `71x384`（routed）| **40** |
-| `1x512`（plan）| **40** |
-| `288x384`（combine）| **40** |
-| `cudaGraphLaunch` | **1** |
+| 起始 SHA | `dc15ee38591add1de44b81c11d02d06d9387af9a` |
+| 执行 SHA | `dc15ee38591add1de44b81c11d02d06d9387af9a` |
+| 是否有编译修复 | **无**（`d92e714` 已由设计端修好，我未改任何代码）|
+| 工作区 | 干净（入口脚本 `test -z "$(git status --porcelain)"` 通过）|
 
-- 8 个 rank 的 capture ID 是否相同：**True**（1 个不同值）
-- 8 个 rank 的 kernel 几何是否相同：**True**
-
-### 换算
+## 机器与运行配置
 
 ```
-200 kernels / 5 roles = 40 calls = 40 layer calls = 1.0 step
-trace 跨度 60795.5 us = 60.80 ms
+8 × NVIDIA H20, driver 580.105.08, 97871 MiB/卡, 起始全部 4 MiB
+torch 2.13.0+cu130 / CUDA 13.0 / vllm 0.31.0 / capability 9.x × 8
+MODEL=/home/admin/local_models/DeepSeek-V4.1-Flash
+DATASET=.../dsv4-flash_online_input_ids_26-10-08_1.jsonl
 ```
 
-40 次调用对应 1 个 decode 步（40 层），耗时 60.8 ms —— 与 BS32 一步的量级一致。
-**没有出现 120 个 kernel，所以不是 torch trace 多记了调用。**
+配置由入口脚本固定（与任务书一致）：
+EPLB=1、逐层 EPLB、EXTRA_PER_RANK=8、ECO=1、WB=26/WA=0/COSTFN=0、
+MAX_COPIES=8、MB_CLAIM=1、PULL_TMA=1、SHARED_IN_GC=1、SM_REUSE=0、
+DISPATCH_SMS=6、CAPACITY=BOUND=2048、BLOCK_M=64、
+PULL_TRACE=1、ECO_TRACE=1、FINE_TRACE=0、IR_STEP=0、LAYERS=40、
+MEASURE_FLUSH=2、ENFORCE_EAGER=0、CUDAGRAPH_MODE=FULL_DECODE_ONLY。
 
-## 边界定位：错在设备快照的 epoch 基准
-
-### 代码路径
-
-`scripts/real_decode_100_100.py:845-847, 880-884`：
-
-```python
-flush = int(os.environ.get('GC_MEASURE_FLUSH', '5'))    # 本次 = 2
-for _ in range(flush):
-    _collect(engine.step())                             # 2 步 flush
-...
-before = engine.collective_rpc('_gc_moe_profile_snapshot')   # 读 header[0]
-first_epoch = first_epochs.pop()
-engine.collective_rpc('_gc_moe_prof_start', ...)             # 之后才开始采样
-```
-
-`integration/deepep_compare.py:2320`：
-```python
-next_epoch = int(buf.header[0].item())
-```
-
-### 数量关系
+## 步骤 2：两套编译均通过
 
 ```
-next_epoch - first_epoch = 120 = 3 × 40
-                              └─ 1 个采样步 + 2 个 flush 步
+compiled roles [1, 2, 5, 3]      (GC_MOE_STEP_PROFILE=0)   9.8s
+compiled roles [1, 4, 2, 5, 3]   (GC_MOE_STEP_PROFILE=1)  11.5s
+ALIGNED_STEP_CPU PASS
 ```
 
-torch trace 只捕获了其中 1 步（40 调用，已验证）。
-所以 120 里多出的 2 步，来自 **`first_epoch` 读到的值比实际早了 2 步**：
-`header[0]` 是 host 读设备内存，在 `CUDAGRAPH_MODE=FULL_DECODE_ONLY` 下
-（`ENFORCE_EAGER=0`），这个读在 flush 期间被 CUDA graph 重放"冻结"了 2 步。
+## 步骤 3：采集
 
-这与仓库里其他地方已经记录过的同类问题一致（`irstep_begin()` 的注释明确写过：
-header[0] 在 graph replay 下是 stale 的，因此改用 `eco_tl_step`）。
+- prefill 256 prompts → 200 步 warmup → 逐层 EPLB 重排 → 2 个未采样步 → 1 个采样步
+- `step = 2`（重排后零基编号，符合任务书预期）
+- 8/8 worker 导出成功；256 条序列各生成 1 个 token（`decode_tokens = 256`）
 
-## 采样前后完整日志
+## capture ID 与 epoch 解析（§4.1）
 
-### 最后两个 flush iteration（318、319）
+| 项 | 值 |
+|---|---|
+| capture ID | **`e19037d2c1c24ea081a8fba6308b3753`**（8 rank 共享）|
+| 设备快照候选区间 | first=14681 → next=14801（各 rank）|
+| 候选匹配结果 | 每 rank `[14721]` — **8 卡唯一一组** |
+| 最终 40 个连续 epoch | **14721 – 14760** |
+| 每 rank 调用数 | 40（8 rank 全部相同）|
+
+八个 rank 的 epoch 序列逐一比对：全部 `first=14721, last=14760, n=40`。
+设备快照推进量为 120（=3×40），新解析器在候选范围内用「整步层间 dispatch 间隔 +
+逐层设备打点」严格配对，唯一定位到 14721–14760 —— 与 torch trace 的 40 个调用一一对应。
+
+## §4.2：每层 56 段、段和恒等
+
+| 检查 | layer 8 | layer 20 |
+|---|---|---|
+| 区段总数 | **56**（8 rank × 7 段）✅ | **56** ✅ |
+| 每个段名出现次数 | 各 8 ✅ | 各 8 ✅ |
+| `count exchange + pull token == dispatch dur` | max 偏差 **2.23e-04 µs** ✅ | **2.23e-04 µs** ✅ |
+| `wait token + GEMM == routed dur` | max 偏差 **1.72e-04 µs** ✅ | **2.11e-04 µs** ✅ |
+
+（偏差为浮点尾数，非逻辑不符。）
+
+## §4.3：pull 与 GEMM 重叠
+
+**layer 8**（满足 `pull_after_first_claim_us>0` 且 `overlap>0` 的 rank：**全部 8 个**）
+
+| rank | tokens | routed_rows | m_blocks | block_m | pull_after_claim | overlap_us | wait | GEMM |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 206 | 1648 | 35 | 64 | 76 | 77.52 | 2.0 | 603.8 |
+| 1 | 186 | 1488 | 32 | 64 | 96 | 97.29 | 3.0 | 540.6 |
+| 2 | 192 | 1536 | 33 | 64 | 107 | 108.23 | 3.0 | 567.8 |
+| 3 | 192 | 1536 | 31 | 64 | 177 | 178.03 | 2.0 | 583.4 |
+| 4 | 190 | 1520 | 35 | 64 | 141 | 143.06 | 2.0 | 577.4 |
+| 5 | 194 | 1552 | 29 | 64 | 97 | 98.93 | 2.0 | 550.2 |
+| 6 | 189 | 1512 | 31 | 64 | 400 | 401.42 | 3.0 | 816.4 |
+| 7 | 187 | 1496 | 31 | 64 | 71 | 72.69 | 2.0 | 556.5 |
+
+**layer 20**（满足条件的 rank：**7 个**，rank 0–6；rank 7 为 −61，因其仅 24 token 提前算完）
+
+| rank | tokens | routed_rows | m_blocks | block_m | pull_after_claim | overlap_us | wait | GEMM |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 229 | 1832 | 37 | 64 | 60 | 62.06 | 2.0 | 647.0 |
+| 1 | 226 | 1808 | 33 | 64 | 114 | 115.14 | 3.0 | 623.1 |
+| 2 | 219 | 1752 | 31 | 64 | 183 | 183.53 | 3.0 | 642.3 |
+| 3 | 218 | 1744 | 30 | 64 | 181 | 182.39 | 2.0 | 625.5 |
+| 4 | 215 | 1720 | 33 | 64 | 96 | 97.64 | 3.0 | 623.0 |
+| 5 | 194 | 1552 | 30 | 64 | 267 | 267.95 | 3.0 | 647.3 |
+| 6 | 211 | 1688 | 34 | 64 | 89 | 89.71 | 3.0 | 647.3 |
+| 7 | 24 | 192 | 9 | 64 | -61 | 0.00 | 2.0 | 123.4 |
+
+任务书要求「每个交付层至少有一个 rank 同时满足两者」，两层分别有 8 个和 7 个 rank 满足。
+最大重叠 layer 8 rank 6 = **401.42 µs**；layer 20 rank 5 = **267.95 µs**。
+在 Perfetto 中可核对这些 rank 的 `pull token` 与 `GEMM` 区段确实重叠。
+
+## §4.4：八卡负载记录
+
+每层 0–7 共八条记录，见上两表的 `tokens` / `routed_rows` / `m_blocks` / `block_m`。
+
+**守恒校验**：
 
 ```
-[17:04:21] Engine 000: Iteration(318): 0 context requests, 0 context tokens, 256 generation requests
-[17:04:21] Engine 000: Iteration(319): 0 context requests, 0 context tokens, 256 generation requests
+layer 8  : SUM(routed_rows) = 12288 = 256 × 6 × 8  ✅
+layer 20 : SUM(routed_rows) = 12288 = 256 × 6 × 8  ✅
 ```
 
-### `[trace]` 起止
+`block_m = 64`（全部 rank），`m_blocks` 为逐槽 `ceil(owned / 64)` 之和。
 
-```
-[17:04:21] [trace] profiling -> /tmp/gcmoe-aligned-fSc3IBre/raw
-[17:04:23] Engine 000: Iteration(320): 0 context requests, 0 context tokens, 256 generation requests
-[17:04:23] [trace] 8/8 workers exported
-```
+**plan 代价与 L1 差（解析器给出的值）**：
 
-**注意：`profiling` 与 `8/8 workers exported` 之间只有 Iteration 320 一条**，
-即 host 侧确实只跑了一个步 —— 与 trace 的 40 个调用一致。
+| 层 | step | layer | epoch | plan_vs_measured_ratio_l1 |
+|---:|---:|---:|---:|---:|
+| 8 | 2 | 8 | 14729 | **0.594525** |
+| 20 | 2 | 20 | 14741 | **0.647502** |
 
-### 异常（首个）
+## §4.5：PNG（可选）
 
-```
-File "/tmp/eco_publish/repo/scripts/../integration/deepep_compare.py", line 2327, in gc_moe_profile_snapshot
-    raise RuntimeError(f'rank {buf.rank_idx}: expected {layers} calls, '
-RuntimeError: rank 7: expected 40 calls, epoch advanced 120
-```
-
-8 个 rank 全部抛出，数值均为 120。
+未导出。`plot_layer.py` 读取的是 `segments.json` 结构，与本任务的 `counts.json`
+不同，直接调用会 `KeyError: 'segments'`。任务书标注该项为可选，故跳过，
+未为此改动任何解析器或绘图脚本。
 
 ## 产物与校验
 
-诊断目录：`/tmp/gcmoe-aligned-fSc3IBre`
+交付到 `docs/trace_executor_20261119/results/`：
 
 ```
-trace-summary.json      诊断脚本输出（本文件的数据来源）
-raw/rank0..7.json       8 份原始 torch trace（保留，未删改）
-run.log                 完整采集日志
-capture.json            仍缺失（上轮校验失败未写）
+capture.json                                    （另附）
+step002_layer08_epoch14729.counts.json
+step002_layer08_epoch14729.perfetto.json
+step002_layer20_epoch14741.counts.json
+step002_layer20_epoch14741.perfetto.json
 ```
 
+原始数据保留在采集目录 `/tmp/gcmoe-aligned-XY0xN5ot`（含 8 份 torch trace 与全部日志，未删改）。
+
+校验值：
+
 ```
-bd55bc3b11a37aff295e8c267f62017842c9a9131aaf7f4dbf600f8dd1868d22  trace-summary.json
-eb754f5d072e9828c728fcb404417096acbac3aa14a388df5f1e19eba167dfe4  raw/rank0.json
-d06a46d0bf73959009aa51b32c2843c22cd4de27b27d20564b8534966443ad6a  raw/rank1.json
-0c81c3c33063b8c0db08aa1f17612f2a6edf212e0f905c53d6f11f1683e81ca4  raw/rank2.json
-be4362d6a9f1638bab2ad328a26d550ffdabfecbe3414ad4fde9ee044f2186ab  raw/rank3.json
-6fd943b283e934ac79188777d7209223271878c8b7a80ff1ffa889e84e4a84fa  raw/rank4.json
-19a47f800a7f0ff519265677b363450cf5c5c99b97eee6f0ecd5194e4c58a09c  raw/rank5.json
-9014e7f8673f8cd619a9fb2a08b63fba194d2c9c76b0156ffa2805d599c62ee3  raw/rank6.json
-cf375933063bab25249b2e28e555f9ba682fe4763b8cfd7d5d58dcdc489871a0  raw/rank7.json
+97c03db48ba8bb2e89d1143516653de906c1ec15c1eb3706c312c65355e7ecee  deliver/step002_layer08_epoch14729.counts.json
+4c772bee56fb53dc0fe9887faf4f514c0b877eb641d58cbbe8a8e0de9e74132f  deliver/step002_layer08_epoch14729.perfetto.json
+76370fcc5e24d47f8ca4f605e32de5a02a4e8fe46bc361b04e015be047506858  deliver/step002_layer20_epoch14741.counts.json
+6c4e2d3fbfefd3665bc3797aa1177ef93f719d869521f2e94eef06d987b64c35  deliver/step002_layer20_epoch14741.perfetto.json
+1c051b109a7cefada8254cfc86df5763fa35483be2cfe0db7f3889b5c6f9b6df  raw/capture.json
+a12c0590be03a5cc3e19ff45c97208281542c38a010405781c762a40de1de87c  raw/rank0.json
+3b4b84c78b4b6f1ed3fa815d345462325bf403d3bae12fc3a30466aa21bbc4d2  raw/rank1.json
+b3f63d1f7dba0a87f31881432679a410b1ff4910b5d8870bce36aa572f980be3  raw/rank2.json
+492eec6025332b7063a4892d92d1f2679c5cb3007b0839925c0374fe8b337e7a  raw/rank3.json
+a10faa742079d5cd018da0f7758e8a6357dcdb9f630537af29e6b20458b93904  raw/rank4.json
+f91867ea6b23a58a74069249ee08c77ab6baa13dd240baa14c78836c5b1767e4  raw/rank5.json
+02afc07b5edd01d4c116f15d6b2cc59915337e36b77b871cedfbfc2722def048  raw/rank6.json
+0d6f92b830d8f0fb46d42dd06d2da89f3159721cb1a13df4fbe7ad82bdc041d1  raw/rank7.json
 ```
 
-## 未执行
+## 未改动清单
 
-- 步骤 4 解析：**未执行**（本轮指令是「只做原始 trace 诊断」）
-- `results/`：空
-- 未改任何代码（本 SHA 与 checkout 的 `origin/main` 一致）
-
-## 建议的下一步（供设计端决定）
-
-证据表明 torch trace 可用，问题只在 `first_epoch` 的取值。
-可选修法（都属语义调整，需设计端授权）：
-
-1. 把 `first_epoch` 的读取移到 `prof_start` **之后**、采样步 **之前**；
-2. 或让 `_gc_moe_profile_snapshot` 改用 `eco_tl_step`（与 `irstep_begin` 的既有修法一致）；
-3. 或接受 `advanced % 40 == 0` 且 `len(calls) == 40`，由 `capture.json` 记录实际基准。
-
-按当前证据，**trace 本身已满足 40 层验收**，只差这个基准对齐。
+- 代码：未改（起始 SHA = 执行 SHA）
+- 实验配置、内核行为、打点、调度、数据、解析器、测试、验收阈值、层选择：全部按任务书冻结
