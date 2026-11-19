@@ -1,153 +1,169 @@
-# REPLY — 八卡执行回执（失败：停在步骤 2）
+# REPLY — 八卡执行回执（失败：停在步骤 3 末的 epoch 校验）
 
 ## 结论
 
-**停在步骤 2（两套编译冒烟），未进入步骤 3 采集。**
-原因：插桩路径（`GC_MOE_STEP_PROFILE=1`）编译出的 role 集合是 `[1, 2, 5, 3]`，
-**缺少任务书要求的 role 4**（要求 `1, 4, 2, 5, 3`）。
-这是 `scripts/smoke_compile_eco.py` 的硬编码，属于实验配置而非编译兼容性问题，
-不在我的修改授权内（任务书：代码修改仅限编译器诊断定位的最小兼容性修复）。
+步骤 1、2 **全部通过**（含修复后的 role 4 编译）。步骤 3 采集执行完毕、
+八份 torch trace 均已导出，但 **采样步的 epoch 校验失败**，因此 `capture.json`
+未生成，无法进入步骤 4 解析。
+
+**失败点**：`integration/deepep_compare.py:2327`
+
+```
+RuntimeError: rank N: expected 40 calls, epoch advanced 120
+```
+
+8 个 rank 全部同样报错（rank 0..7），数值一致（120）。
 
 ## 版本
 
 | 项 | 值 |
 |---|---|
-| 起始 SHA | `3c537d20787853b038cc5e77b206c6654b1acdaa` |
-| 执行 SHA | `3c537d20787853b038cc5e77b206c6654b1acdaa`（**未做任何代码修改**）|
-| `cffe483` 是否为祖先 | 是 |
-| 工作区 | 干净（步骤 1 检查通过）|
+| 起始 SHA | `d92e7140f1b4ddadf1be4efa3d0e08d2a2a3e813` |
+| 执行 SHA | `d92e7140f1b4ddadf1be4efa3d0e08d2a2a3e813` |
+| `cffe483` 为祖先 | 是 |
+| 是否做过编译修复 | **否**（`d92e714` 已由设计端修好 `shared_experts=shared`，我未改任何代码）|
+| 工作区 | 干净 |
 
-## 机器与配置
+## 步骤 1：通过
 
 ```
-8 × NVIDIA H20, driver 580.105.08, 每卡 97871 MiB, 起始全部 4 MiB 空闲
-torch 2.13.0+cu130 / CUDA 13.0 / vllm 0.31.0 / 8 卡 capability 9.x
+8 × NVIDIA H20, driver 580.105.08, 97871 MiB/卡，起始全部 4 MiB
+torch 2.13.0+cu130 / CUDA 13.0 / vllm 0.31.0 / capability 9.x × 8
 MODEL=/home/admin/local_models/DeepSeek-V4.1-Flash
-DATASET=/mnt/nas2/nanjun.cp/MoE-Bench-Experiments/datasets/dsv4-flash_online_input_ids_26-10-08_1.jsonl
+DATASET=.../dsv4-flash_online_input_ids_26-10-08_1.jsonl
 ```
 
-环境变量按任务书步骤 1 原文设置（EPLB=1, ECO=1, ECO_WB=26, WA=0, MAX_COPIES=8,
-EXTRA_PER_RANK=8, 逐层 EPLB=1, MB_CLAIM=1, PULL_TMA=1, SHARED_IN_GC=1,
-SM_REUSE=0, DISPATCH_SMS=6, CAPACITY/BOUND=2048, BLOCK_M=64,
-PULL_TRACE=1, ECO_TRACE=1, FINE_TRACE=0, IR_STEP=0, LAYERS=40,
-MEASURE_FLUSH=2, ENFORCE_EAGER=0, CUDAGRAPH_MODE=FULL_DECODE_ONLY）。
+## 步骤 2：通过
 
-## 步骤 1 结果：通过
+| 检查 | 结果 |
+|---|---|
+| `tests/test_aligned_step_cpu.py` | **ALIGNED_STEP_CPU PASS** |
+| 常规 `GC_MOE_STEP_PROFILE=0` | `compiled roles [1, 2, 5, 3]` in 9.4s ✅ |
+| 插桩 `GC_MOE_STEP_PROFILE=1 SMOKE_ECO_WB=26` | `roles [(1,…),(4,199680,256,71),(2,…),(5,53248,512,1),(3,…)]` → **`compiled roles [1, 4, 2, 5, 3]`** in 12.1s ✅ |
 
-```
-workspace clean
-cffe483 is ancestor
-HEAD = 3c537d20787853b038cc5e77b206c6654b1acdaa
-2.13.0+cu130 13.0 0.31.0        # torch / cuda / vllm，8 卡 SM90 断言通过
-```
+role 4 已出现，与任务书要求一致。
 
-## 步骤 2 结果：CPU 通过，常规编译通过，**插桩编译不满足判据**
+## 步骤 3：采集执行完毕，epoch 校验失败
 
-### 2.1 CPU 检查
-```
-ALIGNED_STEP_CPU PASS
+### 3.1 实际执行
+
+```bash
+bash scripts/warm_page_cache.sh "$MODEL"      # advisory only (0.05 s)
+# 我另外做了真正的串行预热：48 分片 dd，2m09s
+python -u scripts/real_decode_100_100.py --label ALIGNED_EP8   --seqs-per-rank 32 --prefill-lo 256 --prefill-hi 2048   --warm-steps 200 --measure-steps 1 --profile-aligned-step --profile-out "$out/raw"
 ```
 
-### 2.2 常规路径（`GC_MOE_STEP_PROFILE=0`）
-```
-roles [(1, 43008, 256, 24), (2, 199680, 384, 71), (5, 51200, 512, 1), (3, 0, 384, 288)]
-compiled roles [1, 2, 5, 3] in 9.6s
-```
-符合任务书「常规路径应包含角色 1、2、5、3」。✅
+环境变量完全按任务书步骤 1 原文（EPLB=1、ECO=1、WB=26/WA=0、MAX_COPIES=8、
+EXTRA_PER_RANK=8、逐层 EPLB、MB_CLAIM=1、PULL_TMA=1、SHARED_IN_GC=1、
+SM_REUSE=0、DISPATCH_SMS=6、CAPACITY=BOUND=2048、BLOCK_M=64、
+PULL_TRACE=1、ECO_TRACE=1、FINE_TRACE=0、IR_STEP=0、LAYERS=40、
+MEASURE_FLUSH=2、ENFORCE_EAGER=0、CUDAGRAPH_MODE=FULL_DECODE_ONLY）。
 
-### 2.3 插桩路径（`GC_MOE_STEP_PROFILE=1 SMOKE_ECO_WB=26`）
-```
-roles [(1, 43008, 256, 24), (2, 199680, 384, 71), (5, 53248, 512, 1), (3, 0, 384, 288)]
-compiled roles [1, 2, 5, 3] in 10.1s
-```
-**缺少 role 4。** 任务书要求「插桩路径应包含角色 1、4、2、5、3」。
+### 3.2 做了什么、到哪一步
 
-## 根因（已定位到行）
+| 阶段 | 状态 |
+|---|---|
+| 权重加载 | 完成（预热后，8 worker 全部就绪）|
+| prefill 256 prompts | 完成 |
+| 200 步 warmup | 完成 |
+| 逐层 EPLB 重排 | 完成 |
+| `prof_start` | 完成 |
+| 采样步（1 次 `engine.step()`）| 完成 |
+| 8 份 torch trace 导出 | **完成**（`raw/rank0..7.json`，各 ~2.8 MB）|
+| `_gc_moe_profile_snapshot(first_epoch, 40)` | **失败** |
+| `capture.json` 写入 | 未执行（因上一步抛错）|
 
-`source/gc_moe/jit_kernels/impls/sm90_fp8_fp4_gc_moe.py:92-95`：
+### 3.3 失败的判据与实测
+
+代码 `integration/deepep_compare.py:2324-2327`：
 
 ```python
-shared = get_shared_role_config(schedule) if config.shared_experts else None
-eco = bool(getattr(config, 'eco_logical_experts', 0))
-base_roles = (1, 4, 2, 3) if config.shared_experts else (1, 2, 3)
+if first_epoch is not None:
+    if next_epoch - first_epoch != layers:
+        raise RuntimeError(f'rank {buf.rank_idx}: expected {layers} calls, '
+                           f'epoch advanced {next_epoch - first_epoch}')
 ```
 
-role 4 是否存在**只取决于 `config.shared_experts`**。
+- `layers = 40`（= `GC_MOE_LAYERS`）
+- 实测 `next_epoch - first_epoch = 120 = 3 × 40`
 
-而 `scripts/smoke_compile_eco.py:32` 把它硬编码为 0：
+### 3.4 关键证据：只跑了一个 iteration，但 epoch 推进 3 层组
 
-```python
-clamp=10.0, fast_math=True, shared_experts=0,
-```
-
-同一文件的第 26-27 行确实按开关设了 layout 的 shared 槽位：
-
-```python
-step_profile = os.environ.get('GC_MOE_STEP_PROFILE') == '1'
-shared = int(step_profile)
-```
-
-但 `layout` 的 shared 与 `config.shared_experts` 是两个不同的入参，
-前者只影响缓冲区布局，后者才决定 role 4 是否被编译。
-
-## 为什么我没有修
-
-任务书「执行权限」写明：
-
-> 代码修改仅限步骤 2 中由**编译器诊断定位**的最小兼容性修复，例如 CuTe DSL 不支持的表达式写法。
-
-这里没有编译错误——两套构建都成功退出（`compiled roles ... in 9.6s / 10.1s`）。
-缺 role 4 不是编译器诊断，而是**实验配置与验收判据不一致**。
-把 `shared_experts` 改成 1 会改变被编译/被运行的内核集合，属于
-「冻结实验配置、内核行为、调度」明确禁止的改动。
-
-因此按任务书步骤 5「失败」流程回传，等待明确指令。
-
-## 需要设计端澄清的一个问题
-
-任务书步骤 2 要求插桩路径编译出 role 4，但步骤 1 的环境变量里
-`GC_MOE_SHARED_IN_GC=1` 只影响真实运行时的 `deepep_compare` 接入，
-**不会传到 `smoke_compile_eco.py` 的 `config.shared_experts`**。
-
-两种可能的正确做法，请择一指示：
-
-1. `smoke_compile_eco.py` 应改为 `shared_experts=int(os.environ.get('GC_MOE_SHARED_IN_GC', '0'))`
-   （我认为这是本意；改动 1 行，属脚本 bug 修复）；
-2. 或者步骤 2 的期望值应改为 `[1, 2, 5, 3]`（即 role 4 只在真实运行时出现，
-   smoke 编译不覆盖它）。
-
-## 产物位置与校验值
-
-采集工作目录（**未产生任何采集数据，仅含步骤 1-2 的日志**）：
+`run.log` 里 `[trace] profiling` 之后只有一条 iteration：
 
 ```
-/tmp/gcmoe-aligned-W7nZLoqX
+[17:04:21] Iteration(319): 0 context requests, 0 context tokens, 256 generation requests
+[trace] profiling -> /tmp/gcmoe-aligned-fSc3IBre/raw
+[17:04:23] Iteration(320): 0 context requests, 0 context tokens, 256 generation requests
 ```
+
+即 `measure_steps=1` 确实只调用了 1 次 `engine.step()`，
+但该次调用使设备 epoch 前进了 **120**（3 个 40 层的完整 MoE 序列）。
+
+### 3.5 我的判断（供设计端裁决，未据此改动任何东西）
+
+`first_epoch` 由 `prof_start` **之前**的 `_gc_moe_profile_snapshot()` 读取
+（`real_decode_100_100.py:880`）。在 `CUDAGRAPH_MODE=FULL_DECODE_ONLY` 下，
+vLLM 的 decode graph 可能在一个 host `step()` 内 replay 多次；
+也可能 `MEASURE_FLUSH=2` 之后仍有一次未计入的 flush forward 落在了两次快照之间。
+
+无论哪种，**判据 `epoch_advance == layers` 在这套配置下不成立**，
+这是任务书配置与校验代码之间的不一致，不是我能在「编译兼容性修复」范围内解决的。
+
+## 4. 产物与校验值
+
+采集目录：`/tmp/gcmoe-aligned-fSc3IBre`
 
 内容：
 
 ```
-start.sha              3c537d20787853b038cc5e77b206c6654b1acdaa
-gpu.log                8 × H20 / 580.105.08 / 4 MiB used
-runtime.log            2.13.0+cu130 13.0 0.31.0
-cpu.log                ALIGNED_STEP_CPU PASS
-compile-base.log       compiled roles [1, 2, 5, 3] in 9.6s
-compile-aligned.log    compiled roles [1, 2, 5, 3] in 10.1s   <-- 缺 role 4
+start.sha            d92e7140f1b4ddadf1be4efa3d0e08d2a2a3e813
+execution.sha        d92e7140f1b4ddadf1be4efa3d0e08d2a2a3e813   (相同：未改代码)
+gpu.log              8 × H20 / 580.105.08 / 4 MiB used
+runtime.log          2.13.0+cu130 13.0 0.31.0
+cpu.log              ALIGNED_STEP_CPU PASS
+compile-base.log     compiled roles [1, 2, 5, 3] in 9.4s
+compile-aligned.log  compiled roles [1, 4, 2, 5, 3] in 12.1s
+warm.log             advisory + 真实串行 dd 2m09s
+run.log              完整采集日志（含 8 rank 的 RuntimeError）
+raw/rank0..7.json    8 份 torch trace（均已导出，未参与交付）
+raw/capture.json     缺失（校验失败，脚本未写）
 ```
 
-校验值：
-
 ```
-68625da1fe41de44dcf521cddee98efd7fa9bb4087599d35bed5ff70aa9a6407  start.sha
-52fec3535694e27e323df103991686727b00d566fd9c3fbc4f5eff1b2a78c772  gpu.log
+86913521dfc047f783a7660eed0e07034d5304c4fc900105c61ac7b723b4fee4  start.sha
+86913521dfc047f783a7660eed0e07034d5304c4fc900105c61ac7b723b4fee4  execution.sha
+c6f718ff77732362aaa9213220ae5f374a1b21257302f708b88dc19198bef599  gpu.log
 74064a5ac06f3b428b7e0480f7e8089af2a734d042f3597f79740e8b242160b4  runtime.log
 eeea22f858445f4d27a731b40bab4e1ec317b9990e56c1f07c8b1fdfad3339c7  cpu.log
-bda1d6cc8db79f318dfeb8e964d98727bb636554259590505f14299114512bf0  compile-base.log
-bbfd8939e06bb309a864eec2c0d745ce2433b9570b1b88d55a73b3bd74b8efac  compile-aligned.log
+12203b74552fb52026c63de28b8379408e26fb3e0dbf6a18f3c2a02e6dba5a43  compile-base.log
+bd040b466d68a521ebfde2edab4ce37059192d929fcde031f8799d636ada1487  compile-aligned.log
+3d088163adbb06a89f64bb4031a61c0be125453bdcb31974e80b7b4820fa6f26  warm.log
+dc191419ff1324dc7e8f621b63a617ea40e3955f2c73770506d47dc3f94d3402  run.log
+eb754f5d072e9828c728fcb404417096acbac3aa14a388df5f1e19eba167dfe4  raw/rank0.json
+d06a46d0bf73959009aa51b32c2843c22cd4de27b27d20564b8534966443ad6a  raw/rank1.json
+0c81c3c33063b8c0db08aa1f17612f2a6edf212e0f905c53d6f11f1683e81ca4  raw/rank2.json
+be4362d6a9f1638bab2ad328a26d550ffdabfecbe3414ad4fde9ee044f2186ab  raw/rank3.json
+6fd943b283e934ac79188777d7209223271878c8b7a80ff1ffa889e84e4a84fa  raw/rank4.json
+19a47f800a7f0ff519265677b363450cf5c5c99b97eee6f0ecd5194e4c58a09c  raw/rank5.json
+9014e7f8673f8cd619a9fb2a08b63fba194d2c9c76b0156ffa2805d599c62ee3  raw/rank6.json
+cf375933063bab25249b2e28e555f9ba682fe4763b8cfd7d5d58dcdc489871a0  raw/rank7.json
 ```
 
-## 未执行的部分
+原始数据保留在上述目录（未删除），可供设计端直接复查。
 
-- 步骤 3（BS256 采集）：**未执行**（避免在已知不合规的构建上浪费 10 分钟机时）
-- 步骤 4（解析 layer 8/20）：**未执行**
-- `results/`：**空**（无产物）
+## 5. 未执行
+
+- 步骤 4（解析 layer 8/20）：未执行（缺 `capture.json`，且 epoch 校验未过）
+- `results/`：空
+- 未提交任何 perfetto / counts
+
+## 6. 需要澄清
+
+判据 `next_epoch - first_epoch == GC_MOE_LAYERS` 在
+`ENFORCE_EAGER=0 + CUDAGRAPH_MODE=FULL_DECODE_ONLY + MEASURE_FLUSH=2`
+下实测为 `3 × GC_MOE_LAYERS`。
+
+请确认：
+1. 采样步应当只推进 40（则 `prof_start` 的取点或 flush 计数需要调整）；还是
+2. 判据应改为「推进量为 layers 的正整数倍」，由解析器按实际推进的层组数处理。
