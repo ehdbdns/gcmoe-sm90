@@ -68,7 +68,7 @@ def read_calls(trace, layers, dispatch_grid, rank):
 
 def layer_timing(call, stamps, has_work, context):
     d, s, r, p, c = (call[role] for role in ROLES)
-    dispatch, push_end, pull, pull_end, routed, first_tile, combine = (
+    dispatch, push_end, pull, pull_end, routed, first_claim, combine = (
         stamps[i] & UNSET for i in (10, 3, 4, 5, 14, 15, 12))
     ordered = (dispatch, push_end, pull, pull_end)
     require(all(value not in (0, UNSET) for value in (*ordered, routed, combine))
@@ -87,16 +87,16 @@ def layer_timing(call, stamps, has_work, context):
     pull_start = d['ts'] + pull - dispatch
     require(d['ts'] <= pull_start <= d['end'], f'{context}: pull starts outside dispatch')
     if has_work:
-        require(first_tile not in (0, UNSET) and pull <= first_tile <= combine,
-                f'{context}: missing or invalid first valid compute tile')
-        require(first_tile >= routed - 2, f'{context}: first tile predates routed entry')
+        require(first_claim not in (0, UNSET) and pull <= first_claim <= combine,
+                f'{context}: missing or invalid first valid CTA claim')
+        require(first_claim >= routed - 2, f'{context}: first claim predates routed entry')
         # Anchor each offset to its own CUPTI kernel. Two independently
         # measured entry-to-entry residuals above guard against a wrong join.
-        raw_gemm = r['ts'] + (first_tile - routed)
-        require(raw_gemm <= r['end'], f'{context}: first tile outside routed kernel')
+        raw_gemm = r['ts'] + (first_claim - routed)
+        require(raw_gemm <= r['end'], f'{context}: first claim outside routed kernel')
         gemm_start = max(r['ts'], raw_gemm)
     else:
-        require(first_tile == UNSET, f'{context}: tile on rank with no routed work')
+        require(first_claim == UNSET, f'{context}: claim on rank with no routed work')
         gemm_start = raw_gemm = r['end']
     return {
         'count exchange': (d['ts'], pull_start, 'dispatch'),
@@ -109,11 +109,17 @@ def layer_timing(call, stamps, has_work, context):
     }, dict(residuals, shared_minus_dispatch_us=s['ts'] - d['ts'],
             routed_minus_shared_end_us=r['ts'] - s['end'],
             combine_minus_routed_end_us=c['ts'] - r['end'],
-            gemm_start_clamp_us=gemm_start - raw_gemm)
+            gemm_start_clamp_us=gemm_start - raw_gemm,
+            first_claim_after_routed_entry_us=first_claim - routed if has_work else None,
+            pull_after_first_claim_us=pull_end - first_claim if has_work else None,
+            drawn_pull_gemm_overlap_us=max(0.0, min(d['end'], r['end'])
+                                           - max(pull_start, gemm_start)))
 
 
-def build(capture_dir, layers, dispatch_grid):
+def build(capture_dir, layers, dispatch_grid, require_overlap=False):
     capture = json.loads((capture_dir / 'capture.json').read_text())
+    require(capture.get('gemm_start') == 'first_valid_cta_claim',
+            'capture must record device-side first valid CTA claims')
     n_layers = capture['layers']
     first = capture['first_epoch']
     require(1 <= n_layers <= 256 and first > 0 and capture['decode_tokens'] > 0,
@@ -158,7 +164,7 @@ def build(capture_dir, layers, dispatch_grid):
 
         result = dict(capture_id=capture['id'], label=capture['label'], step=capture['step'],
                       layer=layer, epoch=epoch, decode_tokens=logical, topk=topk,
-                      input_replication=replication,
+                      input_replication=replication, gemm_start=capture['gemm_start'],
                       alignment='Kineto baseTimeNanoseconds' if absolute else 'rank-local dispatch',
                       kineto_base_time_ns=bases, ranks=[])
         offsets = {rank: (bases[rank] - base) / 1000 if absolute
@@ -192,6 +198,12 @@ def build(capture_dir, layers, dispatch_grid):
                                    ts=start + offsets[rank] - origin, dur=end - start,
                                    args=dict(metrics, step=capture['step'], layer=layer, epoch=epoch,
                                              trace_row=call[role]['row'])))
+        result['pull_gemm_overlap_ranks'] = [
+            rank['rank'] for rank in result['ranks']
+            if (rank['checks']['pull_after_first_claim_us'] or 0) > 0
+            and rank['checks']['drawn_pull_gemm_overlap_us'] > 0]
+        require(not require_overlap or result['pull_gemm_overlap_ranks'],
+                f'epoch {epoch}: no rank has both measured and visible pull/GEMM overlap')
         measured = [rank['dispatch_to_routed_end_us'] for rank in result['ranks']]
         predicted_mean, measured_mean = mean(plan), mean(measured)
         result['plan_vs_measured_ratio_l1'] = sum(
@@ -206,9 +218,11 @@ def main():
     parser.add_argument('output_dir', type=Path)
     parser.add_argument('--layers', nargs='+', type=int, required=True)
     parser.add_argument('--dispatch-grid', type=int, default=24)
+    parser.add_argument('--require-pull-overlap', action='store_true',
+                        help='require measured and visible pull/GEMM overlap on at least one rank per layer')
     args = parser.parse_args()
     try:
-        outputs = list(build(args.capture_dir, args.layers, args.dispatch_grid))
+        outputs = list(build(args.capture_dir, args.layers, args.dispatch_grid, args.require_pull_overlap))
     except (KeyError, ValueError, OSError) as exc:
         parser.exit(1, f'aligned trace: {exc}\n')
     args.output_dir.mkdir(parents=True, exist_ok=True)

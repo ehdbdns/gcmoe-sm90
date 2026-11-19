@@ -2,11 +2,13 @@
 
 执行者请在开始时记录本目录任务书所在的 Git SHA。请在本目录写入 `REPLY.md`，记录执行 SHA、机器配置、实际参数、验收结果、失败日志或产物位置。验收通过后，提交并推送两个选定层的 Perfetto 和计数报告。原始 torch trace、运行日志和 `capture.json` 放在同一次运行的目录中，在回复里提供可访问位置及 SHA-256。
 
+此次采样以本任务书命令为准。旧回执中的 `FINAL_V2` 和 `prof_phases.py` 路径保留作历史记录。请执行 `real_decode_100_100.py --profile-aligned-step`，用新生成的 `capture.json` 和同目录的八份 `rank*.json` 完成验收。旧 run 的计数和时序无法配对，且旧图以最后一个槽拉完切分。
+
 ## 目标
 
 用八张 H20 在 DeepSeek-V4.1-Flash 的一个纯 decode 步中采样。该步在真实逐层 EPLB 重排后执行。先取零基 MoE 调用序号 8 和 20。每层交付一份有八个 rank、每 rank 七个区段的 Perfetto JSON 和一份对应的计数 JSON。区段是 count exchange、pull token、shared L1+L2、ECO plan、wait token、GEMM、combine。
 
-本任务用 BS32 做首次验证。保持逐层 EPLB、ECO、MB-CLAIM、TMA 和 fused shared，关闭 SM-reuse。单步 profiler 捕获用于解释事件时序，不用于估计稳态吞吐。
+本次正式采样使用 BS256，以复核出现重叠的原始实验场景。保持逐层 EPLB、ECO、MB-CLAIM、TMA 和 fused shared，关闭 SM-reuse。单步 profiler 捕获用于解释事件时序，不用于估计稳态吞吐。
 
 本地已验证解析器的 CPU 回归、CLI 产物和 PyTorch profiler 写入 capture ID。本地没有 NVIDIA 设备和 `libcuda.so.1`，SM90 编译及 GPU 采样在本任务中由八卡执行者验收。
 
@@ -46,11 +48,11 @@ out=$(mktemp -d /tmp/gcmoe-aligned-XXXXXXXX)
 echo "$out"
 "$GC_ENV/bin/python" -u scripts/real_decode_100_100.py \
   --label ALIGNED_EP8 --output "$out/result.json" \
-  --seqs-per-rank 4 --prefill-lo 256 --prefill-hi 2048 \
+  --seqs-per-rank 32 --prefill-lo 256 --prefill-hi 2048 \
   --warm-steps 200 --measure-steps 1 --profile-aligned-step \
   --profile-out "$out/raw" 2>&1 | tee "$out/run.log"
 "$GC_ENV/bin/python" scripts/trace_layer/aligned_step.py "$out/raw" "$out/deliver" \
-  --layers 8 20 --dispatch-grid 24
+  --layers 8 20 --dispatch-grid 24 --require-pull-overlap
 sha256sum "$out/raw"/capture.json "$out/raw"/rank*.json "$out/deliver"/*.json
 ```
 
@@ -60,7 +62,9 @@ sha256sum "$out/raw"/capture.json "$out/raw"/rank*.json "$out/deliver"/*.json
 
 - 查看重排日志，确认八个 worker 都完成真实的逐层重排。采样前后设备同步，八个 rank 都应从同一个起始 epoch 前进恰好 40 次。采样的 `step` 从重排完成后零基计数，命令中的 `step=2` 表示先走两个未采样步。报告中的 `layer` 是该步内零基 MoE 执行序号。
 - 每个 worker 的 torch trace 和设备快照共享 capture ID。每个调用在 torch trace 里由同一时间窗内的完整 kernel 集合确定，并与该步内有标签的设备 epoch 对应。用 dispatch 到 routed、dispatch 到 combine 的独立时间差以及 dispatch 尾部打点复核这一对应。报告保留原始 trace 行号、时长、设备打点和残差。
-- count exchange 覆盖 routing、push 和 peer readiness rendezvous，到最早的 pull CTA 进入 slot 循环。pull 循环仍有逐槽 count 读取，保留在 pull token 区段。GEMM 始于 math CTA 拿到第一个有效 tile 并进入计算路径，wait token 从 routed kernel 起点到这个边界。两个分段各自回加等于其 torch kernel 总时长。
+- count exchange 覆盖 routing、push 和 peer readiness rendezvous，到最早的 pull CTA 进入 slot 循环。pull 循环仍有逐槽 count 读取，保留在 pull token 区段。GEMM 始于 routed CTA 首次领到有效 L1 任务且确认该 expert 的输入已就绪的时刻，由设备对各 CTA 的首次有效领取时间取最小值。wait token 从 routed kernel 起点到这个边界。两个分段各自回加等于其 torch kernel 总时长。
 - `tokens` 按实测输入复制倍数折算。每 rank 的 `routed_rows` 直接取该 epoch 的 per-slot owned 之和，`m_blocks` 是实际执行的 `sum(ceil(owned / block_m))`，不乘 N-tile 数。八个 rank 的 routed rows 总和应等于采样输入 token 数之和乘 top-k。
 - `plan_cost` 是内核最终预测的代价分，单位为 token 等价成本。报告保留各 rank 的实测路由 kernel 时长、dispatch 到 routed 结束的时长，以及预测与后者的归一化 L1 差。请在回复中说明该步的 plan 预测是否跟得上 rank 间差异。
 - 用 Perfetto 打开两份 JSON，核对 dispatch 和 pull 的连续性、shared 与 dispatch 的启动差、wait token 和 GEMM 的连续性，以及 GEMM 与 pull 的实际重叠。把两份 JSON 和计数报告提交至本目录的 `results/`。如果导出 PNG，使用同一批区段数据。
+
+每个交付层至少提供一个 rank 的实测重叠。报告中的 `pull_after_first_claim_us` 为设备上最后拉取完成减去首个有效任务领取的时间，`drawn_pull_gemm_overlap_us` 为 Perfetto 图上的重叠时长，两者都应为正。若第 8 或 20 层未通过重叠门槛，可从同一个 capture 选择其他有重叠的层，并在回执中写出实际选择及对应 epoch。

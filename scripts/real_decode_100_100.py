@@ -908,7 +908,8 @@ def main():
             if len(decode_counts) != nseq or set(decode_counts.values()) != {1}:
                 raise RuntimeError('the captured step did not generate one token per sequence')
             with open(os.path.join(a.profile_out, 'capture.json'), 'w') as fh:
-                json.dump(dict(id=capture_id, label=a.label, step=flush, layers=aligned_layers,
+                json.dump(dict(id=capture_id, gemm_start='first_valid_cta_claim',
+                               label=a.label, step=flush, layers=aligned_layers,
                                first_epoch=first_epoch, decode_tokens=nseq, ranks=workers), fh)
     _sync()                       # last real work still queued on the GPUs
     window_s = time.perf_counter() - t0

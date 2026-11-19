@@ -163,7 +163,6 @@ class SM90GCMoERoleKernel:
         self.pull_trace = _os.environ.get('GC_MOE_PULL_TRACE') == '1'
         # [STEP-PROFILE] aligned single-step capture (see docs/trace_executor_20261119)
         self.step_profile = 'profile_slot_counts' in getattr(layout, 'views', {})
-        self._sp_flag_added = True
         # [PHASES] `eco_tl_step` also exists for a pull-only build now, so the
         # compute role can name the call it is serving (see the layout).
         self.has_step_clock = 'eco_tl_step' in getattr(layout, 'views', {})
@@ -2165,7 +2164,7 @@ class SM90GCMoERoleKernel:
                     self._pull_tl_prime(base, epoch, 4)
                 # Prime every min/max-reduced slot used by this call so a
                 # stale ring row can never win the reduction.
-                self._pull_tl_prime(base, epoch, 15)   # first GEMM task
+                self._pull_tl_prime(base, epoch, 15)   # first routed task
                 self._pull_tl_prime(base, epoch, 16)   # shared start (min)
                 self._pull_tl_prime(base, epoch, 19)   # CTA rendezvous (max)
                 self._pull_tl_prime(base, epoch, 20)   # push begin (min)
@@ -2363,8 +2362,9 @@ class SM90GCMoERoleKernel:
             # earliest CTA entering the slot loop after the peer-readiness wait
             if tid == 0 and block < self.local:
                 self._pull_tl_min(base, epoch, 4)
-        elif block == 0 and tid == 0:
-            self._pull_tl_write(base, epoch, 4, read_globaltimer())
+        if cutlass.const_expr(not self.step_profile):
+            if block == 0 and tid == 0:
+                self._pull_tl_write(base, epoch, 4, read_globaltimer())
         # [ECO-SM90] Blocks grid-stride over the local slots exactly like the
         # plain path. A replica slot blocks here until the plan has published
         # its quota (the two-phase split of spec §5.3 without growing the grid,
@@ -3064,7 +3064,7 @@ class SM90GCMoERoleKernel:
 
     @cute.jit
     def _claim_command(self, base: Uint64, command: cute.Tensor,
-                         epoch: Uint32, is_l1: Boolean,
+                         epoch: Uint32, is_l1: Boolean, first_claim: Boolean,
                          late: cutlass.Constexpr = False):
         tid, _, _ = cute.arch.thread_idx()
         _blk, _, _ = cute.arch.block_idx()
@@ -3212,6 +3212,12 @@ class SM90GCMoERoleKernel:
                     command[2] = Uint32(ntile)
                     command[3] = Uint32(0)
 
+                if cutlass.const_expr(self.step_profile and self.role == 2):
+                    if is_l1 and first_claim and command[0] != Uint32(0):
+                        # The CTA owns a valid ticket and the expert's input is
+                        # published. This precedes task handoff and tile math.
+                        self._pull_tl_min(base, epoch, 15)
+
     @cute.jit
     def _publish_task(self, slab: cute.Pointer, task_iter: Uint32,
                        phase: Uint32, expert: Uint32, ntile: Uint32,
@@ -3289,7 +3295,7 @@ class SM90GCMoERoleKernel:
         is_l1, running = True, True
         task_iter, data_iter = Uint32(0), Uint32(0)
         while running:
-            self._claim_command(base, command, epoch, is_l1, late)
+            self._claim_command(base, command, epoch, is_l1, task_iter == Uint32(0), late)
             sync_loader()
             if command[0] == 0:
                 if is_l1:
@@ -3551,15 +3557,6 @@ class SM90GCMoERoleKernel:
                 # leftover 0 always wins (0 < any timestamp), which is what
                 # produced the bogus ~57k us reading; _pull_tl_min_first
                 # treats 0 / 0xFFFFFFFF as "unset" and stores directly.
-                if cutlass.const_expr(self.step_profile and self.role == 2):
-                    if tid == Uint32(128) and task_iter == Uint32(1):
-                        # [STEP-PROFILE] the consumer CTA's own epoch is stale,
-                        # so take the epoch that published this expert.
-                        owner_epoch = ld_acquire_gpu_u32(
-                            self._field(base, 'expert_ready', Uint32) + expert)
-                        self._pull_tl_min(base, owner_epoch, 15)
-                # separate `if` (NOT `elif`): the DSL cannot fold
-                # if const_expr / elif const_expr into static branches.
                 if cutlass.const_expr(self.pull_trace and self.has_step_clock
                                       and not (self.step_profile and self.role == 2)):
                     if tid == Uint32(128):
@@ -3784,7 +3781,7 @@ class SM90GCMoERoleKernel:
             cute.make_layout((3,)))
         running = True
         while running:
-            self._claim_command(base, command, epoch, is_l1, True)
+            self._claim_command(base, command, epoch, is_l1, Boolean(False), True)
             cute.arch.sync_threads()
             if command[0] == 0:
                 running = False
@@ -3856,8 +3853,9 @@ class SM90GCMoERoleKernel:
         # Exhaust L1 claims before any L2 wait: every dependency is in flight.
         is_l1 = True
         running = True
+        first_claim = Boolean(True)
         while running:
-            self._claim_command(base, command, epoch, is_l1)
+            self._claim_command(base, command, epoch, is_l1, first_claim)
             cute.arch.sync_threads()
             if command[0] == 0:
                 if is_l1:
@@ -3865,6 +3863,7 @@ class SM90GCMoERoleKernel:
                 else:
                     running = False
             else:
+                first_claim = Boolean(False)
                 expert = Uint32(command[1])
                 ntile = Uint32(command[2])
                 count = cell(base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)[0]

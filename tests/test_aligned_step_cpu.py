@@ -37,7 +37,7 @@ def fixture(path):
                      baseTimeNanoseconds=1000000,
                      traceEvents=list(reversed(events)))
         (path / f'rank{rank}.json').write_text(json.dumps(trace))
-    meta = dict(id='test', label='synthetic', step=2, layers=3, first_epoch=255,
+    meta = dict(id='test', gemm_start='first_valid_cta_claim', label='synthetic', step=2, layers=3, first_epoch=255,
                 decode_tokens=16, ranks=workers)
     (path / 'capture.json').write_text(json.dumps(meta))
 
@@ -46,11 +46,12 @@ def main():
     with TemporaryDirectory() as tmp:
         path = Path(tmp)
         fixture(path)
-        outputs = list(build(path, [0, 2], 24))
+        outputs = list(build(path, [0, 2], 24, require_overlap=True))
         assert [report['epoch'] for report, _ in outputs] == [255, 257]
         for report, trace in outputs:
             assert report['input_replication'] == 8
             assert len(report['ranks']) == 8
+            assert report['pull_gemm_overlap_ranks'] == list(range(8))
             assert sum(e['ph'] == 'X' for e in trace['traceEvents']) == 56
             for rank in report['ranks']:
                 assert rank['tokens'] == 4 and rank['routed_rows'] == 32
@@ -59,10 +60,12 @@ def main():
                 assert rank['segment_us']['pull token'] == 88
                 assert rank['segment_us']['wait token'] == 21
                 assert rank['segment_us']['GEMM'] == 59
+                assert rank['checks']['pull_after_first_claim_us'] == 46
+                assert rank['checks']['drawn_pull_gemm_overlap_us'] == 48
 
-        def reject(expected):
+        def reject(expected, require_overlap=False):
             try:
-                list(build(path, [2], 24))
+                list(build(path, [2], 24, require_overlap=require_overlap))
             except ValueError as exc:
                 assert expected in str(exc), exc
             else:
@@ -72,12 +75,29 @@ def main():
         capture = json.loads(capture_file.read_text())
         capture['ranks'][4]['calls'][2]['stamps'][15] = 0xFFFFFFFF
         capture_file.write_text(json.dumps(capture))
-        reject('first valid compute tile')
+        reject('first valid CTA claim')
         fixture(path)
         capture = json.loads(capture_file.read_text())
         capture['ranks'][4]['calls'][2]['stamps'][12] += 190
         capture_file.write_text(json.dumps(capture))
         reject('device and CUPTI disagree')
+        fixture(path)
+        capture = json.loads(capture_file.read_text())
+        del capture['gemm_start']
+        capture_file.write_text(json.dumps(capture))
+        reject('capture must record device-side first valid CTA claims')
+        fixture(path)
+        capture = json.loads(capture_file.read_text())
+        capture['ranks'][4]['calls'][2]['owned'][0] -= 1
+        capture_file.write_text(json.dumps(capture))
+        reject('do not conserve top-k routes')
+        fixture(path)
+        capture = json.loads(capture_file.read_text())
+        for worker in capture['ranks']:
+            stamps = worker['calls'][2]['stamps']
+            stamps[15] = stamps[10] + 103
+        capture_file.write_text(json.dumps(capture))
+        reject('no rank has both measured and visible pull/GEMM overlap', require_overlap=True)
         fixture(path)
         trace_file = path / 'rank4.json'
         trace = json.loads(trace_file.read_text())
