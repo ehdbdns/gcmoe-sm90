@@ -249,13 +249,15 @@ def build(capture_dir, layers, dispatch_grid, require_overlap=False):
                 events.append(dict(ph='M', name='thread_name', pid=rank, tid=track,
                                    args={'name': role}))
             for name, (start, end, role) in segments.items():
-                # [PERFETTO-NS] Perfetto's `displayTimeUnit` only accepts 'ns'
-                # and 'ms'; 'us' is not in its whitelist and the file fails to
-                # load. All timing below is microseconds, so scale to ns here
-                # and declare 'ns' -- the UI then shows microseconds anyway.
+                # [PERFETTO-US] Perfetto's Chrome-JSON importer parses ts/dur as
+                # MICROSECONDS by default. `displayTimeUnit` only has an effect
+                # for the literal "ms" (which multiplies by 1000); any other
+                # value, including "ns", is ignored and the numbers are still
+                # read as microseconds. So: keep the raw microsecond values and
+                # emit no displayTimeUnit at all. Writing ns-scaled numbers here
+                # made a 604 us GEMM show up as 604 ms.
                 events.append(dict(ph='X', name=name, cat=role, pid=rank, tid=ROLES.index(role) + 1,
-                                   ts=(start + offsets[rank] - origin) * 1000.0,
-                                   dur=(end - start) * 1000.0,
+                                   ts=start + offsets[rank] - origin, dur=end - start,
                                    args=dict(metrics, step=capture['step'], layer=layer, epoch=epoch,
                                              trace_row=call[role]['row'])))
         result['pull_gemm_overlap_ranks'] = [
@@ -269,7 +271,7 @@ def build(capture_dir, layers, dispatch_grid, require_overlap=False):
         result['plan_vs_measured_ratio_l1'] = sum(
             abs(score / predicted_mean - elapsed / measured_mean)
             for score, elapsed in zip(plan, measured))
-        yield result, dict(displayTimeUnit='ns', traceEvents=events)
+        yield result, dict(traceEvents=events)
 
 
 def main():
