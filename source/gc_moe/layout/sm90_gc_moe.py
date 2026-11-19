@@ -243,6 +243,11 @@ class SM90GCBufferLayout:
             # (rows 254 and 255, column 10/11), so no header slot is needed.
             reserve('pull_tl', (256 * 32,), 'int32', 4)
 
+        if os.environ.get('GC_MOE_STEP_PROFILE') == '1':
+            # Match pull_tl's epoch ring. Every local slot is written once,
+            # including empty slots, by its dispatch CTA.
+            reserve('profile_slot_counts', (256, local), 'int32', 4)
+
         # [ECO-FINE] Fine-grained single-call event log. One flat array of
         # fixed 8-word records, appended through ONE global counter, so the
         # emission order IS the order (no ring, no per-type interleaving).

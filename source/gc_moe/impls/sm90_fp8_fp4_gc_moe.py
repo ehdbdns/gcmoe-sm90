@@ -160,6 +160,7 @@ class SM90GCMoERoleKernel:
         self.n_layers = int(_os.environ.get('GC_MOE_LAYERS', '40'))
         # [PULL-TRACE] Independent of ECO: measures the pull phase on the
         # plain (no-replica) path too, which had no instrumentation before.
+        self.step_profile = 'profile_slot_counts' in layout.views
         self.pull_trace = _os.environ.get('GC_MOE_PULL_TRACE') == '1'
         # [PHASES] `eco_tl_step` also exists for a pull-only build now, so the
         # compute role can name the call it is serving (see the layout).
@@ -2158,6 +2159,10 @@ class SM90GCMoERoleKernel:
                 self._pull_tl_write(base, epoch, 10, read_globaltimer())
                 # Prime every min/max-reduced slot used by this call so a
                 # stale ring row can never win the reduction.
+                if cutlass.const_expr(self.step_profile):
+                    self._pull_tl_write_raw(base, epoch, Uint32(22), Uint32(self.max_m))
+                    self._pull_tl_write_raw(base, epoch, Uint32(23), tokens)
+                    self._pull_tl_prime(base, epoch, 4)
                 self._pull_tl_prime(base, epoch, 15)   # first GEMM task
                 self._pull_tl_prime(base, epoch, 16)   # shared start (min)
                 self._pull_tl_prime(base, epoch, 19)   # CTA rendezvous (max)
@@ -2352,7 +2357,11 @@ class SM90GCMoERoleKernel:
         # never blocked on the plan, which is what lets them overlap.
         # [PULL-TRACE] pull start: every CTA has passed the cross-rank wait and
         # is about to touch the first local slot.
-        if block == 0 and tid == 0:
+        if cutlass.const_expr(self.step_profile):
+            # Earliest CTA entering the pull loop after the peer readiness wait.
+            if tid == 0 and block < self.local:
+                self._pull_tl_min(base, epoch, 4)
+        elif block == 0 and tid == 0:
             self._pull_tl_write(base, epoch, 4, read_globaltimer())
         # [ECO-SM90] Blocks grid-stride over the local slots exactly like the
         # plain path. A replica slot blocks here until the plan has published
@@ -2686,6 +2695,9 @@ class SM90GCMoERoleKernel:
             if tid == 0:
                 count_out = cell(base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)
                 count_out[0] = owned
+                if cutlass.const_expr(self.step_profile):
+                    offset = (epoch % Uint32(256)) * Uint32(self.local) + Uint32(expert)
+                    self._field(base, 'profile_slot_counts', Uint32)[offset] = owned
                 if cutlass.const_expr(self.has_stats):
                     recv_stats = cute.make_tensor(stats, cute.make_layout((self.local,)))
                     recv_stats[expert] += owned
@@ -3534,7 +3546,15 @@ class SM90GCMoERoleKernel:
                 # leftover 0 always wins (0 < any timestamp), which is what
                 # produced the bogus ~57k us reading; _pull_tl_min_first
                 # treats 0 / 0xFFFFFFFF as "unset" and stores directly.
-                if cutlass.const_expr(self.pull_trace and self.has_step_clock):
+                if cutlass.const_expr(self.step_profile and self.role == 2):
+                    if tid == Uint32(128) and task_iter == Uint32(1):
+                        # The valid work record carries the expert whose
+                        # publication identifies this call. Dispatch primed
+                        # slot 15 before publishing any expert readiness.
+                        owner_epoch = ld_acquire_gpu_u32(
+                            self._field(base, 'expert_ready', Uint32) + expert)
+                        self._pull_tl_min(base, owner_epoch, 15)
+                elif cutlass.const_expr(self.pull_trace and self.has_step_clock):
                     if tid == Uint32(128):
                         # [PHASES] The epoch must come from `eco_tl_step`, not
                         # from `header[0]`: a resident consumer CTA read the
@@ -4244,6 +4264,12 @@ class SM90GCMoERoleKernel:
             else:
                 self._dispatch(base, peers, rank, tokens, stats)
         elif cutlass.const_expr(self.role == 2):
+            if cutlass.const_expr(self.step_profile):
+                block, _, _ = cute.arch.block_idx()
+                tid, _, _ = cute.arch.thread_idx()
+                if block == 0 and tid == 0:
+                    epoch = ld_acquire_gpu_u32(self._field(base, 'header', Uint32))
+                    self._pull_tl_write(base, epoch, 14, read_globaltimer())
             self._compute(base, peers, w1, s1, sec1, w2, s2, sec2, clamp)
         elif cutlass.const_expr(self.role == 4):
             alloc = cutlass.utils.SmemAllocator()

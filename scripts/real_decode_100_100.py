@@ -609,9 +609,26 @@ def main():
                     help='if set, profile the measured window into this dir')
     ap.add_argument('--profile-steps', type=int, default=0,
                     help='profile only the first N measured steps (0 = all)')
+    ap.add_argument('--profile-aligned-step', action='store_true',
+                    help='capture exactly one post-rearrangement decode step and device rows')
     a = ap.parse_args()
 
     ranks = int(os.environ.get('WORLD', '8'))
+    aligned_layers = int(os.environ.get('GC_MOE_LAYERS', '40'))
+    if a.profile_aligned_step:
+        required = ('GC_MOE_EPLB', 'GC_MOE_ECO', 'GC_MOE_ECOPLB_PER_LAYER',
+                    'GC_MOE_PULL_TRACE', 'GC_MOE_ECO_TRACE', 'GC_MOE_SHARED_IN_GC')
+        if any(os.environ.get(name) != '1' for name in required):
+            ap.error('aligned profile requires ' + ', '.join(f'{name}=1' for name in required))
+        if (os.environ.get('GC_MOE_EPLB_NO_REARRANGE') == '1'
+                or os.environ.get('GC_MOE_SLOT_PLACEMENT') == 'random'
+                or int(os.environ.get('GC_MOE_SM90_SM_REUSE', '0') or 0) != 0):
+            ap.error('aligned profile requires EPLB rearrangement and exactly five GC MoE roles')
+        if (not a.profile_out or a.measure_steps != 1 or a.warm_steps < 1
+                or ranks != 8 or not 1 <= aligned_layers <= 256):
+            ap.error('aligned profile requires --profile-out, --measure-steps 1, warmup, '
+                     '8 ranks and 1-256 MoE layers')
+        os.environ['GC_MOE_STEP_PROFILE'] = '1'
     nseq = a.seqs_per_rank * ranks
     from vllm import LLM, SamplingParams
     from vllm.sampling_params import RequestOutputKind
@@ -692,7 +709,9 @@ def main():
         trust_remote_code=True, dtype='bfloat16', disable_log_stats=False,
         enable_logging_iteration_details=True,
         compilation_config=_compilation_config(),
-        enforce_eager=os.environ.get('ENFORCE_EAGER', '0') == '1')
+        enforce_eager=os.environ.get('ENFORCE_EAGER', '0') == '1',
+        **({'async_scheduling': False, 'pipeline_parallel_size': 1}
+           if a.profile_aligned_step else {}))
 
     engine = llm.llm_engine
     # [TOKEN-BUDGET] `max_tokens` must cover EVERY decode step any stream will
@@ -810,6 +829,8 @@ def main():
         try:
             outs = engine.collective_rpc('_gc_moe_rearrange')
             rearranged = any(bool(x) for x in outs)
+            if a.profile_aligned_step and (len(outs) != ranks or not all(outs)):
+                raise RuntimeError(f'rearrangement did not complete on all ranks: {outs}')
         except Exception as exc:  # noqa: BLE001
             print(f'[eplb] rearrangement FAILED: {exc}', flush=True)
             raise
@@ -848,23 +869,47 @@ def main():
         except Exception as exc:  # noqa: BLE001
             collect_irstep = False
             print(f'[ir-step] begin failed: {exc}', flush=True)
-    # [TRACE] Start the profiler BEFORE the window so the first measured step
-    # is captured; it is opened/closed by the worker RPCs exactly as in
-    # prof_phases.py, so the pages look the same.
+    capture_id = None
     if a.profile_out:
-        os.makedirs(a.profile_out, exist_ok=True)
-        engine.collective_rpc('_gc_moe_prof_start', args=(a.profile_out,))
+        if a.profile_aligned_step:
+            from uuid import uuid4
+
+            # Refuse stale artifacts if a worker fails to export this run.
+            os.makedirs(a.profile_out, exist_ok=False)
+            capture_id = uuid4().hex
+            before = engine.collective_rpc('_gc_moe_profile_snapshot')
+            first_epochs = {item['next_epoch'] for item in before}
+            if len(first_epochs) != 1 or {item['rank'] for item in before} != set(range(ranks)):
+                raise RuntimeError('ranks disagree on the pre-step workspace epoch')
+            first_epoch = first_epochs.pop()
+            engine.collective_rpc('_gc_moe_prof_start', args=(a.profile_out, capture_id))
+        else:
+            os.makedirs(a.profile_out, exist_ok=True)
+            engine.collective_rpc('_gc_moe_prof_start', args=(a.profile_out,))
         print(f'[trace] profiling -> {a.profile_out}', flush=True)
     rec['on'] = True
     t0 = time.perf_counter()
     for _ in range(a.measure_steps):
-        _collect(engine.step())
+        outputs = engine.step()
+        _collect(outputs)
     t_submit_s = time.perf_counter() - t0
     rec['on'] = False
     if a.profile_out:
         info = engine.collective_rpc('_gc_moe_prof_stop')
-        ok = [x for x in info if isinstance(x, dict) and x.get('ok')]
+        ok = [x for x in info if isinstance(x, dict) and x.get('ok') and x.get('path')]
         print(f'[trace] {len(ok)}/{len(info)} workers exported', flush=True)
+        if capture_id is not None:
+            if len(ok) != ranks:
+                raise RuntimeError(f'missing worker trace exports: {info}')
+            workers = engine.collective_rpc('_gc_moe_profile_snapshot',
+                                            args=(first_epoch, aligned_layers))
+            decode_counts = {o.request_id: len(o.outputs[0].token_ids)
+                             for o in outputs if o.outputs and o.outputs[0].token_ids}
+            if len(decode_counts) != nseq or set(decode_counts.values()) != {1}:
+                raise RuntimeError('the captured step did not generate one token per sequence')
+            with open(os.path.join(a.profile_out, 'capture.json'), 'w') as fh:
+                json.dump(dict(id=capture_id, label=a.label, step=flush, layers=aligned_layers,
+                               first_epoch=first_epoch, decode_tokens=nseq, ranks=workers), fh)
     _sync()                       # last real work still queued on the GPUs
     window_s = time.perf_counter() - t0
     ir = {}

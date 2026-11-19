@@ -2312,9 +2312,36 @@ def _install_worker_rpc() -> None:
 
         Worker._gc_moe_eco_trace_dump = gc_moe_eco_trace_dump
 
+    def gc_moe_profile_snapshot(self, first_epoch=None, layers=None):
+        """Read the live workspace after draining this worker's GPU."""
+        torch.cuda.synchronize()
+        buffers = {id(m._buffer): m._buffer for m in _EXPERT_REGISTRY
+                   if getattr(m, '_buffer', None) is not None}
+        if len(buffers) != 1:
+            raise RuntimeError(f'aligned profiling needs one shared buffer, got {len(buffers)}')
+        buf = next(iter(buffers.values()))
+        next_epoch = int(buf.header[0].item())
+        out = dict(rank=int(buf.rank_idx), next_epoch=next_epoch, topk=int(buf.num_topk))
+        if first_epoch is not None:
+            if next_epoch - first_epoch != layers:
+                raise RuntimeError(f'rank {buf.rank_idx}: expected {layers} calls, '
+                                   f'epoch advanced {next_epoch - first_epoch}')
+            stamps = buf.pull_tl.view(256, 32).cpu().tolist()
+            counts = buf.profile_slot_counts.cpu().tolist()
+            out['calls'] = []
+            for epoch in range(first_epoch, next_epoch):
+                slot = epoch % 256
+                stamp = stamps[slot]
+                if stamp[0] != epoch:
+                    raise RuntimeError(f'rank {buf.rank_idx}: missing epoch {epoch}')
+                out['calls'].append(dict(epoch=epoch, stamps=stamp, owned=counts[slot]))
+        return out
+
+    Worker._gc_moe_profile_snapshot = gc_moe_profile_snapshot
+
     if getattr(Worker, '_gc_moe_prof_start', None) is None:
 
-        def gc_moe_prof_start(self, out_dir: str) -> bool:
+        def gc_moe_prof_start(self, out_dir: str, capture_id=None) -> bool:
             """[PROF] Begin a torch profile on THIS worker's stream.
 
             Under ENFORCE_EAGER=1 gc_moe launches its four roles as separate
@@ -2341,6 +2368,10 @@ def _install_worker_rpc() -> None:
             self._gc_prof = profile(
                 activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                 record_shapes=False, with_stack=False, profile_memory=False)
+            if capture_id is not None:
+                import json
+                self._gc_prof.preset_metadata_json(
+                    'gcmoe_capture', json.dumps(dict(id=capture_id, rank=r)))
             self._gc_prof.__enter__()
             torch.cuda.synchronize()
             return True
