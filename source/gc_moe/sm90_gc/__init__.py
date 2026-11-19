@@ -80,35 +80,62 @@ class SM90GCSymmBuffer:
         self.peer_addresses = self.handle = self.buffer = self.group = None
 
 
+MAX_REPLICAS = 8
+
+
 def install_eplb_plan(buffer, physical_to_logical):
-    """Install one EPLB plan into the buffer and return the per-rank views.
+    """Install the EPLB placement into the buffer and return the per-rank views.
 
     Args:
         buffer: live SM90GCSymmBuffer created with ``physical=len(plan)``.
-        physical_to_logical: ``[physical]`` logical expert id for every slot.
+        physical_to_logical: ``[physical]`` (one placement for every layer) or
+            ``[layers, physical]`` (one placement PER LAYER, which is what
+            DeepInfer produces -- see `rebalance_experts_global`, whose map is
+            `[layers, physical]`).
 
     Returns:
-        ``(slot_logical, expert_slots)`` as *this rank's* tensors, plus the
-        global ``plan`` tensor, so the caller can remap its router output and
-        build the per-slot weight view.
+        ``(plan, slots_of)``.  ``plan`` keeps the caller's layer shape.
+
+    [T17-PERLAYER] The per-layer form exists because a single averaged
+    placement cannot serve 40 layers with different hot experts: measured on
+    the real counters, the merged placement gave IR 1.2803 against 1.1324 for
+    the per-layer one (+11.5%), with the worst layer at 1.95 vs 1.23.
+    `slot_logical` becomes `[layers, physical]` and `expert_slots`
+    `[layers, experts, MAX_REPLICAS]`; the kernel reads the row for
+    `epoch % n_layers`.
+
+    MAX_REPLICAS is 8 (was 4): a per-layer plan can concentrate far more copies
+    on one expert than a merged one (measured max 16 copies/layer at BS=256),
+    and silently dropping the tail would lose those slots' tokens.
     """
     import torch as _t
+    import numpy as _np
 
-    plan = _t.tensor([int(x) for x in physical_to_logical], dtype=_t.int32,
-                     device=buffer.buffer.device)
-    physical = plan.numel()
+    raw = _np.asarray(physical_to_logical, _np.int64)
+    if raw.ndim == 1:
+        raw = raw[None, :]
+    layers, physical = raw.shape
     if physical != buffer.physical:
         raise ValueError(f'plan has {physical} slots, buffer has {buffer.physical}')
+    want_shape = tuple(buffer.slot_logical.shape)
+    if want_shape != (layers, physical):
+        raise ValueError(f'slot_logical is {want_shape}, expected '
+                         f'{(layers, physical)} (layer count must match '
+                         f'GC_MOE_LAYERS)')
     experts = buffer.num_experts
-    # slot -> logical (global) and logical -> its slots (max 4 copies).
-    slots_of = _t.full((experts, 4), -1, dtype=_t.int32, device=buffer.buffer.device)
-    cnt = _t.zeros(experts, dtype=_t.int32, device=buffer.buffer.device)
-    for g in range(physical):
-        e = int(plan[g])
-        k = int(cnt[e])
-        if k < 4:
-            slots_of[e, k] = g
-        cnt[e] += 1
+
+    plan = _t.as_tensor(raw, dtype=_t.int32, device=buffer.buffer.device)
+    slots_of = _t.full((layers, experts, MAX_REPLICAS), -1, dtype=_t.int32,
+                       device=buffer.buffer.device)
+    for l in range(layers):
+        cnt = _t.zeros(experts, dtype=_t.int32, device=buffer.buffer.device)
+        row = raw[l]
+        for g in range(physical):
+            e = int(row[g])
+            k = int(cnt[e])
+            if k < MAX_REPLICAS:
+                slots_of[l, e, k] = g
+            cnt[e] += 1
     buffer.slot_logical.copy_(plan)
     buffer.expert_slots.copy_(slots_of)
     return plan, slots_of

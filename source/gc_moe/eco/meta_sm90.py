@@ -149,12 +149,26 @@ def read_copies(meta: np.ndarray, e: int, max_copies: int = 4):
 
 def install_into_buffer(buf, physical_to_logical, num_ranks: int,
                         num_logical: int):
-    """Write EcoMeta into a live SM90 buffer's `eco_meta` view."""
+    """Write EcoMeta into a live SM90 buffer's `eco_meta` view.
+
+    [T17-PERLAYER] `physical_to_logical` may be a SINGLE `[P]` placement (one
+    layout shared by every layer) or a `[layers, P]` stack, where each layer has
+    its own placement -- which is what DeepInfer produces. The buffer reserves
+    one EcoMeta row per layer, so both forms are accepted; the single form is
+    broadcast to every row so old callers keep working.
+    """
     import torch
-    meta = build_eco_meta(physical_to_logical, num_ranks, num_logical)
+    phy = np.asarray(physical_to_logical, np.int64)
+    if phy.ndim == 1:
+        lay = int(__import__('os').environ.get('GC_MOE_LAYERS', '40'))
+        phy = np.broadcast_to(phy, (lay, phy.shape[0])).copy()
+    layers, P = phy.shape
+    meta = np.concatenate([build_eco_meta(phy[l], num_ranks, num_logical)
+                           for l in range(layers)])
     want = buf.eco_meta.numel()
     if len(meta) != want:
-        raise ValueError(f'meta has {len(meta)} words, buffer view has {want}')
+        raise ValueError(f'meta has {len(meta)} words '
+                         f'({layers} layers x {P} slots), buffer view has {want}')
     buf.eco_meta.copy_(torch.as_tensor(meta, dtype=torch.int32,
                                        device=buf.eco_meta.device))
     # [ECO-FINE] read-back check: a silent no-op copy here would make the plan

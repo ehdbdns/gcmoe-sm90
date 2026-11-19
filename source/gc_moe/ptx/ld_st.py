@@ -491,6 +491,13 @@ def red_global_max_u64(ptr: cute.Pointer, value: Uint64, *, loc=None, ip=None) -
 
 
 @dsl_user_op
+def atom_min_u32_global(ptr: cute.Pointer, value: Uint32, *, loc=None, ip=None) -> None:
+    """`red.global.min.u32`: keep the SMALLEST value (used for "first event")."""
+    llvm.inline_asm(None, [ptr.toint(loc=loc, ip=ip).ir_value(), value.ir_value(loc=loc, ip=ip)],
+                    'red.global.min.u32 [$0], $1;', 'l,r',
+                    has_side_effects=True, asm_dialect=llvm.AsmDialect.AD_ATT)
+
+
 def atom_max_u32_global(ptr: cute.Pointer, value: Uint32, *, loc=None, ip=None) -> None:
     llvm.inline_asm(None, [ptr.toint(loc=loc, ip=ip).ir_value(), value.ir_value(loc=loc, ip=ip)],
                     'red.global.max.u32 [$0], $1;', 'l,r',

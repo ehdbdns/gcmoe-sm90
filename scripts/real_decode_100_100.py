@@ -205,6 +205,17 @@ def _irstep_reduce(dumps):
 
     irs, per_layer, nulls, per_step_tot = [], {}, [], []
     mb_irs, mb_total, ae_total = [], [], []
+    # [LAYER-DETAIL] One (layer, step) slice with EVERY per-rank number side by
+    # side, so "why is this step unbalanced" can be answered directly:
+    #   tokens[r], m_blocks[r], active_slots[r]  for the same epoch.
+    # We keep the FIRST fully-filled cell (deterministic, and the earliest one
+    # is closest to the start of the measured window).
+    layer_detail = None
+    # [MB-PEAK] Peak M blocks over the 8 RANKS for each (step, layer) pair.
+    # `rows_mb` already holds this rank's real block count, so the peak is the
+    # max across ranks -- the number that decides how long that (step, layer)
+    # takes on the slowest rank. Reported as mean / p90 / max over all pairs.
+    mb_peak = []
     for k in range(steps):
         step_total = 0.0
         any_cell = False
@@ -234,9 +245,21 @@ def _irstep_reduce(dumps):
                 mm = sum(mvals) / n_rank
                 mb_irs.append(max(mvals) / mm if mm > 0 else 0.0)
                 mb_total.append(sum(mvals))       # ★ cross-rank SUM
+                mb_peak.append(max(mvals))        # ★ cross-rank PEAK
             if has_ae:
                 avals = [d['rows_ae'][lay][k] for d in ok]
                 ae_total.append(sum(avals))       # ★ cross-rank SUM
+            if layer_detail is None:
+                layer_detail = {
+                    'layer': int(lay), 'step': int(k),
+                    'tokens': [round(v, 2) for v in vals],
+                    'm_blocks': ([int(d['rows_mb'][lay][k]) for d in ok]
+                                 if has_mb else None),
+                    'active_slots': ([int(d['rows_ae'][lay][k]) for d in ok]
+                                     if has_ae else None),
+                    'token_ir': round(max(vals) / (sum(vals) / n_rank), 4)
+                                if sum(vals) > 0 else None,
+                }
         if any_cell:
             per_step_tot.append(step_total)
 
@@ -284,6 +307,31 @@ def _irstep_reduce(dumps):
     return {
         'ok': True,
         'method': 'in-kernel (layer, step) table; avg of max_rank/mean_rank',
+        'layer_detail': layer_detail,
+        # [LAYER-TABLE] Keep the per-(layer, step) tables of ALL ranks, so any
+        # single layer can be re-derived later and cross-checked against the
+        # torch trace. Without this the reduction below throws the raw arrays
+        # away and only an averaged IR survives -- that is why an earlier
+        # report paired a trace layer with a DIFFERENT layer's token counts.
+        'tables': {
+            'epoch0': int(ok[0].get('epoch0', 0)),
+            'layers': layers, 'steps': steps,
+            'tokens': [[ok[r]['rows'][lay][k] // world
+                        for r in range(n_rank)] for lay in range(layers)
+                       for k in range(steps)],
+            'm_blocks': ([[ok[r]['rows_mb'][lay][k] for r in range(n_rank)]
+                          for lay in range(layers) for k in range(steps)]
+                         if has_mb else None),
+            'active': ([[ok[r]['rows_ae'][lay][k] for r in range(n_rank)]
+                        for lay in range(layers) for k in range(steps)]
+                       if has_ae else None),
+            # [IR-STEP-EPOCH] kernel-written epoch for every (layer, step) cell.
+            # This is the AUTHORITATIVE key for joining with pull_tl: the host
+            # `epoch0` above can be stale under CUDA-graph replay.
+            'epochs': ([[ok[r]['rows_epoch'][lay][k] for r in range(n_rank)]
+                        for lay in range(layers) for k in range(steps)]
+                       if all(d.get('rows_epoch') for d in ok) else None),
+        },
         'ir_step_layer_mean': statistics.mean(irs),
         'ir_step_layer_p50': _q(irs, 0.50),
         'ir_step_layer_p90': _q(irs, 0.90),
@@ -315,6 +363,9 @@ def _irstep_reduce(dumps):
         'mb_ir_mean': _mean(mb_irs),
         'mb_ir_p90': _q(mb_irs, 0.90),
         'mb_total_mean': _mean(mb_total),
+        'mb_peak_mean': _mean(mb_peak),
+        'mb_peak_p90': _q(mb_peak, 0.90),
+        'mb_peak_max': max(mb_peak) if mb_peak else -1.0,
         'ae_total_mean': _mean(ae_total),
         'n_pairs_mb': len(mb_total),
         'n_steps_alllayers': len(step_all),
@@ -327,6 +378,222 @@ def _irstep_reduce(dumps):
     }
 
 
+
+
+def time_ir(eco_trace, expect_ms=None):
+    """[TIME-IR] Per-(step,layer) RANK-TIME imbalance, then averaged.
+
+    WHAT COUNTS AS "A RANK'S TIME". The combine kernel starts concurrently
+    with compute, so it cannot be folded into the same span. This measures:
+
+        rank MoE cost  = dispatch kernel entry  -> compute kernel exit
+        combine cost   = combine kernel entry   -> combine kernel exit
+
+    and reports an IR for each.
+
+    WHY NOT the older `[9]-[4]` (pull start -> combine done): both of those
+    points are CROSS-RANK BARRIERS -- every rank waits for every other -- so
+    their difference came out identical to within 2-3 us on all 8 ranks and
+    reported a meaningless IR of 1.0017. The stamps used here are
+    per-rank: dispatch entry is the first thing the role-1 kernel does, and
+    compute exit is the last CTA of THAT rank leaving, with no peer wait.
+
+    Slots (see the layout's PULL-TL reserve):
+        [10] dispatch entry   [11] compute exit (max over CTAs)
+        [12] combine entry    [13] combine exit  (max over CTAs)
+        [0]  epoch tag        (written with slot 10 so rows can be matched)
+
+    A call is used only when all four stamps are non-zero and the span is
+    plausible (0.1..20 ms); everything else is a stale ring row.
+    """
+    import statistics
+    ranks = (eco_trace or {}).get('ranks') or []
+    if len(ranks) < 2:
+        return {'ok': False, 'why': f'need >=2 ranks, got {len(ranks)}'}
+
+    def collect(idx_a, idx_b):
+        per, tagged = [], False
+        for r in ranks:
+            d = {}
+            for row in (r.get('pull_rows') or []):
+                if len(row) < 14:
+                    continue
+                ep, t0, t1 = row[0], row[idx_a], row[idx_b]
+                if t0 == 0 or t1 == 0:
+                    continue
+                span = t1 - t0
+                if not (100 <= span <= 20000):
+                    continue
+                if ep:
+                    tagged = True
+                d[ep] = span
+            per.append(d)
+        if not tagged:
+            return None, 'no epoch tag (pre-RANK-TS trace)'
+        common = set(per[0])
+        for d in per[1:]:
+            common &= set(d)
+        common.discard(0)
+        if not common:
+            return None, 'no shared epoch across ranks'
+        eps = sorted(common)
+        means = [statistics.mean(per[i][e] for i in range(len(per))) for e in eps]
+        irs = [max(per[i][e] for i in range(len(per))) / m
+               for e, m in zip(eps, means)]
+        rank_mean = [statistics.mean(per[i][e] for e in eps)
+                     for i in range(len(per))]
+        return dict(n=len(eps), ir=statistics.mean(irs),
+                    p50=statistics.median(irs),
+                    p90=sorted(irs)[int(0.9 * (len(irs) - 1))],
+                    mean_us=statistics.mean(means),
+                    rank_max_us=max(rank_mean)), None
+
+    moe, err = collect(10, 11)
+    if moe is None:
+        return {'ok': False, 'why': err}
+    comb, _ = collect(12, 13) or (None, None)
+
+    if expect_ms:
+        want = expect_ms * 1000.0 / max(1, int(os.environ.get('GC_MOE_LAYERS', '40')))
+        # a MoE layer (dispatch->compute) is a large part of one step's layer;
+        # allow a wide band, this only catches gross pairing errors
+        if not (0.15 * want <= moe['mean_us'] <= 3.0 * want):
+            return {'ok': False,
+                    'why': f"mean MoE layer {moe['mean_us']:.0f}us implausible "
+                           f"vs {want:.0f}us/step/layer"}
+
+    out = {'ok': True, 'time_layers': moe['n'],
+           'time_ir': moe['ir'], 'time_ir_p50': moe['p50'],
+           'time_ir_p90': moe['p90'],
+           'time_rank_mean_us': moe['mean_us'],
+           'time_rank_max_us': moe['rank_max_us']}
+
+    # ---- [PLAN-PRED] predicted vs measured per-rank RATIO ----------------
+    # The only honest judge of a cost function: does the 8-rank time ratio it
+    # predicts match the ratio that actually happened? A plan can be better on
+    # a noisy end-to-end ms while modelling the rank cost worse.
+    #
+    # Predicted: T[r] that the plan's own `_eco_rank_time` produced, exported
+    #            into eco_tl[epoch][14+r].
+    # Measured : dispatch-entry -> compute-exit span per rank (the same
+    #            quantity `moe` above averaged).
+    # Both are divided by their own mean, so only the SHAPE is compared.
+    pred_err = None
+    try:
+        # Each rank's row carries ITS OWN T[r] at column 14+r, so the vector is
+        # assembled by reading rank r's row at 14+r. Rows are matched by the
+        # epoch tag in column 0 (a stale ring row from an older call must not
+        # be mixed in).
+        # T[r] lives in rank r's own pull_tl row at column 14+r (see
+        # _pull_tl_write_raw), so the vector is gathered across ranks.
+        per = []
+        # [PHASES] T[r] used to live at column 14+r, which collided with the
+        # phase stamps at 15/16/17 ("first compute task" read back as a plan
+        # unit count). It now lives at 24+r; derive the base from the row
+        # width so an older trace still parses.
+        rows0 = [row for row in (ranks[0].get('pull_rows') or []) if row and row[0]]
+        tbase = 24 if (rows0 and len(rows0[0]) >= 24 + len(ranks)) else 14
+        for r in ranks:
+            d = {}
+            for row in (r.get('pull_rows') or []):
+                if len(row) < tbase + len(ranks) or not row[0]:
+                    continue
+                d[row[0]] = row
+            per.append(d)
+        common = set(per[0])
+        for d in per[1:]:
+            common &= set(d)
+        if common:
+            ep = sorted(common)[-1]
+            T = [per[k][ep][tbase + k] for k in range(len(ranks))]
+            # [PLAN-PRED-FIX] Take THIS epoch's measured span, not the mean of
+            # every call in the ring buffer. Comparing one call's predicted T
+            # against an average over 256 unrelated layers mixes two different
+            # quantities and inflates the apparent error.
+            meas = []
+            # `ranks` holds dicts; `per` is positional, so iterate INDICES.
+            for ri in range(len(ranks)):
+                row = per[ri].get(ep)
+                span = (row[11] - row[10]) if (row and row[10] and row[11]) else 0
+                meas.append(span if 100 <= span <= 20000 else 0)
+            if all(meas) and all(T):
+                tm, mm = statistics.mean(T), statistics.mean(meas)
+                pr = [t / tm for t in T]
+                mr = [m / mm for m in meas]
+                _nlay = int(os.environ.get('GC_MOE_LAYERS', '40'))
+                pred_err = {
+                    'epoch': ep, 'layer': ep % _nlay, 'pred_T': T,
+                    'meas_us': [round(x) for x in meas],
+                    'pred_ratio': [round(x, 4) for x in pr],
+                    'meas_ratio': [round(x, 4) for x in mr],
+                    'ratio_l1': round(sum(abs(a - b) for a, b in zip(pr, mr)), 4),
+                    'ratio_maxerr': round(max(abs(a - b) for a, b in zip(pr, mr)), 4),
+                }
+            else:
+                pred_err = {'error': f'T={T} meas={meas}'}
+        else:
+            pred_err = {'error': 'no common epoch in tl_rows'}
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        pred_err = {'error': f'{type(exc).__name__}: {exc}'}
+    if pred_err:
+        out['plan_pred'] = pred_err
+    if comb:
+        out.update(comb_layers=comb['n'], comb_ir=comb['ir'],
+                   comb_mean_us=comb['mean_us'])
+    return out
+
+
+def moe_real(eco_trace, max_layers=4):
+    """[MOE-REAL] Per-rank TRUE MoE layer cost, straight from the fine trace.
+
+    The end-to-end ms/step is dominated by attention/comm and carries ~0.5%
+    run-to-run noise, which is larger than the differences we are trying to
+    resolve between plan variants. The MoE layer itself is what a plan
+    controls, so measure THAT: for each rank take one clean decode epoch and
+    report the wall clock from its first to its last GEMM span.
+
+    Returns per-layer averages over the sampled epochs:
+      * `wall_max`   : max over ranks  (= the critical rank, what ms/step feels)
+      * `wall_mean`  : mean over ranks
+      * `ir_real`    : wall_max / wall_mean  (true rank imbalance)
+      * `layers`     : how many epochs were averaged
+    """
+    ranks = (eco_trace or {}).get('ranks') or []
+    if not ranks:
+        return {'ok': False, 'why': 'no eco_trace ranks'}
+    import collections, statistics
+    per_rank = []
+    for r in ranks:
+        byep = collections.defaultdict(list)
+        for x in (r.get('fine_rows') or []):
+            if x[1] == 6:                       # type 6 = GEMM task begin
+                byep[x[8]].append(x[0])         # x[8] = epoch
+        per_rank.append(byep)
+    common = set(per_rank[0])
+    for p in per_rank[1:]:
+        common &= set(p)
+    # a real decode layer carries 1200..2600 GEMM spans; prefill layers do not
+    common = {e for e in common if 1200 <= len(per_rank[0][e]) <= 2600}
+    if not common:
+        return {'ok': False, 'why': 'no common clean epoch'}
+    eps = sorted(common)[:max_layers]
+    walls, means, irs = [], [], []
+    for ep in eps:
+        w = []
+        for p in per_rank:
+            ts = sorted(p[ep])
+            w.append(ts[-1] - ts[0])
+        walls.append(max(w))
+        means.append(statistics.mean(w))
+        irs.append(max(w) / statistics.mean(w))
+    return {'ok': True, 'layers': len(eps), 'epochs': eps,
+            'wall_max': statistics.mean(walls),
+            'wall_mean': statistics.mean(means),
+            'ir_real': statistics.mean(irs),
+            'per_epoch_wall_max': walls}
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--output', required=True)
@@ -336,6 +603,12 @@ def main():
     ap.add_argument('--prefill-hi', type=int, default=4096)
     ap.add_argument('--warm-steps', type=int, default=100)
     ap.add_argument('--measure-steps', type=int, default=100)
+    # [TRACE] Optional torch profile over the measured window, so a 1000+1000
+    # run can also yield a chrome trace of the post-rearrange layers.
+    ap.add_argument('--profile-out', default=None,
+                    help='if set, profile the measured window into this dir')
+    ap.add_argument('--profile-steps', type=int, default=0,
+                    help='profile only the first N measured steps (0 = all)')
     a = ap.parse_args()
 
     ranks = int(os.environ.get('WORLD', '8'))
@@ -575,12 +848,23 @@ def main():
         except Exception as exc:  # noqa: BLE001
             collect_irstep = False
             print(f'[ir-step] begin failed: {exc}', flush=True)
+    # [TRACE] Start the profiler BEFORE the window so the first measured step
+    # is captured; it is opened/closed by the worker RPCs exactly as in
+    # prof_phases.py, so the pages look the same.
+    if a.profile_out:
+        os.makedirs(a.profile_out, exist_ok=True)
+        engine.collective_rpc('_gc_moe_prof_start', args=(a.profile_out,))
+        print(f'[trace] profiling -> {a.profile_out}', flush=True)
     rec['on'] = True
     t0 = time.perf_counter()
     for _ in range(a.measure_steps):
         _collect(engine.step())
     t_submit_s = time.perf_counter() - t0
     rec['on'] = False
+    if a.profile_out:
+        info = engine.collective_rpc('_gc_moe_prof_stop')
+        ok = [x for x in info if isinstance(x, dict) and x.get('ok')]
+        print(f'[trace] {len(ok)}/{len(info)} workers exported', flush=True)
     _sync()                       # last real work still queued on the GPUs
     window_s = time.perf_counter() - t0
     ir = {}
@@ -666,9 +950,26 @@ def main():
                   ir=ir.get('ir', -1.0),
                   ir_detail=ir, ir_step=irstep,                   load_detail=load,
                   eco_trace=eco_trace,
+                  moe_real=moe_real(eco_trace),
+                  time_ir=time_ir(eco_trace, expect_ms=ms),
                   gen_tokens_total=sum(len(v) for v in got.values()),
                   tokens={k: v for k, v in sorted(got.items())})
 
+    _pp = (result.get('time_ir') or {}).get('plan_pred')
+    if _pp and 'pred_ratio' in _pp:
+        print(f"[plan-pred] pred_ratio={_pp['pred_ratio']}", flush=True)
+        print(f"[plan-pred] meas_ratio={_pp['meas_ratio']}  "
+              f"L1={_pp['ratio_l1']:.4f} maxerr={_pp['ratio_maxerr']:.4f}", flush=True)
+    _ti = result.get('time_ir') or {}
+    if _ti.get('ok'):
+        print(f"[time-ir] layers={_ti['time_layers']} "
+              f"time_IR={_ti['time_ir']:.4f} p90={_ti['time_ir_p90']:.4f} "
+              f"rank_mean={_ti['time_rank_mean_us']:.0f}us "
+              f"rank_max={_ti['time_rank_max_us']:.0f}us", flush=True)
+    _mr = result.get('moe_real') or {}
+    if _mr.get('ok'):
+        print(f"[moe-real] layers={_mr['layers']} wall_max={_mr['wall_max']:.0f}us "
+              f"wall_mean={_mr['wall_mean']:.0f}us ir_real={_mr['ir_real']:.4f}", flush=True)
     print('RESULT', json.dumps(result), flush=True)
     with open(a.output, 'w') as fh:
         json.dump(result, fh, indent=2)

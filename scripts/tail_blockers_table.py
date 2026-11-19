@@ -8,6 +8,7 @@ parallelism collapse the `par20` figures show:
   slot / rows      local slot and how many rows it pulled (world-inflated)
   M blocks         how many M blocks that slot was cut into
   valid (last)     rows in the last block  (= min(block_m, rows - start))
+  largest slot?    whether this slot is the biggest on the rank
   largest slot?    is this slot the biggest one on the rank (=> hot expert)
   L1 / L2 window   when the 18 L1 N-tiles and 20 L2 N-tiles of that block ran
   L2-only tail     for how long ONLY those 20 N-tiles were runnable

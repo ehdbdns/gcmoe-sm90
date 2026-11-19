@@ -55,6 +55,10 @@ _TRACE = {'n': [], 'capturing': False}
 # [SME-MEAS] id(w1 payload) -> layer index, shared by all module instances
 _LAYER_OF = {}
 _LAYER_REFS = []
+# [T17-PERLAYER] id(packed w1 payload) -> row index inside `plan`/`slots_of`.
+# Distinct from `_LAYER_OF`, whose value is the STATS/component index (built in
+# LIFO pop order, so it is NOT the plan row).
+_LAYER_ROW = {}
 # Enabled from the environment at import time: the counter table has to exist
 # before vLLM captures its CUDA graphs, which happens during LLM() construction
 # -- earlier than any RPC the driver could send.
@@ -368,6 +372,226 @@ class GCMoEPrepareFinalize(mk.FusedMoEPrepareAndFinalizeModular):
             output.copy_(fused_expert_output)
 
 
+
+# ══════════════════════════════════════════════════════════════════════════
+# [ROLE4] Shared expert computed by gc_moe's own role 4 instead of vLLM.
+#
+# vLLM keeps the shared expert as a plain bf16 DeepseekV2MLP
+# (gate_up_proj / down_proj) and computes it on its own aux stream. gc_moe's
+# role 4 wants the SAME maths in its native layout: E4M3 data + FP32 scales
+# with recipe (1,1,32). We quantise the bf16 weights ONCE at init (never in
+# the hot path) and hand them to the kernel; combine then adds `shared_y`
+# itself, so vLLM must NOT compute the shared expert as well (1+1=2).
+# ══════════════════════════════════════════════════════════════════════════
+_SHARED_W = {}
+_SE_RUNNER = {}   # id(SharedExperts) -> MoERunner
+_SHARED_MODULES = []   # SharedExperts in construction order
+
+
+def _quant_row_k32(weight):
+    """bf16 [n, k] -> (fp8_e4m3 [n,k], fp32 [n, k//32]) with recipe (1,1,32).
+
+    Per-row, per-K32 scaling: exact for the (1,1,32) recipe `_transform_shared`
+    expects. n and k must already be multiples of 256/128.
+    """
+    import torch
+    w = weight.detach().to(torch.float32)
+    n, k = w.shape
+    blocks = w.reshape(n, k // 32, 32)
+    amax = blocks.abs().amax(dim=-1, keepdim=True).clamp_min(1e-12)
+    scale = amax / 448.0
+    q = (blocks / scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn)
+    return (q.reshape(n, k).contiguous(), scale.squeeze(-1).to(torch.float32).contiguous())
+
+
+_CKPT_HDR = {}
+_SHARD_CACHE = {}
+
+
+def _ckpt_read(key):
+    """Read one tensor straight out of the checkpoint's safetensors shards.
+
+    WHY THE CHECKPOINT: vLLM holds the shared expert as MXFP4-packed `int32`
+    (measured gate_up (320,2304) int32, down (20,20480) int32), sharded over TP
+    and padded on the intermediate axis -- unusable for role 4 without a
+    dequant+padded-removal pass. The checkpoint instead stores exactly what
+    role 4 wants:
+
+        shared_experts.w1.weight  F8_E4M3 [2304, 5120]  w1.scale F8_E8M0 [72,160]
+        shared_experts.w2.weight  F8_E4M3 [5120, 2304]  w2.scale F8_E8M0 [160,72]
+
+    i.e. full, unpadded, FP8 weights with 32x32 ue8m0 block scales. Only the
+    scale encoding has to be expanded (see `_ue8m0_to_rowk32`), which is exact.
+    """
+    import json as _json
+    import struct
+    import torch
+    root = os.environ.get('MODEL', '').rstrip('/')
+    if not _CKPT_HDR:
+        idx = os.path.join(root, 'model.safetensors.index.json')
+        if not os.path.exists(idx):
+            _CKPT_HDR['map'] = None
+        else:
+            with open(idx) as fh:
+                _CKPT_HDR['map'] = _json.load(fh)['weight_map']
+    wmap = _CKPT_HDR['map']
+    if wmap is None or key not in wmap:
+        return None
+    path = os.path.join(root, wmap[key])
+    cached = _SHARD_CACHE.get(path)
+    if cached is None:
+        with open(path, 'rb') as fh:
+            n = struct.unpack('<Q', fh.read(8))[0]
+            hdr = _json.loads(fh.read(n))
+        cached = (hdr, 8 + n)
+        _SHARD_CACHE[path] = cached
+    hdr, base = cached
+    info = hdr[key]
+    dtype = {'F8_E4M3': torch.float8_e4m3fn,
+             'F8_E8M0': torch.float8_e8m0fnu,
+             'BF16': torch.bfloat16}[info['dtype']]
+    count = 1
+    for d in info['shape']:
+        count *= d
+    buf = torch.empty(count, dtype=torch.uint8)
+    with open(path, 'rb') as fh:
+        fh.seek(base + info['data_offsets'][0])
+        fh.readinto(memoryview(buf.numpy()))
+    return buf.view(dtype).reshape(info['shape'])
+
+
+def _ue8m0_to_rowk32(scale):
+    """(n/32, k/32) ue8m0 block scale -> (n, k/32) FP32, exact.
+
+    ue8m0 stores the exponent only: value = 2^(code-127), which is what
+    `(code << 23) as float32` produces directly. Each 32-row block is then
+    replicated to its 32 rows, because `_transform_shared` with recipe
+    (1,1,32) wants one scale per ROW per K32 group.
+
+    (1,128,128) would be cheaper but is WRONG here: the four 32x32 sub-blocks
+    inside a 128x128 tile do not share a value (verified on layer 6).
+    """
+    from gc_moe.sm90_gc import _scale_codes
+    codes = _scale_codes(scale)
+    f32 = (codes << 23).view(torch.float32)
+    return f32.repeat_interleave(32, 0).contiguous()
+
+
+def _checkpoint_shared(layer_idx, device):
+    """(w1, s1), (w2, s2) as role 4 needs them, from the checkpoint.
+
+    The tensors must end up on `device`: `validate_call` checks
+    `tensor.device == buffer.buffer.device`, while the raw checkpoint read is
+    host memory.
+    """
+    import torch as _torch
+    base = f'layers.{layer_idx}.ffn.shared_experts'
+    # gate_up needs [2*I, H]: the checkpoint stores gate (w1) and up (w3)
+    # separately, so they must be concatenated on dim 0 (scales too).
+    gw = _ckpt_read(f'{base}.w1.weight')
+    if gw is None:
+        return None
+    gs = _ckpt_read(f'{base}.w1.scale')
+    uw = _ckpt_read(f'{base}.w3.weight')
+    us = _ckpt_read(f'{base}.w3.scale')
+    w2 = _ckpt_read(f'{base}.w2.weight')
+    s2 = _ckpt_read(f'{base}.w2.scale')
+    if None in (gs, uw, us, w2, s2):
+        return None
+    w1 = _torch.cat([gw, uw], dim=0)
+    s1 = _torch.cat([gs, us], dim=0)
+    return ((w1.to(device), _ue8m0_to_rowk32(s1).to(device)),
+            (w2.to(device), _ue8m0_to_rowk32(s2).to(device)))
+
+
+def _shared_weights_for_se(se):
+    """Quantise + transform the shared MLP behind a SharedExperts instance."""
+    if se is None or getattr(se, '_gc_real_layer', None) is None:
+        return None
+    return _shared_weights_for(se)
+
+
+def _shared_weights_for(se):
+    """Return transformed (w1, w2) for gc_moe role 4, or None if unavailable.
+
+    `se` is the SharedExperts instance itself (not the MoERunner): the real
+    bf16 MLP was moved to `_gc_real_layer` when `_layer` became a zero stub.
+    """
+    try:
+        from gc_moe.sm90_gc import transform_weights_for_gc_moe_sm90
+        mlp = getattr(se, '_gc_real_layer', None) or getattr(se, '_layer', None)
+        if not getattr(se, '_r4_shapes', False):
+            se._r4_shapes = True
+            for nm, obj in (('gate_up_proj', mlp.gate_up_proj),
+                            ('down_proj', mlp.down_proj)):
+                w = getattr(obj, 'weight', None)
+                print(f'[ROLE4-W] {nm}: cls={type(obj).__name__} '
+                      f'w={None if w is None else (tuple(w.shape), str(w.dtype))}',
+                      flush=True)
+                for k, v in vars(obj).items():
+                    if isinstance(v, torch.Tensor):
+                        print(f'   .{k} = {tuple(v.shape)} {v.dtype}', flush=True)
+                for k, v in vars(getattr(obj, 'base_layer', obj)).items() if hasattr(obj,'base_layer') else []:
+                    if isinstance(v, torch.Tensor):
+                        print(f'   [base].{k} = {tuple(v.shape)} {v.dtype}', flush=True)
+                # parameters registered on the module tree
+                for pn, pv in obj.named_parameters(recurse=True):
+                    print(f'   param {pn} = {tuple(pv.shape)} {pv.dtype}', flush=True)
+                for bn, bv in obj.named_buffers(recurse=True):
+                    print(f'   buf {bn} = {tuple(bv.shape)} {bv.dtype}', flush=True)
+        gu = mlp.gate_up_proj.weight
+        dn = mlp.down_proj.weight
+        # Cache key on the SHARD identity (stable after load).
+        key = (id(gu), id(dn), gu.data_ptr(), dn.data_ptr())
+        hit = _SHARED_W.get(key)
+        if hit is not None:
+            return hit
+        # [ROLE4-A3] Use the checkpoint's own FP8 weights (full, unpadded).
+        lay = getattr(mlp, '_gc_layer_idx', None)
+        if lay is None:
+            import re as _re
+            nm = getattr(mlp, 'prefix', '') or getattr(mlp, 'name', '') or ''
+            if not nm:
+                for attr in ('gate_up_proj', 'down_proj'):
+                    sub = getattr(mlp, attr, None)
+                    nm = getattr(sub, 'prefix', '') or ''
+                    if nm:
+                        break
+            m = _re.search(r'layers[.](\d+)', str(nm))
+            if m:
+                mlp._gc_layer_idx = int(m.group(1))
+            lay = getattr(mlp, '_gc_layer_idx', None)
+            if not getattr(mlp, '_gc_nm_dbg', False):
+                mlp._gc_nm_dbg = True
+                print(f'[ROLE4-NM] prefix={nm!r} lay={lay}', flush=True)
+        if lay is not None:
+            pair = _checkpoint_shared(lay, gu.device)
+            if pair is not None:
+                out = transform_weights_for_gc_moe_sm90(
+                    pair[0], pair[1], shared_recipe=(1, 1, 32))
+                # [ROLE4-CACHE] Do NOT clear: each of the 40 layers has its own
+                # key, and clearing meant every layer re-read the checkpoint and
+                # re-ran the transform on EVERY forward (measured 190684 CKPT
+                # hits in 590 steps = 40 layers x 8 ranks per step, i.e. a
+                # permanent cache miss -> 1252 ms/step instead of ~50).
+                _SHARED_W[key] = out
+                print(f'[ROLE4-CKPT] layer{lay} w1={tuple(pair[0][0].shape)} '
+                      f'w2={tuple(pair[1][0].shape)} ok', flush=True)
+                return out
+        # Fallback (should not be reached): vLLM's weights are MXFP4-packed
+        # int32 and TP-padded, so they cannot be used directly. Say so once
+        # instead of failing silently.
+        print('[ROLE4] checkpoint path unavailable; vLLM weights are '
+              f'{tuple(gu.shape)}/{gu.dtype} (MXFP4-packed, unusable) -> role 4 OFF',
+              flush=True)
+        return None
+    except Exception as exc:                    # noqa: BLE001
+        import traceback
+        print(f'[ROLE4-ERR] shared weights unavailable: {type(exc).__name__}: {exc}',
+              flush=True)
+        traceback.print_exc()
+        return None
+
 class GCMoEExperts(mk.FusedMoEExpertsModular):
     """Runs ``gc_moe.sm90_fp8_fp4_gc_moe`` as the whole MoE operator."""
 
@@ -648,13 +872,26 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             ids = topk_ids.view(-1)
             n = ids.numel()
             width = e['slot_width']
+            # [T17-PERLAYER] `slot_table` is `slots_of` flattened as
+            # [layers, experts, width] and EVERY layer has its own placement
+            # (DeepInfer plans each layer separately). Using one row for all 40
+            # layers pairs layer L's WEIGHTS with another layer's expert map --
+            # the token then lands in a slot that does not hold its expert.
+            # `_LAYER_ROW` is the same row index `_install_eplb` used for
+            # `gather_slot_weights`.
+            _lid = _LAYER_ROW.get(id(packed[0][0]))
+            if _lid is None:
+                raise RuntimeError(
+                    'RR arm: no plan row for this packed pair (layer map '
+                    'was rebuilt?)')
             cand = self._scratch(buf, 'cand', n * width, torch.int32)[:n * width]
             cand2 = cand.view(n, width)
-            # slot_table is slots_of.reshape(-1): each expert owns a
-            # CONTIGUOUS run of `width` entries, so the index must be
-            # ids*width + arange(width).
+            # each expert owns a CONTIGUOUS run of `width` entries, so the
+            # index is layer_base + ids*width + arange(width).
             col = torch.arange(width, device=ids.device, dtype=torch.int64)
-            gather_idx = (ids.to(torch.int64).unsqueeze(-1) + 0) * width + col
+            base = int(_lid) * int(e['slot_experts']) * width
+            gather_idx = ((ids.to(torch.int64).unsqueeze(-1) + 0) * width
+                          + col + base)
             torch.index_select(e['slot_table'], 0, gather_idx.reshape(-1),
                                out=cand2.view(-1))
             pick = self._scratch(buf, 'pick', n, torch.int64)[:n]
@@ -671,7 +908,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             # implementation") and phase-shifted by ep_rank. It is NOT the
             # route's position in the flattened list, and NOT a per-expert
             # occurrence counter.
-            rr_pick(ids, e['count'], ep_rank=int(buf.rank_idx),
+            rr_pick(ids, e['count'][_lid], ep_rank=int(buf.rank_idx),
                     topk=int(buf.num_topk), out=pick)
             slots = self._scratch(buf, 'slots', n, torch.int32)[:n]
             torch.gather(cand2, 1, pick.unsqueeze(-1), out=slots.unsqueeze(-1))
@@ -818,11 +1055,41 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             stats = table[idx] if idx is not None else None
         # [SME-EPLB] Same call shape as the plain arm: the validated B arm does
         # not touch the kernel, only the physical slot count and host weights.
-        self._gc.sm90_fp8_fp4_gc_moe(
-            output, packed[0], packed[1], buf,
-            recipe=(1, 1, 32), activation='swiglu', activation_clamp=10.0,
-            fast_math=True, num_tokens_bound=self._bound_for(buf, tokens),
-            cumulative_local_expert_recv_stats=stats)
+        # [ROLE4] When the buffer reserves shared experts, role 4 computes
+        # them and `combine` adds `shared_y`; vLLM's own shared MLP is then
+        # skipped (see _install_role4) so the term is added exactly once.
+        _sw = None
+        if int(os.environ.get('GC_MOE_SHARED_IN_GC', '0') or 0):
+            if not hasattr(self, '_r4_dbg'):
+                self._r4_dbg = True
+                print(f'[ROLE4-DBG] expert_layer={getattr(self,"_role4_layer",None) is not None} '
+                      f'registered={len(_EXPERT_REGISTRY)} '
+                      f'runner_map={len(_SE_RUNNER)}', flush=True)
+            # [ROLE4] Pair by CONSTRUCTION ORDER. vLLM builds the shared MLPs
+            # and the gc_moe experts in the same layer order, and at
+            # MoERunner.__init__ time the expert registry is still empty
+            # (measured reg=0), so ordering is the only reliable key here.
+            k = next((i for i, e in enumerate(_EXPERT_REGISTRY) if e is self), -1)
+            _se = _SHARED_MODULES[k] if 0 <= k < len(_SHARED_MODULES) else None
+            _sw = _shared_weights_for_se(_se)
+            if k == 0 and not getattr(self, '_r4_dbg2', False):
+                self._r4_dbg2 = True
+                print(f'[ROLE4-DBG] idx={k} shared_mods={len(_SHARED_MODULES)} '
+                      f'weights={"ok" if _sw is not None else "NONE"}', flush=True)
+        if _sw is None:
+            self._gc.sm90_fp8_fp4_gc_moe(
+                output, packed[0], packed[1], buf,
+                recipe=(1, 1, 32), activation='swiglu', activation_clamp=10.0,
+                fast_math=True, num_tokens_bound=self._bound_for(buf, tokens),
+                cumulative_local_expert_recv_stats=stats)
+        else:
+            self._gc.sm90_fp8_fp4_gc_moe(
+                output, packed[0], packed[1], buf,
+                recipe=(1, 1, 32), activation='swiglu', activation_clamp=10.0,
+                fast_math=True, num_tokens_bound=self._bound_for(buf, tokens),
+                shared_l1_weights=_sw[0], shared_l2_weights=_sw[1],
+                shared_recipe=(1, 1, 32),
+                cumulative_local_expert_recv_stats=stats)
         if os.environ.get('GC_MOE_LAUNCH_TRACE') == '1':
             print('[launch] returned', flush=True)
 
@@ -929,16 +1196,28 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             _ECO_SLOT_ORDER['order'] = _slot_order
             print(f'[eco] single-copy-first permutation applied '
                   f'(rank0 first {sum(1 for x in _slot_order[0])} slots)', flush=True)
-        plan, slots_of = sm90.install_eplb_plan(buf, plan_list)
-        count = (slots_of >= 0).sum(-1).clamp_min(1)
+        # [T17-PERLAYER] This is the INITIAL placement (`initial_layout`),
+        # installed before any traffic has been seen, so there is nothing to
+        # plan per layer yet: every layer starts from the same layout. It is
+        # broadcast to all 40 rows, which the buffers are now shaped for; the
+        # real per-layer plans arrive in `rearrange_now` after warm-up.
+        _nlay = int(buf.slot_logical.shape[0])
+        plan_2d = [list(plan_list) for _ in range(_nlay)]
+        plan, slots_of = sm90.install_eplb_plan(buf, plan_2d)
+        # [T17-PERLAYER] slots_of is [layers, experts, MAX_REPLICAS]. The RR
+        # gate needs copy counts PER LAYER: the placement differs per layer, so
+        # a single max-across-layers count can hand a route a copy index that
+        # does not exist for its own layer (that slot holds -1 and the token is
+        # dropped). (The ECO arm does not use this path at all -- its copies
+        # come from EcoMeta, which IS per-layer.)
+        count = (slots_of >= 0).sum(-1).clamp_min(1)          # [layers, E]
         if _eco_enabled():
             # [ECO-SM90] Build the plan role's EcoMeta for this static
             # placement and write it into the buffer. It is host-side and
             # static: copies[E][32], phy2log[P], num_fixed[R].
             from gc_moe.eco.meta_sm90 import (
                 install_into_buffer as _install_eco_meta)
-            meta = _install_eco_meta(buf, [int(x) for x in plan_list], ranks,
-                                     experts)
+            meta = _install_eco_meta(buf, plan_2d, ranks, experts)
             print(f'[eco] meta installed: words={len(meta)} '
                   f'logical={experts} physical={buf.physical} ranks={ranks}',
                   flush=True)
@@ -958,16 +1237,41 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         # physical slot rows (replicas come from their owner ranks). The kernel
         # indexes weights by physical slot, so the plain 48-row view is invalid
         # under EPLB.
+        #
+        # [T17-PERLAYER] `_gidx` walks the SAME global order as the
+        # `components` list built below (modules in order, each module's layers
+        # in LIFO pop order). That order is what (a) `_LAYER_OF`/the stats rows
+        # and (b) `shuffler.move(target_layers[i])` are keyed by, so the plan
+        # row, the stats row and the weight move all describe the same layer.
+        _gidx = 0
         for m in modules:
             m._eplb = dict(plan=plan, slots=slots_of, per_rank=per_rank,
+                           # [T17-PERLAYER] `slot_table` is the WHOLE
+                           # [layers, experts, MAX_REPLICAS] stack flattened;
+                           # `apply()` offsets into it with the row of the
+                           # layer that owns the packed pair (see _LAYER_ROW).
                            slot_table=slots_of.reshape(-1).contiguous(),
-                           slot_width=slots_of.shape[1], count=count,
-                           stats=stats, layout=list(plan_list))
+                           slot_width=int(slots_of.shape[-1]),
+                           slot_experts=int(slots_of.shape[1]),
+                           count=count, stats=stats, layout=list(plan_list))
             m._packed = {}
             m._packed_layers = []
+            # [T17-PERLAYER] `plan` is [layers, physical] and each layer must
+            # gather ITS OWN row. The row MUST be the same index that (a) the
+            # stats table attributes this layer's traffic to and (b) the later
+            # `shuffler.move(target_layers[i])` uses -- and both of those are
+            # driven by the same GLOBAL LIFO pop order (`components[]` order),
+            # not by the layer's position in `_pending_eplb`. Using the
+            # registration order here (the first port did) makes layer A's
+            # weights carry the placement computed from layer B's traffic,
+            # i.e. the rearrangement would be silently paired with the wrong
+            # layer. `_gidx` reproduces `components[]` order exactly.
             while m._pending_eplb:
                 layer, packed = m._pending_eplb.pop()
-                pair = sm90.gather_slot_weights(packed, buf, plan, group)
+                _row = plan[_gidx]
+                pair = sm90.gather_slot_weights(packed, buf, _row, group)
+                _LAYER_ROW[id(pair[0][0])] = int(_gidx)
+                _gidx += 1
                 m._packed[id(layer)] = pair
                 m._packed_layers.append((layer, pair))
                 layer.w13_weight._gc_packed = pair
@@ -978,7 +1282,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         # WeightShuffler wants one component list per layer, holding the active
         # GEMM tensors for that layer. GC MoE's packed pair is
         #   ((w1 data, w1 sf, w1 secondary), (w2 data, w2 sf, w2 secondary))
-        components, layer_keys = [], []
+        components, layer_keys, _names = [], [], []
         for m in modules:
             for layer, pair in m._packed_layers:
                 idx = len(components)
@@ -994,6 +1298,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                 m._eplb.setdefault('stats', stats)
                 components.append([pair[0][0], pair[0][1], pair[0][2],
                                    pair[1][0], pair[1][1], pair[1][2]])
+                _names.append(str(getattr(layer, 'layer_name', '') or ''))
                 layer_keys.append((m, layer))
 
         hosts = [None] * ranks
@@ -1008,6 +1313,16 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             raise RuntimeError('layer key collision')
         print(f'[eplb] layer map: {len(_LAYER_OF)} unique keys for '
               f'{len(components)} layers', flush=True)
+        # [T17-PERLAYER] The kernel resolves the EcoMeta row as `epoch % layers`
+        # (one dispatch call per MoE layer, in FORWARD order). That only matches
+        # this component order if the modules were constructed in forward order,
+        # so print the extracted indices: they must be 0,1,2,...,n-1.
+        import re as _re
+        _idx = [int(m.group(1)) if (m := _re.search(r'layers\.(\d+)', n)) else -1
+                for n in _names]
+        print(f'[eplb] component order (model layer idx, first 8)={_idx[:8]} '
+              f'last={_idx[-1:]} monotone_forward={_idx == sorted(_idx)}',
+              flush=True)
         self._eplb_shuffler = WeightShuffler(group, components, intranode)
         self._eplb_components = components
         self._eplb_layer_keys = layer_keys
@@ -1055,6 +1370,8 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                 num_max_tokens_per_rank=key[1], num_topk=key[2],
                 hidden=self.moe_config.hidden_dim,
                 intermediate_hidden=self.moe_config.intermediate_size,
+                # [ROLE4] Reserve the shared-expert region so role 4 can run.
+                num_shared_experts=int(os.environ.get('GC_MOE_SHARED_IN_GC', '0') or 0),
                 activation='swiglu',
                 # [SME-EPLB] only the slot count changes for EPLB.
                 physical=physical,
@@ -1098,6 +1415,103 @@ def _run_eplb_replication(model) -> None:
         live[0]._install_eplb(live)
 
 
+
+def install_role4():
+    """[ROLE4] gc_moe's role 4 owns the shared expert; vLLM must not compute it.
+
+    Why not patch `output` / drop `_shared_experts`:
+      * `MoERunner.__init__` freezes `_forward_entry = _moe_forward_shared`,
+        whose schema returns a TUPLE. Removing the object makes
+        `_maybe_combine` return a bare Tensor ->
+        "Object of type 'Tensor' is not an instance of 'sequence'".
+      * `output` is a read-only property on the class; shadowing it breaks
+        `SharedExperts.output` lookups.
+    So we keep every vLLM code path intact and neutralise the *computation*:
+    `SharedExperts._layer(shared_experts_input)` is replaced by a zero-output
+    stub. vLLM still runs its normal bookkeeping (and its `assert`s pass),
+    while the real shared term comes from gc_moe's combine kernel, which adds
+    `shared_y`. Anything non-zero from vLLM would be added twice.
+    """
+    if os.environ.get('GC_MOE_SHARED_IN_GC', '0') != '1':
+        return False
+    try:
+        from vllm.model_executor.layers.fused_moe.runner.shared_experts import (
+            SharedExperts as _SE)
+    except Exception as exc:                     # noqa: BLE001
+        print(f'[ROLE4] cannot import SharedExperts: {exc}', flush=True)
+        return False
+    if getattr(_SE, '_gc_role4_patched', False):
+        return True
+
+    class _ZeroShared(torch.nn.Module):
+        """Stand-in for the bf16 shared MLP: returns zeros, costs nothing.
+
+        It keeps the real MLP so gc_moe can quantise its weights once.
+        """
+
+        def __init__(self, real):
+            super().__init__()
+            self._real = real
+
+        def forward(self, x):
+            return torch.zeros_like(x)
+
+    _orig_init = _SE.__init__
+
+    def _init(self, layer, *a, **kw):
+        _orig_init(self, layer, *a, **kw)
+        self._gc_real_layer = layer          # real bf16 MLP (weights)
+        self._layer = _ZeroShared(layer)     # neutralised compute
+        # Append in construction order; gc_moe experts are constructed in the
+        # same layer order, so index k here <-> index k in _EXPERT_REGISTRY.
+        _SHARED_MODULES.append(self)
+
+    _SE.__init__ = _init
+
+    try:
+        from vllm.model_executor.layers.fused_moe.runner import moe_runner as _mr
+        _orig_rinit = _mr.MoERunner.__init__
+
+        _r4_n = {'i': -1}
+
+        def _rinit(self, *a, **kw):
+            _orig_rinit(self, *a, **kw)
+            se = getattr(self, '_shared_experts', None)
+            if se is not None:
+                _r4_n['i'] += 1
+                k = _r4_n['i']
+                _SE_RUNNER[id(se)] = self
+                # Pair by CONSTRUCTION ORDER: the k-th MoERunner owns the k-th
+                # FusedMoEExpertsModular, because `routed_experts` is built
+                # before the runner and appended to _EXPERT_REGISTRY there.
+                # Preferred pairing: THIS runner's own routed_experts object
+                # IS the gc_moe expert (a FusedMoEExpertsModular subclass).
+                re_obj = getattr(self, 'routed_experts', None)
+                # Compare by identity: nn.Module implements __eq__ and a plain
+                # `in` test could match a different layer.
+                hit = None
+                if re_obj is not None:
+                    for exc in _EXPERT_REGISTRY:
+                        if exc is re_obj:
+                            hit = exc
+                            break
+                if hit is not None:
+                    hit._role4_layer = self
+                elif k < len(_EXPERT_REGISTRY):
+                    _EXPERT_REGISTRY[k]._role4_layer = self
+                print(f'[ROLE4-DBG2] runner#{k} reg={len(_EXPERT_REGISTRY)} '
+                      f'identity={hit is not None}', flush=True)
+
+        _mr.MoERunner.__init__ = _rinit
+    except Exception as exc:                     # noqa: BLE001
+        print(f'[ROLE4] cannot hook MoERunner.__init__: {exc}', flush=True)
+
+    _SE._gc_role4_patched = True
+    print('[ROLE4] vLLM shared GEMM neutralised (zero stub); gc_moe role 4 owns it',
+          flush=True)
+    return True
+
+
 def rearrange_now() -> bool:
     """# [SME-EPLB] Re-plan from the statistics collected during warm-up.
 
@@ -1121,6 +1535,24 @@ def rearrange_now() -> bool:
             print('[eplb] rearrangement SKIPPED', flush=True)
         return True
 
+    # [RANDOM-ARM-FIX] `GC_MOE_SLOT_PLACEMENT=random` is the CONTROL arm: it must
+    # keep the random static placement for the whole run. `_install_eplb` gives
+    # it a random layout, but this function used to re-plan anyway, silently
+    # replacing it with a DeepInfer placement after warm-up. Measured on BS32:
+    #   random arm  rearranged ... max_copies=83  mean_replicated/layer=46.0
+    #   eplb   arm  rearranged ... max_copies=85  mean_replicated/layer=46.5
+    # i.e. the two arms were the SAME placement (IR 1.2834 vs 1.2953, a 1%
+    # difference entirely from measurement noise), so the control was void.
+    # The random arm still needs the EPLB machinery (56 slots, slot routing),
+    # it just must not re-plan; returning True keeps it recorded as an
+    # EPLB-enabled run with a frozen random placement.
+    if _slot_placement() == 'random':
+        import torch.distributed as _d
+        if _d.get_rank() == 0:
+            print('[eplb] rearrangement SKIPPED (random placement is static)',
+                  flush=True)
+        return True
+
     import torch.distributed as dist
     from gc_moe.eplb.deepinfer_periodic.policy import rebalance_experts_global
 
@@ -1136,21 +1568,67 @@ def rearrange_now() -> bool:
     from eplb_logic import demand_from_stats
     layout = m._eplb['layout']
     stats = m._eplb['stats']               # [layers, per_rank]
-    demand = demand_from_stats(stats, layout, buf.rank_idx, per_rank, experts)
-    dist.all_reduce(demand, group=dist.group.WORLD)
 
-    # B arm feeds [num_steps, num_moe_layers, num_logical_experts].
-    hist = demand.view(1, 1, experts)
+    # [T17-DUMP] Save the RAW per-(layer, slot) counters so the "per-layer vs
+    # merged placement" question can be answered on the CPU without guessing a
+    # traffic model. Purely additive: the plan below is unchanged.
+    _dump = os.environ.get('GC_EPLB_STATS_DUMP', '')
+    if _dump:
+        import numpy as _np
+        _arr = stats.detach().to('cpu').numpy()
+        _gathered = [None] * ranks
+        dist.all_gather_object(_gathered, _arr, group=dist.group.WORLD)
+        if buf.rank_idx == 0:
+            _np.savez(_dump, stats=_np.stack(_gathered),
+                      layout=_np.asarray(layout, _np.int64), per_rank=per_rank,
+                      ranks=ranks, experts=experts)
+            print(f'[t17-dump] stats saved {_dump} '
+                  f'shape={_np.stack(_gathered).shape}', flush=True)
+
+    # [T17-PERLAYER] DeepInfer plans EVERY layer separately. Its API is
+    #   rebalance_experts_global(tokens_per_expert[steps, layers, experts], ...)
+    #     -> physical_to_logical_map[layers, physical]
+    # and everything downstream in that function keeps the layer axis:
+    #   weights = tpe.sum(dim=0) / logical_count     -> [layers, experts]
+    #   loads / peaks / occupancy = zeros([layers, ...])   <- reset PER LAYER
+    #   redundancy_indices = values.sum(0).argmin(-1)      -> [layers]
+    # so layer L can give expert e three copies while layer L' gives it one.
+    #
+    # This port used to collapse the layers first (`stats.sum(0)` ->
+    # `hist.view(1, 1, experts)`), which produced ONE placement shared by all
+    # 40 layers. Measured on the real counters ([8 ranks, 40 layers, 56 slots]):
+    #   merged placement   IR mean 1.2803, worst layer 1.9484
+    #   per-layer          IR mean 1.1324, worst layer 1.2283   (+11.5%)
+    # i.e. the merged plan left whole layers with their hot experts piled onto
+    # one rank -- exactly what a single average cannot avoid.
+    per_layer = os.environ.get('GC_MOE_ECOPLB_PER_LAYER', '1') == '1'
+    n_layers = int(stats.shape[0])
+    if per_layer:
+        # [layers, experts], each layer reduced over RANKS only.
+        demand = torch.stack([
+            demand_from_stats(stats[l:l + 1], layout, buf.rank_idx,
+                              per_rank, experts)
+            for l in range(n_layers)])
+        dist.all_reduce(demand, group=dist.group.WORLD)
+        hist = demand.view(1, n_layers, experts)
+    else:
+        demand = demand_from_stats(stats, layout, buf.rank_idx, per_rank, experts)
+        dist.all_reduce(demand, group=dist.group.WORLD)
+        hist = demand.view(1, 1, experts)
 
     # --- 2. plan on rank 0, broadcast -------------------------------------
+    hist_layers = hist.shape[1]
     if buf.rank_idx == 0:
         new_plan, _, _ = rebalance_experts_global(hist, buf.physical, per_rank)
         new_plan = new_plan.contiguous()
     else:
-        new_plan = torch.empty((1, buf.physical), dtype=torch.int32,
+        new_plan = torch.empty((hist_layers, buf.physical), dtype=torch.int32,
                                device=buf.buffer.device)
     dist.broadcast(new_plan, src=0, group=dist.group.WORLD)
-    target = new_plan[0].cpu().tolist()
+    # [T17-PERLAYER] [layers, physical]; for the merged arm this is the single
+    # row broadcast to every layer so the rest of the code is shared.
+    target_layers = new_plan.cpu().tolist()
+    target = target_layers[0]
 
     # --- 3. single-copy-first permutation, BEFORE anything consumes target -
     # [ECO-WARP-FIX] The permutation MUST be applied to `target` before
@@ -1163,25 +1641,41 @@ def rearrange_now() -> bool:
     if _eco_enabled():
         from gc_moe.eco.meta_sm90 import (
             reorder_single_copy_first as _reorder_scf)
-        target, _slot_order = _reorder_scf(target, ranks)
+        # [T17-PERLAYER] The single-copy-first permutation depends on which
+        # experts got copies IN THAT LAYER, so it must be applied per layer.
+        for _l in range(len(target_layers)):
+            target_layers[_l], _slot_order = _reorder_scf(
+                list(target_layers[_l]), ranks)
         _ECO_SLOT_ORDER['order'] = _slot_order
+        target = target_layers[0]
 
     # --- 4. move weights between GPUs -------------------------------------
+    # [T17-PERLAYER] Each layer moves to ITS OWN placement; the shuffler takes
+    # one target per component (== one per layer), so no new structure is
+    # needed -- layer L now serves a different set of experts than layer L'.
     shuffler = m._eplb_shuffler
     n_layers = len(shuffler.components)
-    shuffler.move([list(layout) for _ in range(n_layers)],
-                  [list(target) for _ in range(n_layers)])
+    if len(target_layers) == 1:
+        move_targets = [list(target_layers[0]) for _ in range(n_layers)]
+    elif len(target_layers) == n_layers:
+        move_targets = [list(t) for t in target_layers]
+    else:
+        raise RuntimeError(f'{len(target_layers)} placements but '
+                           f'{n_layers} layers')
+
+    shuffler.move([list(layout) for _ in range(n_layers)], move_targets)
 
     # --- 5. repoint routing ----------------------------------------------
-    new_t, slots_of = m._gc.sm90_gc.install_eplb_plan(buf, target)
+    # [T17-PERLAYER] slot_logical / expert_slots also become per-layer.
+    new_t, slots_of = m._gc.sm90_gc.install_eplb_plan(buf, target_layers)
+    # [T17-PERLAYER] copy COUNTS are per layer: the placement differs per layer,
+    # so a max-across-layers count would let the RR gate pick a copy index that
+    # does not exist in that layer (slots_of == -1 there, token dropped).
     count = (slots_of >= 0).sum(-1).clamp_min(1)
     if _eco_enabled():
-        # [ECO-SM90] The plan reads EcoMeta's copies/phy2log, so a new
-        # placement must rewrite it, and the warm start must not inherit
-        # quotas from the previous (now different) placement.
         from gc_moe.eco.meta_sm90 import (
             install_into_buffer as _install_eco_meta)
-        _install_eco_meta(buf, [int(x) for x in target], ranks, experts)
+        _install_eco_meta(buf, target_layers, ranks, experts)
         with torch.inference_mode():
             # The warm start must not survive a placement change: the quotas
             # are indexed by physical slot and would describe a different
@@ -1205,6 +1699,8 @@ def rearrange_now() -> bool:
             # for the new epoch.
         if buf.rank_idx == 0:
             print('[eco] meta re-installed after rearrangement', flush=True)
+    # [T17-PERLAYER] Republish the WHOLE per-layer table, not layer 0's row:
+    # the RR gate indexes it by the layer that owns the packed pair.
     for mod in live:
         mod._eplb['slot_table'].copy_(slots_of.reshape(-1))
         mod._eplb['count'].copy_(count)
@@ -1213,10 +1709,16 @@ def rearrange_now() -> bool:
         with torch.inference_mode():
             mod._eplb['stats'].zero_()
     if buf.rank_idx == 0:
-        copies = torch.bincount(torch.tensor(target), minlength=experts)
+        _tg = torch.as_tensor(target_layers)
+        copies = torch.bincount(_tg.reshape(-1), minlength=experts)
+        _per = [(torch.bincount(_tg[l], minlength=experts) > 1).sum()
+                for l in range(len(target_layers))]
         print(f'[eplb] rearranged: slots={buf.physical} per_rank={per_rank} '
-              f'max_copies={int(copies.max())} '
-              f'replicated={int((copies > 1).sum())}', flush=True)
+              f'layers={len(target_layers)} '
+              f'max_copies(all-layers)={int(copies.max())} '
+              f'max_replicated/layer={int(max(_per))} '
+              f'mean_replicated/layer={sum(int(x) for x in _per) / len(_per):.1f}',
+              flush=True)
     return True
 
 
@@ -1477,7 +1979,18 @@ def irstep_begin() -> None:
     # role passes to `_ir_step_write` -- unlike `eco_tl_step`, which only the
     # ECO arm publishes (the vanilla arm would anchor at 0).
     with torch.inference_mode():
-        mark[0] = buf.header[0].to(mark.dtype)   # epoch0
+        # [IRSTEP-ANCHOR-FIX] `header[0]` is written by the dispatch KERNEL, so
+        # under CUDA-graph replay the HOST copy read here is stale -- it lags by
+        # however many calls were captured. Measured on ALIGNEDQ: mark[0] landed
+        # on 15001 while `pull_tl` (which reads `eco_tl_step` inside the kernel)
+        # covered 15225..15480, i.e. the two tables were keyed in DIFFERENT epoch
+        # spaces and could not be joined at all.
+        # `eco_tl_step` is republished by dispatch at the TOP OF EVERY CALL, so
+        # it names the call that is about to run. Read it BEFORE writing mark[0].
+        _step = getattr(buf, 'eco_tl_step', None)
+        _epoch_now = (int(_step[0].item()) if _step is not None
+                      else int(buf.header[0].item()))
+        mark[0] = _epoch_now                    # epoch0 (same space as pull_tl)
         mark[1] = 0
     # [ECO-FINE-FLOOR] Anchor the FINE event log to the measured window too.
     #
@@ -1496,9 +2009,15 @@ def irstep_begin() -> None:
     ctr = getattr(buf, 'fine_ctr', None)
     if floor is not None:
         with torch.inference_mode():
-            floor[0] = buf.header[0].to(floor.dtype)
+            floor[0] = torch.tensor(_epoch_now, dtype=floor.dtype,
+                                    device=floor.device)
             if ctr is not None:
                 ctr[0] = 0
+        # `eco_tl_step` names the call that JUST finished, so the window's first
+        # layer is floor+1. Anchor one layer early and let the kernel's own
+        # [floor, floor+FINE_EPOCHS) window cover it; FINE_EPOCHS must be >= 2.
+        print(f'[fine-floor] anchored at epoch {_epoch_now} '
+              f'(window starts ~{_epoch_now + 1})', flush=True)
     return True
 
 
@@ -1518,6 +2037,7 @@ def irstep_end() -> dict:
     tbl = getattr(buf, 'ir_step', None)
     mb_tbl = getattr(buf, 'ir_step_mb', None)
     ae_tbl = getattr(buf, 'ir_step_ae', None)
+    ep_tbl = getattr(buf, 'ir_step_epoch', None)
     mark = getattr(buf, 'ir_step_mark', None)
     if tbl is None:
         return {'ok': False, 'reason': 'no ir_step table'}
@@ -1530,10 +2050,14 @@ def irstep_end() -> dict:
                    if mb_tbl is not None else None)
         rows_ae = (ae_tbl[:layers * steps].view(layers, steps).cpu().tolist()
                    if ae_tbl is not None else None)
+        # [IR-STEP-EPOCH] kernel-written epoch per cell; the only exact key for
+        # joining this table with pull_tl.
+        rows_ep = (ep_tbl[:layers * steps].view(layers, steps).cpu().tolist()
+                   if ep_tbl is not None else None)
         e0 = int(mark[0].item()) if mark is not None else 0
     return {'ok': True, 'rank': int(buf.rank_idx), 'layers': layers,
             'steps': steps, 'epoch0': e0, 'rows': rows,
-            'rows_mb': rows_mb, 'rows_ae': rows_ae}
+            'rows_mb': rows_mb, 'rows_ae': rows_ae, 'rows_epoch': rows_ep}
 
 
 def ir_begin() -> None:
@@ -1735,10 +2259,26 @@ def _install_worker_rpc() -> None:
                 out['slots'] = [int(v) for v in tr.cpu().tolist()]
             ptl = getattr(buf, 'pull_tl', None)
             if ptl is not None:
-                out['pull_rows'] = ptl.view(256, 10).cpu().tolist()
+                # [RANK-TS] 14 slots per row (was 10); slots 10..13 hold the
+                # per-rank dispatch/compute/combine stamps. Derive the width
+                # from the buffer so the two can never disagree again.
+                _n = int(ptl.numel()) // 256
+                out['pull_rows'] = ptl.view(256, _n).cpu().tolist()
             ftl = getattr(buf, 'fine_tl', None)
             if ftl is not None:
-                out['fine_rows'] = ftl.view(65536, 8).cpu().tolist()
+                # [ABSTRACE] 10 words per record now (ntile / phase added for
+                # the absolute-time figure). The capacity matches the layout
+                # reserve (GC_MOE_FINE_RECS, default 262144).
+                _recs = int(os.environ.get('GC_MOE_FINE_RECS', '262144'))
+                out['fine_rows'] = ftl.view(_recs, 10).cpu().tolist()
+                out['fine_recs'] = _recs
+                # [ABSTRACE] the ring counter tells the analyser how many
+                # records were written in total, so it can sort the wrapped
+                # rows back into emission order.
+                _ctr = getattr(buf, 'fine_ctr', None)
+                if _ctr is not None:
+                    torch.cuda.synchronize()
+                    out['fine_count'] = int(_ctr[0].item())
             em = getattr(buf, 'eco_meta', None)
             if em is not None:
                 out['eco_meta'] = [int(v) for v in em.cpu().tolist()]
@@ -1771,6 +2311,62 @@ def _install_worker_rpc() -> None:
             return out
 
         Worker._gc_moe_eco_trace_dump = gc_moe_eco_trace_dump
+
+    if getattr(Worker, '_gc_moe_prof_start', None) is None:
+
+        def gc_moe_prof_start(self, out_dir: str) -> bool:
+            """[PROF] Begin a torch profile on THIS worker's stream.
+
+            Under ENFORCE_EAGER=1 gc_moe launches its four roles as separate
+            kernels (no child graph), so a per-worker profile sees them
+            individually: role1 dispatch (routing/counts + token pull), role4
+            shared expert, role2 routed GEMM and role3 combine.
+
+            Each worker writes its own chrome trace, so the analyser can plot
+            one decode step with the 8 ranks on the y axis.
+            """
+            import os
+            import torch
+            from torch.profiler import profile, ProfilerActivity
+
+            r = 0
+            try:
+                import torch.distributed as dist
+                if dist.is_initialized():
+                    r = dist.get_rank()
+            except Exception:                       # noqa: BLE001
+                pass
+            os.makedirs(out_dir, exist_ok=True)
+            self._gc_prof_path = os.path.join(out_dir, f'rank{r}.json')
+            self._gc_prof = profile(
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                record_shapes=False, with_stack=False, profile_memory=False)
+            self._gc_prof.__enter__()
+            torch.cuda.synchronize()
+            return True
+
+        Worker._gc_moe_prof_start = gc_moe_prof_start
+
+    if getattr(Worker, '_gc_moe_prof_stop', None) is None:
+
+        def gc_moe_prof_stop(self) -> dict:
+            """[PROF] Stop this worker's profile and export its chrome trace."""
+            import torch
+            torch.cuda.synchronize()
+            out = {'ok': True}
+            try:
+                p = getattr(self, '_gc_prof', None)
+                if p is not None:
+                    p.__exit__(None, None, None)
+                path = getattr(self, '_gc_prof_path', None)
+                if path:
+                    p.export_chrome_trace(path)
+                    out['path'] = path
+            except Exception as exc:                # noqa: BLE001
+                out = {'ok': False, 'error': str(exc)[:300]}
+            return out
+
+        Worker._gc_moe_prof_stop = gc_moe_prof_stop
 
     if getattr(Worker, '_gc_moe_sync', None) is None:
 
@@ -2001,3 +2597,8 @@ def register() -> None:
             _base_loader.process_weights_after_loading = process_weights_after_loading
 
 register()
+
+# [ROLE4] gc_moe computes the shared expert itself (role 4); vLLM must not.
+# MUST be at module scope: inside `register()` it only ran when that function
+# was called, and the vLLM classes were already imported by then.
+install_role4()

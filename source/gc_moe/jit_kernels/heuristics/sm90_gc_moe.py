@@ -23,7 +23,36 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
         tile_m = 8 if small_pipelined else (16 if expected_rows <= 12 else (32 if expected_rows <= 24 else 64))
     else:
         tile_m = 8 if config.bound <= 16 else 16
+    # [T4-BMSCAN] Force the M-block height so the block_m scan can be measured
+    # on real hardware. SM90's shared-memory cap allows 16/32/64 only
+    # (tile_m=64 already needs 199 KB of the 232 KB budget); an unsupported
+    # value must fail loudly instead of silently falling back, otherwise the
+    # scan would compare two identical builds.
+    import os as _osb
+    _bm = int(_osb.environ.get('GC_MOE_BLOCK_M_FORCE', '0') or 0)
+    if _bm:
+        if _bm not in (16, 32, 64):
+            raise ValueError(f'GC_MOE_BLOCK_M_FORCE={_bm} unsupported on SM90 '
+                             '(only 16/32/64 fit the shared-memory budget)')
+        tile_m = _bm
     workers = (1 if tile_m == 64 else 2) if pipelined else (3 if tile_m == 8 else 2)
+    import os as _osw
+    if _osw.environ.get('GC_MOE_FORCE_WORKERS'):
+        workers = int(_osw.environ['GC_MOE_FORCE_WORKERS'])
+    # [T4-ECO-WORKERS] With ECO the plan role (5) must own a WHOLE SM: it is
+    # only schedulable once an SM is completely free (2 co-resident CTAs already
+    # starved it, see the note below). At tile_m=64 the compute partition runs
+    # `workers=1`, so `(compute_sms - 1) * 1` CTAs leave exactly one SM idle and
+    # the plan fits. At tile_m=32/16 `workers=2`, and `(compute_sms - 1) * 2`
+    # CTAs pack 2 CTAs onto each of the first 71 SMs -- the 72nd SM is free but
+    # the plan CTA still never gets scheduled, and the call DEADLOCKS (measured:
+    # BS32 smoke hung in CUDA-graph capture at 34/51 buckets, GPU 100%, forever;
+    # forcing workers=1 made the same build finish capture and run at
+    # 13.29 ms/step). Pin workers to 1 when ECO is on: the routed role is
+    # persistent and grid-strides over M blocks, so one CTA per SM still covers
+    # all the work, it just runs a deeper per-CTA loop.
+    if getattr(config, 'eco_logical_experts', 0) and workers > 1:
+        workers = 1
     if pipelined:
         stage_bytes = (17408 + tile_m * 132 + 1023) // 1024 * 1024
         stages = 5 if tile_m == 64 else (3 if tile_m == 32 else 4)

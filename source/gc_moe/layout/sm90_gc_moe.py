@@ -66,18 +66,40 @@ class SM90GCBufferLayout:
         reserve('expert_ready', (local,), 'int32', 4)
         reserve('expert_count', (local,), 'int32', 4)
         reserve('l1_done', (local,), 'int32', 4)
-        reserve('active_expert', (local,), 'int32', 4)
-        reserve('active_ready', (local,), 'int32', 4)
+
+        # [MB-CLAIM] One ACTIVE TICKET PER M BLOCK, not per (expert, ntile).
+        #
+        # `head+7` hands out monotonic tickets, so a ticket can never be
+        # revisited: with one ticket per tile, a tile's 2nd/3rd block could only
+        # be reached by the same producer CTA looping inside one ticket, which
+        # is exactly the serialisation that collapsed the tail (measured:
+        # expert 46 = 184 tokens = 3 blocks of one ntile, one CTA busy
+        # 655->729 us while 51 CTAs idled).
+        #
+        # Publishing one ticket per (expert, ntile, mblock) lets every block be
+        # claimed independently by any free CTA. Bound: at most `capacity`
+        # tokens per expert, i.e. ceil(capacity/max_m) blocks; 64 covers
+        # cap=2048 at block_m=64. `active_count` is compared against these
+        # tickets only, so the extra rows cost nothing when unused.
+        reserve('active_expert', (local * 64,), 'int32', 4)
+        reserve('active_ready', (local * 64,), 'int32', 4)
+        # [MB-CLAIM] mblock carried alongside each ticket (one word per ticket).
+        reserve('active_mb', (local * 64,), 'int32', 4)
         reserve('compute_ready', (ranks,), 'int32', 4)
         reserve('combine_block_done', (1024,), 'int32', 4)
         reserve('send_count', (physical,), 'int32', 4)
         reserve('source_index', (local, ranks, capacity), 'int32', 4)
-        # slot_logical[g]: the logical expert served by physical slot g.
-        # Read-only; the host fills it once from the EPLB plan.
-        reserve('slot_logical', (physical,), 'int32', 4)
-        # expert_slots[e*max_rep + k]: physical slot ids holding a copy of
-        # logical expert e (-1 = unused). The router picks one per token.
-        reserve('expert_slots', (experts, 4), 'int32', 4)
+        # [T17-PERLAYER] slot_logical[layer][g]: the logical expert served by
+        # physical slot g IN THAT LAYER. DeepInfer plans every layer
+        # separately, so this table cannot be shared across layers -- doing so
+        # measured IR 1.2803 vs 1.1324 for the per-layer form.
+        _nl_slot = int(os.environ.get('GC_MOE_LAYERS', '40'))
+        reserve('slot_logical', (_nl_slot, physical), 'int32', 4)
+        # expert_slots[layer][e][k]: physical slot ids holding a copy of
+        # logical expert e in that layer (-1 = unused). MAX_REPLICAS = 8
+        # because a per-layer plan concentrates more copies on one expert
+        # (measured up to 16/layer); the host-side reader clamps at 8.
+        reserve('expert_slots', (_nl_slot, experts, 8), 'int32', 4)
         # ── ECO (EPLB placement + online plan) ───────────────────────────
         # Only allocated when `eco` is on, so the plain path keeps its exact
         # byte layout. Sizes use PHYSICAL slots (physical = ranks*local).
@@ -105,8 +127,26 @@ class SM90GCBufferLayout:
             # sequence (each plan would have to wait for its own predecessor
             # to be completely done, in the same CTA).
             reserve('eco_counts', (2 * ranks * physical,), 'int32', 4)
-            reserve('eco_meta', (16 + experts * 16 + physical + ranks,), 'int32', 4)
-            reserve('eco_state', (2 * physical,), 'int32', 4)
+            # [T17-PERLAYER] One EcoMeta row per MoE layer: DeepInfer plans
+            # every layer separately (its map is [layers, physical]), so the
+            # copy counts and the slot->expert table differ per layer.
+            # `layers` comes from the compile-time geometry below.
+            # The layer count comes from the same env the kernel reads
+            # (`GC_MOE_LAYERS`, default 40) so the two cannot disagree.
+            _nlay = int(os.environ.get('GC_MOE_LAYERS', '40'))
+            reserve('eco_meta',
+                    (_nlay * (16 + experts * 16 + physical + ranks),),
+                    'int32', 4)
+            # [T17-PERLAYER] The warm start (`_eco_do_warm`) reads the PREVIOUS
+            # call's per-slot quotas and per-expert counts and reuses as much of
+            # them as it can. Under per-layer placement that previous call ran a
+            # DIFFERENT layer, i.e. a different slot->expert map: the inherited
+            # "units" would describe slots that hold other experts, so the warm
+            # plan would hand a hot expert's tokens to a slot that cannot compute
+            # them (or leave real copies with no quota). One row per layer keeps
+            # the warm start meaningful -- call it on layer L and it sees layer
+            # L's own previous plan, one decode step earlier.
+            reserve('eco_state', (_nlay * 2 * physical,), 'int32', 4)
             # [ECO-MEAS] ECO timeline trace: 32 slots x 8B of globaltimer ns.
             #   [0..5]  stage timestamps (store)
             #   [24]    role-1 start of this call (graph-replay anchor)
@@ -125,6 +165,16 @@ class SM90GCBufferLayout:
         if self.trace:
             reserve('eco_tl', (256 * 21,), 'int32', 4)
             reserve('eco_tl_ctr', (16,), 'int32', 4)
+            reserve('eco_tl_step', (1,), 'int32', 4)
+        elif os.environ.get('GC_MOE_PULL_TRACE') == '1':
+            # [PHASES] The compute role needs a NON-STALE name for the call it
+            # is serving: `header[0]` is captured once at kernel entry by a
+            # resident CTA, so on every later call it still holds an old epoch
+            # and its "first task" stamp lands in another call's row
+            # (measured: 18/256 rows off by ~2^31 us). Dispatch republishes
+            # `eco_tl_step` at the top of every call, so reserving it for the
+            # pull trace too gives the stamp an exact row without turning on
+            # the whole ECO timeline.
             reserve('eco_tl_step', (1,), 'int32', 4)
 
         # [IR-STEP] [layer][step] per-rank token counts, filled by the
@@ -174,7 +224,24 @@ class SM90GCBufferLayout:
         # ★ [8]/[9] exist because `eco_trace` (slots 14/15) is only allocated
         # in an ECO layout, so the vanilla arm had NO combine measurement.
         if os.environ.get('GC_MOE_PULL_TRACE') == '1':
-            reserve('pull_tl', (256 * 10,), 'int32', 4)
+            # [RANK-TS] 14 slots now (was 10). The 4 extra ones hold the
+            # per-rank MoE cost stamps the earlier measurement could not
+            # provide:
+            #   [10] dispatch kernel entry     [11] compute kernel exit
+            #   [12] combine kernel entry      [13] combine kernel exit
+            #   [15] first compute CTA got a task (min)
+            #   [16]/[17] reserved for a shared-expert span.  NOTE: on this
+            #         model the shared expert is NOT a gc_moe role at all --
+            #         vLLM runs it as `vllm::moe_forward_shared` (nvjet + 2
+            #         marlin GEMMs) on its own stream, so these two slots are
+            #         never written and the span is read from the trace.
+            #   [24..31] ECO plan's exported T[r] (one per rank).  This USED
+            #         to be 14+r, which overwrote slots 15/16/17 and made the
+            #         "first GEMM task" stamp read back as a plan unit count
+            #         (measured: 33753 us instead of ~a few hundred).
+            # plus two atomic counters used to elect "the last CTA to leave"
+            # (rows 254 and 255, column 10/11), so no header slot is needed.
+            reserve('pull_tl', (256 * 32,), 'int32', 4)
 
         # [ECO-FINE] Fine-grained single-call event log. One flat array of
         # fixed 8-word records, appended through ONE global counter, so the
@@ -187,7 +254,13 @@ class SM90GCBufferLayout:
         # without any reset (a reset would race resident CTAs).
         # 65536 x 8 x 4 B = 2 MB per rank, only when the switch is on.
         if os.environ.get('GC_MOE_FINE_TRACE') == '1':
-            reserve('fine_tl', (65536 * 8,), 'int32', 4)
+            # [ABSTRACE] 10 words per record (was 8): the absolute-time figure
+            # needs ntile and the M-block index next to expert/start/valid, so
+            # every GEMM slice can be labelled "expert E, ntile T, M-block b".
+            # Record: [0] t_us [1] type [2] id [3] a0 [4] a1 [5] a2
+            #         [6] a3 [7] a4 [8] epoch [9] (reserved)
+            _at_recs = int(os.environ.get('GC_MOE_FINE_RECS', '262144'))
+            reserve('fine_tl', (_at_recs * 10,), 'int32', 4)
             reserve('fine_ctr', (1,), 'int32', 4)
             # [ECO-FINE] Per-CTA spin state (0 = busy, 1 = already logged a
             # spinstreak). Edge detection needs the PREVIOUS state of a CTA,
@@ -197,7 +270,9 @@ class SM90GCBufferLayout:
             # [ECO-FINE] active_slot -> the layer epoch that dispatch published
             # for its expert. A resident consumer CTA cannot use `header[0]`
             # (stale) nor `eco_tl_step` (names the NEWEST call, not this task).
-            reserve('fine_lay', (physical,), 'int32', 4)
+            # [MB-CLAIM] indexed by ACTIVE TICKET, and tickets are now
+            # per-M-block, so this must match `active_expert`'s new size.
+            reserve('fine_lay', (local * 64,), 'int32', 4)
             # [ECO-FINE] expert -> layer epoch (what `_consume_tasks` can see,
             # since its task record only carries the expert id).
             reserve('fine_epx', (experts,), 'int32', 4)
@@ -210,6 +285,10 @@ class SM90GCBufferLayout:
             # real value is ~128). Records below the floor are dropped in the
             # kernel, so the log holds decode calls only.
             reserve('fine_floor', (1,), 'int32', 4)
+            # [ABSTRACE] 64-bit origin for the record timestamps: the raw
+            # globaltimer//1000 overflows int32 (measured: negative us), so
+            # every record stores `now_us - t0` and t0 lives here as two words.
+            reserve('fine_t0', (2,), 'int32', 4)
 
         reserve('x', (capacity, hidden), 'float8_e4m3fn', 1)
         reserve('x_sf', (capacity, hidden // 128), 'float32', 4)
