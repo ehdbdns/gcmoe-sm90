@@ -89,8 +89,15 @@ def rank_detail(row, fine, epoch):
             'fine pull tail disagrees with coarse pull completion')
 
     plan_waits = []
-    starts = [rec for rec in rows if rec[1] == 3 and rec[4] == 0]
-    end_rows = [rec for rec in rows if rec[1] == 3 and rec[4] == 1]
+    # [FINE-FIELD] A record is [ts, type, id, a0, a1, a2, a3, ...]. The
+    # begin/released flag of a type-3 replica-plan wait lives in a0 (index 3);
+    # index 4 is a1, which this record never sets (kernel passes a0=0/1 and
+    # leaves a1..a3 zero). Reading rec[4] here made every wait look like an
+    # unpaired "start", so the parse aborted with
+    # 'unpaired replica plan waits' although the trace is correctly paired
+    # (a0 histogram on rank 0 / epoch 14729: {0: 12, 1: 12}).
+    starts = [rec for rec in rows if rec[1] == 3 and rec[3] == 0]
+    end_rows = [rec for rec in rows if rec[1] == 3 and rec[3] == 1]
     ends = {rec[2]: rec for rec in end_rows}
     require(len(starts) == len(end_rows) == len(ends)
             and {rec[2] for rec in starts} == set(ends),
