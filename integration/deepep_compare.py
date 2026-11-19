@@ -2312,7 +2312,7 @@ def _install_worker_rpc() -> None:
 
         Worker._gc_moe_eco_trace_dump = gc_moe_eco_trace_dump
 
-    def gc_moe_profile_snapshot(self, first_epoch=None, layers=None):
+    def gc_moe_profile_snapshot(self, first_epoch=None):
         """Read the live workspace after draining this worker's GPU."""
         torch.cuda.synchronize()
         buffers = {id(m._buffer): m._buffer for m in _EXPERT_REGISTRY
@@ -2323,9 +2323,9 @@ def _install_worker_rpc() -> None:
         next_epoch = int(buf.header[0].item())
         out = dict(rank=int(buf.rank_idx), next_epoch=next_epoch, topk=int(buf.num_topk))
         if first_epoch is not None:
-            if next_epoch - first_epoch != layers:
-                raise RuntimeError(f'rank {buf.rank_idx}: expected {layers} calls, '
-                                   f'epoch advanced {next_epoch - first_epoch}')
+            advanced = next_epoch - first_epoch
+            if not 1 <= advanced <= buf.pull_tl.shape[0] // 32:
+                return dict(out, error=f'epoch advance {advanced} outside the trace ring capacity')
             stamps = buf.pull_tl.view(256, 32).cpu().tolist()
             counts = buf.profile_slot_counts.cpu().tolist()
             out['calls'] = []
@@ -2333,7 +2333,8 @@ def _install_worker_rpc() -> None:
                 slot = epoch % 256
                 stamp = stamps[slot]
                 if stamp[0] != epoch:
-                    raise RuntimeError(f'rank {buf.rank_idx}: missing epoch {epoch}')
+                    out.setdefault('missing_epochs', []).append(epoch)
+                    continue
                 out['calls'].append(dict(epoch=epoch, stamps=stamp, owned=counts[slot]))
         return out
 

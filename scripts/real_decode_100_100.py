@@ -901,16 +901,28 @@ def main():
         if capture_id is not None:
             if len(ok) != ranks:
                 raise RuntimeError(f'missing worker trace exports: {info}')
-            workers = engine.collective_rpc('_gc_moe_profile_snapshot',
-                                            args=(first_epoch, aligned_layers))
+            workers = engine.collective_rpc('_gc_moe_profile_snapshot', args=(first_epoch,))
             decode_counts = {o.request_id: len(o.outputs[0].token_ids)
                              for o in outputs if o.outputs and o.outputs[0].token_ids}
+            manifest = dict(id=capture_id, gemm_start='first_valid_cta_claim',
+                            label=a.label, step=flush, layers=aligned_layers,
+                            first_epoch=first_epoch, decode_tokens=nseq, ranks=workers)
+            advances = {w['rank']: w['next_epoch'] - first_epoch for w in workers}
+            errors = []
+            if len(workers) != ranks or set(advances) != set(range(ranks)):
+                errors.append('missing or duplicate worker snapshots')
+            if any(advanced != aligned_layers for advanced in advances.values()):
+                errors.append(f'expected {aligned_layers} calls per rank, observed {advances}')
+            if any(w.get('error') or w.get('missing_epochs')
+                   or len(w.get('calls', ())) != aligned_layers for w in workers):
+                errors.append('incomplete device call interval')
             if len(decode_counts) != nseq or set(decode_counts.values()) != {1}:
-                raise RuntimeError('the captured step did not generate one token per sequence')
-            with open(os.path.join(a.profile_out, 'capture.json'), 'w') as fh:
-                json.dump(dict(id=capture_id, gemm_start='first_valid_cta_claim',
-                               label=a.label, step=flush, layers=aligned_layers,
-                               first_epoch=first_epoch, decode_tokens=nseq, ranks=workers), fh)
+                errors.append('the captured step did not generate one token per sequence')
+            name = 'capture.json' if not errors else 'capture.invalid.json'
+            with open(os.path.join(a.profile_out, name), 'w') as fh:
+                json.dump(dict(manifest, errors=errors) if errors else manifest, fh)
+            if errors:
+                raise RuntimeError('; '.join(errors) + f'; device snapshots saved in {name}')
     _sync()                       # last real work still queued on the GPUs
     window_s = time.perf_counter() - t0
     ir = {}
