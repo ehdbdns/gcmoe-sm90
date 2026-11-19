@@ -220,3 +220,48 @@ rank0 / epoch 14729 / type3:  a0 分布 {0: 12, 1: 12}   ← 完美配对
   需要 type 4/5 的票号与 `active_ready` 序列做联合分析，或新增 CTA 领任务的细打点。
 - **layer 20 rank 7 只有 116 tok**（其余 206–240），放置极不均衡，与 layer 8 的机理不同，
   需要单看该层的 EPLB 输出。
+
+---
+
+## 8. 图（本轮补充）
+
+任务书 §4 未要求 PNG，按用户要求补充。四张图与绘图脚本都在
+`docs/trace_executor_20261119/fine_results/`：
+
+| 文件 | 内容 |
+|---|---|
+| `step002_layer08_epoch14729.detail.png` | layer 8：全部 56 槽 pull 跨度 + 活跃 CTA + 全部 tile + 热点槽放大 |
+| `step002_layer20_epoch14741.detail.png` | layer 20：同上 |
+| `step002_layer08_epoch14729.tail.png` | layer 8 主卡热点的**尾部拆解条**（pull / 等L1 / L1 / 空档 / L2 / push）|
+| `step002_layer20_epoch14741.tail.png` | layer 20 同上 |
+| `plot/plot_detail.py`、`plot/plot_tail.py` | 生成脚本（只读已验收的 detail.json）|
+
+### 图里发现的新证据：L1 与 L2 之间有 96 / 157 µs 的空档
+
+尾部拆解把热点的 486 µs（layer 8）/ 545 µs（layer 20）分成五段：
+
+| 层 | pull→L1 | L1 (162 tiles) | **L1→L2 空档** | L2 (180 tiles) | L2→exit |
+|---|---:|---:|---:|---:|---:|
+| layer 8 (rank 6) | 115 | 184 | **96** | 86 | 5 |
+| layer 20 (rank 2) | 136 | 165 | **157** | 87 | 6 |
+
+关键点：**这段空档不是在等别的槽的 L1**。该层**其它槽的最后 L1 分别在 487 µs（layer 8）/
+557 µs（layer 20）就结束了**，而热点槽的 L2 要到 714 µs / 826 µs 才开始 —— 空档远大于
+「等其它 L1 结束」所需的时间。
+
+因此 layer 8 / layer 20 的尾部结构是：
+
+```
+pull ──(等L1)── L1(162 tiles) ──(空档 96/157 µs)── L2(180 tiles, 86/87 µs) ── push ── exit
+                                                                    ↑
+                                                    这一段才是真正的拖尾主因
+```
+
+这修正了 §3 问题 3 里「L1→L2 是连续串行链」的表述：**L2 的启动被推迟了约 100–160 µs，
+而推迟的原因不在已观测的 L1 完成时刻上**。可能来源（现有打点无法区分）：
+
+1. L2 需要等该专家**全部 M 块**的 L1 完成（含跨 rank 的副本），而 detail 只记录了本 rank 的 L1；
+2. L2 的 activation 要等上一层 L2 的 push 落地，形成跨层依赖；
+3. L2 tile 的领取排队（票号/`active_ready`）。
+
+**这是本轮最值得继续追的一条线索**，需要跨 rank 的 L1 完成时刻，或 L2 tile 的领取打点。
