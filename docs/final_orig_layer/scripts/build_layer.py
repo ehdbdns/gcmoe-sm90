@@ -73,20 +73,31 @@ def build(rows_by_rank, pulls, epoch, t0):
         p = pulls[r][epoch]
         d0 = st(D)
         d_end = en(D)                       # dispatch kernel's own end
-        count_ex = p[3] - p[10]
-        # The kernel stamp can finish a few us after CUPTI closes the launch
-        # (median -2.3 us, p90 +39 us); clamp to the launch so the segment
-        # never leaves its own kernel.
+        count_ex = p[3] - p[10]             # routing + count exchange
+        # Two DIFFERENT "token readiness" instants, and only one of them is the
+        # GEMM start:
+        #   [15] = first compute CTA actually HOLDS a task  -> GEMM starts here
+        #   [5]  = LAST local slot finished pulling         -> dispatch is done
+        # Between them, CTAs that already have work are computing while later
+        # slots are still landing. Using [5] as the GEMM start (an earlier
+        # version did) invents a wait that does not exist.
+        first_task = d0 + (p[15] - p[10])
         pull_done = min(d0 + (p[5] - p[10]), d_end)
         rout_start, rout_end = st(R), en(R)
-        wait_end = min(max(pull_done, rout_start), rout_end)
+        # NOTE: `first_task` and `rout_start` come from different clock domains
+        # (kernel globaltimer vs CUPTI), so their difference scatters by ~±15 us
+        # (measured: -14..+16 over 256 calls, median +3.8). A negative value
+        # means "the first task is ready no later than the kernel starts", i.e.
+        # there is nothing to wait for. Report the raw value in `checks` and
+        # clamp only for drawing.
+        gemm_start = min(max(first_task, rout_start), rout_end)
         seg[r] = {
             'count exchange': (d0, d0 + count_ex),
             'pull token': (d0 + count_ex, pull_done),
             'shared L1+L2': (st(S), en(S)),
             'ECO plan': (st(P), en(P)),
-            'wait token': (rout_start, wait_end),
-            'GEMM': (wait_end, rout_end),
+            'wait token': (rout_start, gemm_start),
+            'GEMM': (gemm_start, rout_end),
             'combine': (st(C), en(C)),
         }
         ker[r] = {'dispatch': (d0, en(D)), 'shared': (st(S), en(S)),
@@ -102,8 +113,10 @@ def build(rows_by_rank, pulls, epoch, t0):
                 seg[r]['count exchange'][1] - seg[r]['pull token'][0], 9),
             'wait_plus_gemm_minus_routed': round(
                 (w[1] - w[0]) + (g[1] - g[0]) - (rout_end - rout_start), 6),
-            'pull_done_minus_routed_start': round(pull_done - rout_start, 1),
-            'pull_window_raw': round(p[5] - p[10], 1),
+            'first_task_delay_us': round(p[15] - p[10], 1),
+            'all_slots_done_us': round(p[5] - p[10], 1),
+            'gemm_starts_before_all_slots_done': bool(p[15] < p[5]),
+            'gemm_start_minus_routed_start_raw_us': round(first_task - rout_start, 1),
             'dispatch_dur': round(D['dur'], 1),
             'pull_overshoot_clamped_us': round(max(0.0, d0 + (p[5] - p[10]) - d_end), 1),
         })

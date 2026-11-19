@@ -85,10 +85,10 @@
    ],
    "wait token": [
     197.94775390625,
-    547.64599609375
+    197.94775390625
    ],
    "GEMM": [
-    547.64599609375,
+    197.94775390625,
     984.255859375
    ],
    "combine": [
@@ -115,10 +115,10 @@
    ],
    "wait token": [
     200.2197265625,
-    285.01953125
+    200.2197265625
    ],
    "GEMM": [
-    285.01953125,
+    200.2197265625,
     788.57275390625
    ],
    "combine": [
@@ -145,10 +145,10 @@
    ],
    "wait token": [
     198.44091796875,
-    356.671875
+    204.671875
    ],
    "GEMM": [
-    356.671875,
+    204.671875,
     804.8447265625
    ],
    "combine": [
@@ -175,10 +175,10 @@
    ],
    "wait token": [
     195.64892578125,
-    322.15087890625
+    198.15087890625
    ],
    "GEMM": [
-    322.15087890625,
+    198.15087890625,
     819.90869140625
    ],
    "combine": [
@@ -205,10 +205,10 @@
    ],
    "wait token": [
     194.1767578125,
-    597.0
+    197.0
    ],
    "GEMM": [
-    597.0,
+    197.0,
     1138.95068359375
    ],
    "combine": [
@@ -235,10 +235,10 @@
    ],
    "wait token": [
     196.43701171875,
-    255.8759765625
+    204.8759765625
    ],
    "GEMM": [
-    255.8759765625,
+    204.8759765625,
     751.9912109375
    ],
    "combine": [
@@ -265,10 +265,10 @@
    ],
    "wait token": [
     195.22900390625,
-    428.5166015625
+    207.5166015625
    ],
    "GEMM": [
-    428.5166015625,
+    207.5166015625,
     837.18310546875
    ],
    "combine": [
@@ -295,10 +295,10 @@
    ],
    "wait token": [
     192.49169921875,
-    336.9228515625
+    200.9228515625
    ],
    "GEMM": [
-    336.9228515625,
+    200.9228515625,
     763.69287109375
    ],
    "combine": [
@@ -493,8 +493,10 @@
    "combine_start_minus_routed_end": 2.784,
    "count_exchange_end_equals_pull_start": 0.0,
    "wait_plus_gemm_minus_routed": 0.0,
-   "pull_done_minus_routed_start": 349.7,
-   "pull_window_raw": 586,
+   "first_task_delay_us": 196,
+   "all_slots_done_us": 586,
+   "gemm_starts_before_all_slots_done": true,
+   "gemm_start_minus_routed_start_raw_us": -0.1,
    "dispatch_dur": 545.8,
    "pull_overshoot_clamped_us": 40.2
   },
@@ -505,8 +507,10 @@
    "combine_start_minus_routed_end": 2.656,
    "count_exchange_end_equals_pull_start": 0.0,
    "wait_plus_gemm_minus_routed": 0.0,
-   "pull_done_minus_routed_start": 84.8,
-   "pull_window_raw": 293,
+   "first_task_delay_us": 197,
+   "all_slots_done_us": 293,
+   "gemm_starts_before_all_slots_done": true,
+   "gemm_start_minus_routed_start_raw_us": -1.1,
    "dispatch_dur": 282.9,
    "pull_overshoot_clamped_us": 10.1
   },
@@ -517,8 +521,10 @@
    "combine_start_minus_routed_end": 2.24,
    "count_exchange_end_equals_pull_start": 0.0,
    "wait_plus_gemm_minus_routed": 0.0,
-   "pull_done_minus_routed_start": 158.2,
-   "pull_window_raw": 355,
+   "first_task_delay_us": 203,
+   "all_slots_done_us": 355,
+   "gemm_starts_before_all_slots_done": true,
+   "gemm_start_minus_routed_start_raw_us": 6.2,
    "dispatch_dur": 404.7,
    "pull_overshoot_clamped_us": 0.0
   },
@@ -529,8 +535,10 @@
    "combine_start_minus_routed_end": 3.52,
    "count_exchange_end_equals_pull_start": 0.0,
    "wait_plus_gemm_minus_routed": 0.0,
-   "pull_done_minus_routed_start": 126.5,
-   "pull_window_raw": 321,
+   "first_task_delay_us": 197,
+   "all_slots_done_us": 321,
+   "gemm_starts_before_all_slots_done": true,
+   "gemm_start_minus_routed_start_raw_us": 2.5,
    "dispatch_dur": 362.7,
    "pull_overshoot_clamped_us": 0.0
   },
@@ -541,8 +549,10 @@
    "combine_start_minus_routed_end": 2.656,
    "count_exchange_end_equals_pull_start": 0.0,
    "wait_plus_gemm_minus_routed": 0.0,
-   "pull_done_minus_routed_start": 402.8,
-   "pull_window_raw": 597,
+   "first_task_delay_us": 197,
+   "all_slots_done_us": 597,
+   "gemm_starts_before_all_slots_done": true,
+   "gemm_start_minus_routed_start_raw_us": 2.8,
    "dispatch_dur": 652.1,
    "pull_overshoot_clamped_us": 0.0
   },
@@ -553,8 +563,10 @@
    "combine_start_minus_routed_end": 2.624,
    "count_exchange_end_equals_pull_start": 0.0,
    "wait_plus_gemm_minus_routed": 0.0,
-   "pull_done_minus_routed_start": 59.4,
-   "pull_window_raw": 254,
+   "first_task_delay_us": 203,
+   "all_slots_done_us": 254,
+   "gemm_starts_before_all_slots_done": true,
+   "gemm_start_minus_routed_start_raw_us": 8.4,
    "dispatch_dur": 279.5,
    "pull_overshoot_clamped_us": 0.0
   },
@@ -565,8 +577,10 @@
    "combine_start_minus_routed_end": 2.944,
    "count_exchange_end_equals_pull_start": 0.0,
    "wait_plus_gemm_minus_routed": 0.0,
-   "pull_done_minus_routed_start": 233.3,
-   "pull_window_raw": 425,
+   "first_task_delay_us": 204,
+   "all_slots_done_us": 425,
+   "gemm_starts_before_all_slots_done": true,
+   "gemm_start_minus_routed_start_raw_us": 12.3,
    "dispatch_dur": 444.4,
    "pull_overshoot_clamped_us": 0.0
   },
@@ -577,8 +591,10 @@
    "combine_start_minus_routed_end": 2.752,
    "count_exchange_end_equals_pull_start": 0.0,
    "wait_plus_gemm_minus_routed": 0.0,
-   "pull_done_minus_routed_start": 144.4,
-   "pull_window_raw": 334,
+   "first_task_delay_us": 198,
+   "all_slots_done_us": 334,
+   "gemm_starts_before_all_slots_done": true,
+   "gemm_start_minus_routed_start_raw_us": 8.4,
    "dispatch_dur": 347.6,
    "pull_overshoot_clamped_us": 0.0
   }
