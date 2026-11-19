@@ -2142,9 +2142,15 @@ class SM90GCMoERoleKernel:
     def _publish_l1_batch(self, base: Uint64, head: cute.Pointer, epoch: Uint32,
                           expert: Uint32, mblk: Uint32, valid: Uint32, rank: Uint32):
         batch = atom_add_u32(head + 7, Uint32(1))
-        self._field(base, 'active_expert', Uint32)[batch] = expert
-        self._field(base, 'active_mb', Uint32)[batch] = mblk
-        self._field(base, 'stream_l1_done', Uint32)[batch] = Uint32(0)
+        # [DSL-INDEX] `self._field(...)[i] = v` with a runtime index is rejected
+        # by the CuTe DSL inside a staged loop (TYPE_DYNAMIC_EXPR_UNSUPPORTED).
+        # Use the raw cell store that this file already uses for these fields.
+        cell(base, Uint64(self.off_active_expert) + Uint64(batch) * 4,
+             Uint32)[0] = expert
+        cell(base, Uint64(self.off_active_mb) + Uint64(batch) * 4,
+             Uint32)[0] = mblk
+        cell(base, Uint64(self.off_stream_l1_done) + Uint64(batch) * 4,
+             Uint32)[0] = Uint32(0)
         if cutlass.const_expr(self.fine_trace):
             self._fine(base, epoch, 14, rank * Uint32(self.local) + expert,
                        expert, mblk, valid, batch)
@@ -2688,9 +2694,12 @@ class SM90GCMoERoleKernel:
             weight_base = Uint64(self.off_route_weight) + Uint64(expert) * self.rows * 4
             if cutlass.const_expr(self.stream_blocks):
                 if tid == 0:
-                    self._field(base, 'expert_count', Uint32)[expert] = hi - lo
+                    # [DSL-INDEX] same reason as _publish_l1_batch.
+                    cell(base, Uint64(self.off_expert_count)
+                         + Uint64(expert) * 4, Uint32)[0] = hi - lo
                     if cutlass.const_expr(self.fine_trace):
-                        self._field(base, 'fine_epx', Uint32)[expert] = epoch
+                        cell(base, Uint64(self.off_fine_epx)
+                             + Uint64(expert) * 4, Uint32)[0] = epoch
                 for row_lo in cutlass.range(lo, hi, self.max_m):
                     row_hi = cute.math.min(Uint32(row_lo) + Uint32(self.max_m), hi)
                     self._pull_slot_rows(base, peer_table, prefix, stage, pull_bar,
@@ -3177,7 +3186,8 @@ class SM90GCMoERoleKernel:
         arrived = atom_acq_rel_add_u32(done + batch, Uint32(1))
         if arrived == Uint32(self.l1_tiles - 1):
             l2_index = atom_add_u32(self._field(base, 'stream_l2_count', Uint32), Uint32(1))
-            self._field(base, 'stream_l2_batch', Uint32)[l2_index] = batch
+            cell(base, Uint64(self.off_stream_l2_batch) + Uint64(l2_index) * 4,
+                 Uint32)[0] = batch
             if cutlass.const_expr(self.fine_trace):
                 self._fine(base, epoch, 15, expert, expert,
                            start // Uint32(self.max_m), valid, batch)
@@ -3412,7 +3422,12 @@ class SM90GCMoERoleKernel:
                         w2: cute.Pointer, s2: cute.Pointer,
                         late: cutlass.Constexpr = False):
         # Streaming adds the batch index used to release the corresponding L2.
-        command_words = 5 if self.stream_blocks else 4
+        # [DSL-LAYOUT] Always 5 words. The streaming branch indexes command[4];
+        # a 4-word layout built under GC_MOE_SM90_STREAM_M_BLOCKS=0 makes the
+        # DSL fail to fold that index and it surfaces as
+        # TYPE_DYNAMIC_EXPR_UNSUPPORTED much later in the kernel. The extra word
+        # is unused by the baseline path.
+        command_words = 5
         command = cute.make_tensor(
             cute.recast_ptr(slab + self.command_offset, dtype=Uint32),
             cute.make_layout((command_words,)))
