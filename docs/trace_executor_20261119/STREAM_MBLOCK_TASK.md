@@ -8,26 +8,80 @@
 
 旧 dispatch 只在整槽拉完后发票。旧 L2 领取还可能选中 L1 未完成的槽，随后等该槽的计数。新版每拉完一个满块或尾部残块，就在该块路由元数据、激活和 scale 可见后发布这一批 L1 票。同一 M 块的所有 L1 N-tile 均完成后，再发布它的 L2 票。计算 CTA 只领取已发布的任务，可以在 L1 没票时领取已就绪的 L2。
 
-## 回执 80131e6 后续
+## 回执 9a02879 后续
 
-上轮在 A 轮的四角色编译停止，尚无 A/B 采样。当前提交把基线的整槽 pull 循环恢复为 `2d126f9` 已通过编译的内联实现，并保留 `f78fd98` 已在 H20 上编译通过的流式路径修复。请同步最新 `main` 后按以下命令重跑。回执保留这轮 A/B 的实际 SHA 与两边的编译日志，GPU 门禁和实验验收继续按下文执行。
+上轮基线两组编译停在 dispatch 的专家循环，尚无 A/B 采样。设计端本地复现后确认，CuTe 会把某些带 `self` 的下标赋值目标误判成动态控制流携带的值，即使该赋值所在的 `const_expr` 分支没有启用。本次将 dispatch 的两处写入、compute 的 L2 batch 发布和 combine 的 L2 队列清零改为先绑定局部变量，再按原地址写入。流式 compute 的 L2 batch 读取显式转为 `Uint32`，与 L1 分支的类型一致。
+
+设计端用 CuTe DSL 4.8.1 和 CUDA 13.2 `ptxas` 离线生成了四组全部角色的 `sm_90a` cubin。设备启动和 CUDA Graph 校验在八卡机执行。
+
+## 八卡编译预检
+
+在八卡机仓库根目录确认工作区干净、GPU 空闲，再同步 `main`。先用正式运行的工具链检查四种调度和 profiling 组合。每组独立运行，分别保留完整日志。
+
+```bash
+set -eo pipefail
+test -z "$(git status --porcelain)"
+git fetch origin main
+git merge --ff-only origin/main
+
+(
+  source config/experiment.env
+  source scripts/env.sh
+  export GC_MOE_SRC="$PWD/source"
+  export PYTHONPATH="$PWD/source:$PWD/patches:$PWD/integration"
+  export GC_MOE_MB_CLAIM=1 GC_MOE_SM90_PULL_TMA=1 GC_MOE_BLOCK_M_FORCE=64
+  export GC_MOE_SM90_SM_REUSE=0 GC_MOE_SM90_DISPATCH_SMS=6
+  export GC_MOE_PULL_TRACE=1 GC_MOE_ECO_TRACE=1 GC_MOE_IR_STEP=0
+  export GC_MOE_FINE_FLOOR=1 GC_MOE_FINE_EPOCHS=1
+  export GC_MOE_FINE_RECS=4194304 GC_MOE_FINE_MIN_EPOCH=0
+  export SMOKE_ECO=1 SMOKE_NULL=0 SMOKE_NOAUC=0
+  logs=$(mktemp -d /tmp/gcmoe-stream-compile-XXXXXXXX)
+  echo "Compile logs: $logs"
+  git rev-parse HEAD | tee "$logs/execution.sha"
+  nvidia-smi --query-gpu=name,driver_version --format=csv | tee "$logs/gpu.log"
+  /usr/local/cuda/bin/ptxas --version | tee "$logs/ptxas.log"
+  "$GC_ENV/bin/python" -c 'import torch, cutlass; print(torch.__version__, torch.version.cuda); print(getattr(cutlass, "__version__", "unknown"), cutlass.__file__)' \
+    | tee "$logs/python.log"
+  failed=0
+  for mode in 0 1; do
+    for profile in 0 1; do
+      roles='[1, 2, 5, 3]'
+      wb=64
+      if [ "$profile" = 1 ]; then
+        roles='[1, 4, 2, 5, 3]'
+        wb=26
+      fi
+      log="$logs/stream-$mode-profile-$profile.log"
+      if GC_MOE_SM90_STREAM_M_BLOCKS="$mode" GC_MOE_STEP_PROFILE="$profile" \
+         GC_MOE_FINE_TRACE="$profile" SMOKE_ECO_WB="$wb" \
+         "$GC_ENV/bin/python" scripts/smoke_compile_eco.py 2>&1 | tee "$log" \
+         && grep -Fq "compiled roles $roles" "$log"; then
+        printf '%s PASS\n' "$log"
+      else
+        printf '%s FAIL\n' "$log"
+        failed=1
+      fi
+    done
+  done
+  test "$failed" -eq 0
+)
+```
+
+如果仍有编译失败，执行者只可按首条诊断修改对应的 CuTe DSL 写法，例如局部指针绑定、同位宽显式类型转换或等价的编译期分支写法。每次只改一处，记录失败配置、原始报错、改动和复测结果。一处修复后先复跑该组合，通过后重跑四组。兼容性修复单独提交，使用修复后的同一 SHA 验证 A/B。发票时机、领取粒度、队列与等待条件、内存顺序、CUDA Graph、计数与计时口径、实验配置和验收门槛均按原实现执行。若编译问题无法在上述范围内解决，或出现运行、正确性、采样失败，保存命令与完整日志，停止并回执。
 
 ## 执行
 
-在八卡执行机的仓库根目录确认工作区干净，GPU 空闲，使用同一模型、数据集和工具链。入口自动校验并记录执行 SHA、失败步骤、命令和日志。按顺序跑旧方案和新方案，分别保留输出目录。
+四组均通过后，用同一模型、数据集和工具链按 A → B 顺序运行。入口自动校验并记录执行 SHA、失败步骤、命令和日志，分别保留两个输出目录。
 
 ```bash
 set -e
-git fetch origin main
-git merge --ff-only origin/main
-revision=$(git rev-parse origin/main)
+test -z "$(git status --porcelain)"
+revision=$(git rev-parse HEAD)
 GC_MOE_SM90_STREAM_M_BLOCKS=0 bash scripts/trace_layer/run_aligned_ep8.sh "$revision" --fine-trace
 GC_MOE_SM90_STREAM_M_BLOCKS=1 bash scripts/trace_layer/run_aligned_ep8.sh "$revision" --fine-trace
 ```
 
 每轮先跑 CPU 回归和角色编译冒烟。新方案还要过无需加载模型的八卡 CUDA Graph 正确性门禁。该门禁给一个单副本专家分配 135 行，覆盖两个满 M 块和一个 7 行尾块。旧的按 N-tile 领取路径作为数值参考，CUDA Graph 重放后八卡 BF16 输出的 SHA-256 必须逐 rank 一致。正式 A/B 的两轮都使用 MB-CLAIM。
-
-执行者的代码修改只限编译器诊断明确指出的最小兼容性修复，保持原语义并单独提交。其余失败一律停止并回传，禁止换层、改实验配置、放宽检查或拿其它 run 拼图。保留入口打印的两个目录和日志。
 
 ## 验收与回执
 
@@ -36,4 +90,4 @@ GC_MOE_SM90_STREAM_M_BLOCKS=1 bash scripts/trace_layer/run_aligned_ep8.sh "$revi
 3. 逐层列出最后退出 routed 的 rank 和最重槽。画出该槽每个 M 块的 L1 发布、首个 L1 tile、最后一个 L1 tile、L2 发布和最后一个 L2 tile。报告多少个满块的 L1 在整槽拉完前开始。对照旧方案 rank 6 的 319/434/618/714/800 µs 五个边界，测量首票提前量、L1→L2 间隔和 routed 退出时刻。
 4. 比较前先检查两轮的实际逐槽分布。如果热点 rank 或 owned 分布变了，先报告采样内的因果顺序，跨轮耗时只做有注明的对照。细 trace 的时间不代表未插桩稳态性能。
 
-在本目录提交 `REPLY_STREAM_MBLOCK.md`。成功时把 A/B 的生成产物分别放进 `stream_results/baseline/` 和 `stream_results/streamed/`。回执附实际执行 SHA、CUDA Graph 正确性校验、两轮 capture ID 和 epoch、热点块发布表、剩余等待位置。失败时仅提交回执，写明首个失败步骤、命令、报错与已有数据位置。
+在本目录更新 `REPLY_STREAM_MBLOCK.md`，列出实际执行 SHA、编译矩阵和四份日志路径。有兼容性修复时附提交 SHA。成功时把 A/B 的生成产物分别放进 `stream_results/baseline/` 和 `stream_results/streamed/`，附 CUDA Graph 校验、两轮 capture ID 和 epoch、热点块发布表及剩余等待位置。运行或采样失败时，回执写明首个失败步骤、命令、报错与已有数据位置。将回执及本轮验收产物提交并推送到 `main`。

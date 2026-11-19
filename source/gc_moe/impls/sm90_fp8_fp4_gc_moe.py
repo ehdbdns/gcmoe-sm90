@@ -2694,12 +2694,16 @@ class SM90GCMoERoleKernel:
             weight_base = Uint64(self.off_route_weight) + Uint64(expert) * self.rows * 4
             if cutlass.const_expr(self.stream_blocks):
                 if tid == 0:
-                    # [DSL-INDEX] same reason as _publish_l1_batch.
-                    cell(base, Uint64(self.off_expert_count)
-                         + Uint64(expert) * 4, Uint32)[0] = hi - lo
+                    # Name the cells before storing. CuTe's loop analysis can
+                    # treat self in a subscript store target as a loop-carried
+                    # value, even when this constexpr branch is disabled.
+                    stream_count_out = cell(
+                        base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)
+                    stream_count_out[0] = hi - lo
                     if cutlass.const_expr(self.fine_trace):
-                        cell(base, Uint64(self.off_fine_epx)
-                             + Uint64(expert) * 4, Uint32)[0] = epoch
+                        stream_epoch_out = cell(
+                            base, Uint64(self.off_fine_epx) + Uint64(expert) * 4, Uint32)
+                        stream_epoch_out[0] = epoch
                 for row_lo in cutlass.range(lo, hi, self.max_m):
                     row_hi = cute.math.min(Uint32(row_lo) + Uint32(self.max_m), hi)
                     self._pull_slot_rows(base, peer_table, prefix, stage, pull_bar,
@@ -2710,9 +2714,7 @@ class SM90GCMoERoleKernel:
                         self._publish_l1_batch(base, head, epoch, Uint32(expert),
                                                mblk, row_hi - Uint32(row_lo), rank)
             else:
-                # Keep the full-slot loops inline: passing lo as both the
-                # slot origin and slice start through the JIT helper fails
-                # to lower in this path on the executor's CuTe DSL.
+                # The legacy path pulls the entire slot before publishing work.
                 for row in cutlass.range(lo + tid, hi, self.threads):
                     source = Uint32(0)
                     for candidate in cutlass.range_constexpr(1, self.ranks):
@@ -3249,7 +3251,7 @@ class SM90GCMoERoleKernel:
                     ticket = self._try_claim_ready_tile(head + 10, l2_count, l2_ready, epoch, n2)
                     if ticket != Uint32(0xFFFFFFFF):
                         phase, ntile = Uint32(2), ticket % n2
-                        batch = self._field(base, 'stream_l2_batch', Uint32)[ticket // n2]
+                        batch = Uint32(self._field(base, 'stream_l2_batch', Uint32)[ticket // n2])
                     elif ld_acquire_gpu_u32(head + 9) == epoch:
                         # Drain only after all pulled blocks have finished L1
                         # and every L2 tile has been claimed. Already claimed
@@ -3283,8 +3285,9 @@ class SM90GCMoERoleKernel:
         arrived = atom_acq_rel_add_u32(done + batch, Uint32(1))
         if arrived == Uint32(self.l1_tiles - 1):
             l2_index = atom_add_u32(self._field(base, 'stream_l2_count', Uint32), Uint32(1))
-            cell(base, Uint64(self.off_stream_l2_batch) + Uint64(l2_index) * 4,
-                 Uint32)[0] = batch
+            batch_out = cell(base, Uint64(self.off_stream_l2_batch) + Uint64(l2_index) * 4,
+                             Uint32)
+            batch_out[0] = batch
             if cutlass.const_expr(self.fine_trace):
                 self._fine(base, epoch, 15, expert, expert,
                            start // Uint32(self.max_m), valid, batch)
@@ -4385,7 +4388,8 @@ class SM90GCMoERoleKernel:
                     counter_out = cell(base, Uint64((3, 7, 8, 10, 11, 13, 20, 21)[c] * 4), Uint32)
                     counter_out[0] = Uint32(0)
                 if cutlass.const_expr(self.stream_blocks):
-                    self._field(base, 'stream_l2_count', Uint32)[0] = Uint32(0)
+                    stream_l2_count = self._field(base, 'stream_l2_count', Uint32)
+                    stream_l2_count[0] = Uint32(0)
                 if cutlass.const_expr(self.eco):
                     # [ECO-SM90] Clear both plan handshake words for the next
                     # call. The plan waits on eco_ready[0] == epoch + 1 and the
