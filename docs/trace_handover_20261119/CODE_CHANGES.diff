@@ -1,0 +1,92 @@
+--- /tmp/rt/layout.bak	2026-11-19 15:05:14.881040331 +0800
++++ source/gc_moe/layout/sm90_gc_moe.py	2026-11-19 15:05:14.909803007 +0800
+@@ -211,6 +211,15 @@
+             # is NOT a function of its token count alone.
+             reserve('ir_step_mb', (40 * 1024,), 'int32', 4)
+             reserve('ir_step_ae', (40 * 1024,), 'int32', 4)
++            # [IR-STEP-EPOCH] The epoch that produced each (layer, step) cell.
++            # `irstep_begin()` can only publish epoch0 from the HOST, and under
++            # CUDA-graph replay that host read is stale, so the table's "step"
++            # index could not be mapped back to the kernel's own epoch (measured:
++            # 225 epochs = 5.6 steps of offset). Writing the epoch from INSIDE
++            # the kernel makes the join with `pull_tl` (also keyed by epoch)
++            # exact and checkable: ir_step_epoch[layer][step] == the epoch whose
++            # pull_tl row carries that layer's timings.
++            reserve('ir_step_epoch', (40 * 1024,), 'int32', 4)
+ 
+         # [PULL-TRACE] Pull-phase timing for EVERY arm, including the plain
+         # (no replicas, no ECO) path -- the ECO trace above only exists when
+--- /tmp/rt/impl.bak	2026-11-19 15:05:14.886040328 +0800
++++ source/gc_moe/impls/sm90_fp8_fp4_gc_moe.py	2026-11-19 15:05:25.802264200 +0800
+@@ -2108,6 +2108,15 @@
+                             atom_add_u32(
+                                 self._field(base, 'ir_step_ae', Uint32) + idx,
+                                 Uint32(1))
++                        # [IR-STEP-EPOCH] Record which EPOCH produced this cell.
++                        # A plain store is right (not atom_add): every CTA of the
++                        # 24-CTA dispatch grid passes the same `epoch` for this
++                        # (layer, step), so any of them writing it is the same
++                        # value. This is the ONLY handshake that lets the host
++                        # join this table with `pull_tl` without trusting a
++                        # host-side epoch read (which is stale under graph
++                        # replay -- measured 225 epochs = 5.6 steps of offset).
++                        self._field(base, 'ir_step_epoch', Uint32)[idx] = epoch
+ 
+     @cute.jit
+     def _field(self, base: Uint64, name: cutlass.Constexpr, dtype: cutlass.Constexpr):
+--- /tmp/rt/deepep_compare.py.bak	2026-11-19 14:51:57.767477227 +0800
++++ integration/deepep_compare.py	2026-11-19 15:05:36.065745615 +0800
+@@ -1979,19 +1979,19 @@
+     # role passes to `_ir_step_write` -- unlike `eco_tl_step`, which only the
+     # ECO arm publishes (the vanilla arm would anchor at 0).
+     with torch.inference_mode():
+-        mark[0] = buf.header[0].to(mark.dtype)   # epoch0
+-        mark[1] = 0
+-        # [FINE-FLOOR-FIX] `header[0]` is written by the dispatch KERNEL, so
+-        # under CUDA-graph replay the host copy read here is stale: the FINE
+-        # log then anchored on a PRE-PREFILL epoch. Measured on
+-        # FINAL_TRACE_B256: fine_rows spanned epochs 46919..46961 while the
+-        # window's real epoch was 87240 -- a 40k gap, i.e. every recorded "M
+-        # block" came from prefill and the measured layer had NO records.
+-        # `eco_tl_step` is republished by dispatch at the top of EVERY call, so
+-        # it names the call that is about to run.
++        # [IRSTEP-ANCHOR-FIX] `header[0]` is written by the dispatch KERNEL, so
++        # under CUDA-graph replay the HOST copy read here is stale -- it lags by
++        # however many calls were captured. Measured on ALIGNEDQ: mark[0] landed
++        # on 15001 while `pull_tl` (which reads `eco_tl_step` inside the kernel)
++        # covered 15225..15480, i.e. the two tables were keyed in DIFFERENT epoch
++        # spaces and could not be joined at all.
++        # `eco_tl_step` is republished by dispatch at the TOP OF EVERY CALL, so
++        # it names the call that is about to run. Read it BEFORE writing mark[0].
+         _step = getattr(buf, 'eco_tl_step', None)
+         _epoch_now = (int(_step[0].item()) if _step is not None
+                       else int(buf.header[0].item()))
++        mark[0] = _epoch_now                    # epoch0 (same space as pull_tl)
++        mark[1] = 0
+     # [ECO-FINE-FLOOR] Anchor the FINE event log to the measured window too.
+     #
+     # `fine_ctr` is monotonic and `fine_tl` holds 65536 records, so with
+@@ -2037,6 +2037,7 @@
+     tbl = getattr(buf, 'ir_step', None)
+     mb_tbl = getattr(buf, 'ir_step_mb', None)
+     ae_tbl = getattr(buf, 'ir_step_ae', None)
++    ep_tbl = getattr(buf, 'ir_step_epoch', None)
+     mark = getattr(buf, 'ir_step_mark', None)
+     if tbl is None:
+         return {'ok': False, 'reason': 'no ir_step table'}
+@@ -2049,10 +2050,14 @@
+                    if mb_tbl is not None else None)
+         rows_ae = (ae_tbl[:layers * steps].view(layers, steps).cpu().tolist()
+                    if ae_tbl is not None else None)
++        # [IR-STEP-EPOCH] kernel-written epoch per cell; the only exact key for
++        # joining this table with pull_tl.
++        rows_ep = (ep_tbl[:layers * steps].view(layers, steps).cpu().tolist()
++                   if ep_tbl is not None else None)
+         e0 = int(mark[0].item()) if mark is not None else 0
+     return {'ok': True, 'rank': int(buf.rank_idx), 'layers': layers,
+             'steps': steps, 'epoch0': e0, 'rows': rows,
+-            'rows_mb': rows_mb, 'rows_ae': rows_ae}
++            'rows_mb': rows_mb, 'rows_ae': rows_ae, 'rows_epoch': rows_ep}
+ 
+ 
+ def ir_begin() -> None:
