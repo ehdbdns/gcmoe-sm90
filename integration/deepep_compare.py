@@ -840,6 +840,12 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         # which loses the mantissa and corrupts the activations.
         if not _capturing_enabled():
             flush_pending_instantiates()
+        if buf.num_shared_experts:
+            if __package__:
+                from .shared_input import stage_shared_input
+            else:
+                from shared_input import stage_shared_input
+            stage_shared_input(x, buf)
         xq, xsf = _token_fp8_quant(x)
         xsf = xsf.reshape(tokens, -1).to(torch.float32).contiguous()
 
@@ -936,7 +942,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             probe['output'].copy_(output.view_as(probe['output']))
             probe['epoch'].copy_(buf.eco_tl_step)
         if use_tape:
-            tape.finish_call(buf)
+            tape.finish_call(buf, output)
         # [METRIC-FIX] Snapshot the per-call occupancy of the call that just
         # finished. role 3 zeroes header[7] and the next call overwrites
         # expert_count, so a single read after the window would see zeros.
@@ -1095,6 +1101,11 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                 self._r4_dbg2 = True
                 print(f'[ROLE4-DBG] idx={k} shared_mods={len(_SHARED_MODULES)} '
                       f'weights={"ok" if _sw is not None else "NONE"}', flush=True)
+        probe = getattr(getattr(buf, 'fixed_routes', None), 'first_step_probe', None)
+        if probe is not None and id(packed[0][0]) in _LAYER_ROW and _sw is not None:
+            probe.shared_pairs[_LAYER_ROW[id(packed[0][0])]] = _sw
+        if _sw is None and buf.num_shared_experts and os.environ.get('GC_MOE_SHARED_IN_GC') == '1':
+            raise RuntimeError('fused shared expert is enabled but this layer has no shared weights')
         if _sw is None:
             self._gc.sm90_fp8_fp4_gc_moe(
                 output, packed[0], packed[1], buf,
@@ -1405,7 +1416,10 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                 from fixed_workload import RouteTape
                 buf = self._buffer
                 buf.fixed_routes = RouteTape(buf.buffer.device, buf.num_topk, buf.profile_slot_counts.shape[1])
-                if os.environ.get('GC_MOE_STRICT_STATE_DIR'):
+                if os.environ.get('GC_MOE_FIRST_STEP_AUDIT') == '1':
+                    from replay_probe import ReplayProbe
+                    buf.fixed_routes.first_step_probe = ReplayProbe(buf, buf.fixed_routes)
+                elif os.environ.get('GC_MOE_STRICT_STATE_DIR'):
                     tape = buf.fixed_routes
                     x = buf.x[:tape.batch]
                     tape.boundary_probe = dict(quantized=torch.empty_like(x, dtype=torch.uint8),
@@ -2396,8 +2410,16 @@ def _install_worker_rpc() -> None:
     def gc_moe_first_replay_call(self):
         from stream_checkpoint import tensor_hash
         tape = profile_buffer().fixed_routes
-        probe = tape.boundary_probe
         torch.cuda.synchronize()
+        if hasattr(tape, 'first_step_probe'):
+            rank = int(profile_buffer().rank_idx)
+            audit = tape.first_step_probe.read(tape, os.environ['GC_MOE_STRICT_STATE_DIR'], rank,
+                                               os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '0',
+                                               self._gc_reference_tokens.first_sample)
+            first = audit['layers'][0]
+            return dict(rank=rank, epoch=first['epoch'], first_step=audit,
+                        **{k: first['hashes'][k] for k in ('quantized', 'scales', 'output')})
+        probe = tape.boundary_probe
         epoch = int(probe['epoch'].item())
         if (int(tape.position.item()) != tape.layers or int(tape.layer_ids[0].item()) != 0
                 or epoch <= 0 or epoch != int(tape.epochs[0].item())):

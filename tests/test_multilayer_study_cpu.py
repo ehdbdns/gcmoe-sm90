@@ -221,6 +221,37 @@ def main():
         write(s_dir/'workload.json', state)
         compare(paired)
         assert not read(paired/'comparison.json')['scheduling_gate_passed']
+        from first_step import FIELDS
+        (paired/'comparison.txt').write_text('fixed_stream_r6')
+        ids = [f'req{i}' for i in range(256)]
+        for arm, directory in enumerate((b_dir, s_dir)):
+            run = read(directory/'run.json')
+            run['fixed_controls']['GC_MOE_FIRST_STEP_AUDIT'] = '1'
+            write(directory/'run.json', run)
+            audit = read(directory/'workload.json')
+            audit['ranks'][0]['native_history']['replay_top1'][104][5] = 2
+            for row in audit['initial']:
+                call = row['first_call']
+                h = call['quantized']
+                sampler = dict(row_requests=ids, hidden=dict.fromkeys(ids, h),
+                               logits={req: dict(sha256=h, argmax=2) for req in ids[row['rank']::8]})
+                chain = [dict(layer=i, epoch=call['epoch']+i, hashes=dict.fromkeys(FIELDS,h), shared_weights=[h]*4,
+                              nonfinite=dict.fromkeys(FIELDS,0), shared_nonzero=dict(shared_input=True, shared_y=True),
+                              different_rows={key:dict(count=0,examples=[]) for key in FIELDS} if arm else {})
+                         for i in range(40)]
+                call['first_step'] = dict(rank=row['rank'], layers=chain, sampler=sampler)
+            write(directory/'workload.json', audit)
+        compare(paired)
+        assert read(paired/'comparison.json')['scheduling_gate_passed']
+        chain = audit['initial'][7]['first_call']['first_step']['layers']
+        chain[3]['hashes']['routed_slots'] = 'f'*64
+        chain[3]['different_rows']['routed_slots'] = dict(count=1,examples=[dict(row=9,request='req9',topk_slot=4)])
+        write(s_dir/'workload.json', audit)
+        compare(paired)
+        verdict = read(paired/'comparison.json')
+        assert not verdict['scheduling_gate_passed'] and not verdict['strict_pair_comparable']
+        first, = verdict['first_observed_differences']
+        assert (first['layer'],first['field'],first['rank']) == (3,'routed_slots',7)
         (paired/'comparison.txt').write_text('valid_cost')
         (paired/'measurement.sha').write_text(STREAM_SHA)
         write(b_dir/'run.json', dict(base, stream_m_blocks=1, execution_sha=STREAM_SHA))

@@ -64,8 +64,11 @@ class RouteTape:
             bank.index_copy_(0, self.index, scratch)
         return self.selected_ids[0], self.selected_weights[0]
 
-    def finish_call(self, buf):
-        self.used_ordinals.index_copy_(0, self.index, buf.used_route_ordinal[:self.batch].unsqueeze(0))
+    def finish_call(self, buf, output=None):
+        if hasattr(self, 'first_step_probe'):
+            self.first_step_probe.record(buf, output)
+        else:
+            self.used_ordinals.index_copy_(0, self.index, buf.used_route_ordinal[:self.batch].unsqueeze(0))
         epoch = buf.eco_tl_step
         row = epoch.long().remainder(256)
         self.epochs.index_copy_(0, self.index, epoch)

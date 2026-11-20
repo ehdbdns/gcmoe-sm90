@@ -1,6 +1,8 @@
-# 当前任务 · R5 严格验证 stream
+# 当前任务 · R6 严格验证 stream
 
-请先读取 [R5 八卡任务书](../trace_executor_20261119/FIXED_STREAM_R5_TASK.md)。本轮只启动 baseline 和 stream 各一次，回执写入此目录的 `REPLY_FIXED_STREAM_R5.md`。
+请执行 [R6 八卡任务书](../trace_executor_20261119/FIXED_STREAM_R6_TASK.md)，每臂一次，回执写入本目录的 `REPLY_FIXED_STREAM_R6.md`。
+
+R5 已复核。首个 MoE 调用八卡输入输出一致，105 步仍有 2,782/26,880 个原生预测不同。100 步 E2E 和 step 2 整层 MoE 分别下降 0.48% 和 0.53%，严格对照未通过。[R5 数据](../trace_executor_20261119/fixed_stream_results_r5/comparison.json)
 
 # R4 八卡回执复核
 

@@ -1,5 +1,6 @@
 """Teacher-forced decode for the vLLM 0.31 GPU model runner used on the H20 host."""
 from array import array
+import os
 import hashlib
 import json
 from pathlib import Path
@@ -38,6 +39,7 @@ class ReferenceTokens:
 
     def mark_replay_start(self):
         self.replay_start = self.positions.clone()
+        self.capture_first_sample = os.environ.get('GC_MOE_FIRST_STEP_AUDIT') == '1'
 
     def native_history(self, steps):
         if not torch.equal(self.positions, self.lengths) or not torch.all(self.positions - self.replay_start == steps):
@@ -74,7 +76,13 @@ def install(runner, directory):
     original = runner.sample
 
     def sample(hidden_states, input_batch, grammar_output):
-        output, num_sampled, num_rejected = original(hidden_states, input_batch, grammar_output)
+        if getattr(reference, 'capture_first_sample', False):
+            from replay_probe import sample_first_step
+            returned, reference.first_sample = sample_first_step(runner, original, hidden_states, input_batch, grammar_output)
+            reference.capture_first_sample = False
+        else:
+            returned = original(hidden_states, input_batch, grammar_output)
+        output, num_sampled, num_rejected = returned
         reference.batch_hash.update(input_batch.query_start_loc_np[:input_batch.num_reqs+1].tobytes())
         reference.feed(input_batch.req_ids, output, num_sampled)
         return output, num_sampled, num_rejected

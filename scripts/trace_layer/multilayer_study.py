@@ -276,8 +276,9 @@ def compare(root):
     marker = root/'comparison.txt'
     valid_cost = marker.exists() and marker.read_text().strip() == 'valid_cost'
     protocol = marker.read_text().strip() if marker.exists() else ''
-    r5 = protocol == 'fixed_stream_r5'
-    ordered_replay = r5 or protocol == 'fixed_stream_r4'
+    r6 = protocol == 'fixed_stream_r6'
+    checkpointed = r6 or protocol == 'fixed_stream_r5'
+    ordered_replay = checkpointed or protocol == 'fixed_stream_r4'
     fixed_stream = ordered_replay or protocol == 'fixed_stream'
     controls = {}
     flags = [(r['stream_m_blocks'], r['eco_costfn']) for r in (base, candidate)]
@@ -325,13 +326,17 @@ def compare(root):
                         for bs, ss in zip(*(h['replay_top1'] for h in histories), strict=True)]
             controls['native_differences_by_step'] = mismatch
             controls['first_native_difference_step'] = next((i for i, n in enumerate(mismatch) if n), None)
-        if r5:
+        if checkpointed:
             controls.update(checkpoint_controls(root, audits))
             controls['same_hardware'] = ((dirs[0]/'hardware.csv').read_text() == (dirs[1]/'hardware.csv').read_text()
                                           and len((dirs[0]/'hardware.csv').read_text().splitlines()) == 8
                                           and (dirs[0]/'runtime.log').read_bytes() == (dirs[1]/'runtime.log').read_bytes())
             controls['same_run_controls'] &= (config.get('GC_MOE_KV_BYTES') == str(11 * 1024**3)
                                               and bool(config.get('GC_MOE_STRICT_STATE_DIR')))
+            if r6:
+                from first_step import first_step_controls
+                controls.update(first_step_controls(root, audits))
+                controls['same_run_controls'] &= config.get('GC_MOE_FIRST_STEP_AUDIT') == '1'
             blocks = [r['ten_step_host_ms_per_step'] for r in (base, candidate)]
             for values, run in zip(blocks, (base, candidate), strict=True):
                 require(len(values) == 10 and all(math.isfinite(v) and v > 0 for v in values)
@@ -373,9 +378,12 @@ def compare(root):
     equivalence = True
     if ordered_replay:
         equivalence = not any(controls['native_differences_by_step'])
-        if r5:
+        if checkpointed:
             equivalence &= all(controls[k] for k in ('checkpoint_match', 'same_hardware', 'first_moe_input_match',
                                                        'first_moe_output_match'))
+            if r6:
+                equivalence &= all(controls[k] for k in ('first_step_chain_match', 'shared_branch_active',
+                                                          'shared_weights_match', 'first_step_finite'))
             controls['strict_pair_comparable'] = (equivalence and matched and controls['same_run_controls']
                                                   and controls['same_physical_routes'])
         else:

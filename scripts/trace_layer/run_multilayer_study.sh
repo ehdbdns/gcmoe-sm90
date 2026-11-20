@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run both arms in the same pinned measurement checkout.
 set -eo pipefail
-if [[ $# != 2 && ! ( $# == 3 && $3 == --valid-cost ) && ! ( $# == 4 && ( $3 == --replay-from || $3 == --same-state-from ) ) ]]; then
-  echo "Usage: $0 common-worktree new-output-dir [--valid-cost | --replay-from directory | --same-state-from directory]" >&2; exit 2
+if [[ $# != 2 && ! ( $# == 3 && $3 == --valid-cost ) && ! ( $# == 4 && ( $3 == --replay-from || $3 == --same-state-from || $3 == --trace-first-step-from ) ) ]]; then
+  echo "Usage: $0 common-worktree new-output-dir [--valid-cost | --replay-from directory | --same-state-from directory | --trace-first-step-from directory]" >&2; exit 2
 fi
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(realpath "$1")
@@ -11,9 +11,9 @@ sha=$(git -C "$here" rev-parse HEAD)
 test "$(git -C "$root" rev-parse HEAD)" = "$sha"
 analysis_python=$(cd "$root" && source scripts/env.sh && printf '%s/bin/python' "$GC_ENV")
 test -x "$analysis_python"
-unset GC_MOE_FIXED_DIR GC_MOE_FIXED_REUSE GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES
+unset GC_MOE_FIRST_STEP_AUDIT GC_MOE_FIXED_DIR GC_MOE_FIXED_REUSE GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES
 if [[ ${3:-} == --valid-cost ]]; then
-  phase_one="$here/../../docs/trace_executor_20261119/fixed_stream_results_r5/comparison.json"
+  phase_one="$here/../../docs/trace_executor_20261119/fixed_stream_results_r6/comparison.json"
   "$analysis_python" - "$phase_one" <<'CHECK'
 import json
 import sys
@@ -39,7 +39,7 @@ echo "$sha" > "$bundle/measurement.sha"
 if [[ ${3:-} == --valid-cost ]]; then
   echo valid_cost > "$bundle/comparison.txt"
 else
-  if [[ ${3:-} == --same-state-from ]]; then
+  if [[ ${3:-} == --same-state-from || ${3:-} == --trace-first-step-from ]]; then
     GC_MOE_STRICT_STATE_DIR=$(mktemp -d "${GC_MOE_CHECKPOINT_ROOT:-/tmp}/gcmoe-branch-XXXXXXXX")
     export GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES=11811160064
     "$analysis_python" - "$GC_MOE_STRICT_STATE_DIR" "$GC_MOE_KV_BYTES" <<'CHECK_SPACE'
@@ -51,7 +51,12 @@ if available < needed:
     sys.exit(f'KV checkpoint needs up to {needed} bytes, mount has {available}; set GC_MOE_CHECKPOINT_ROOT')
 CHECK_SPACE
     echo "$GC_MOE_STRICT_STATE_DIR" > "$bundle/checkpoint-path.txt"
-    echo fixed_stream_r5 > "$bundle/comparison.txt"
+    if [[ ${3:-} == --trace-first-step-from ]]; then
+      export GC_MOE_FIRST_STEP_AUDIT=1
+      echo fixed_stream_r6 > "$bundle/comparison.txt"
+    else
+      echo fixed_stream_r5 > "$bundle/comparison.txt"
+    fi
   elif [[ ${3:-} == --replay-from ]]; then
     echo fixed_stream_r4 > "$bundle/comparison.txt"
   else
@@ -64,7 +69,7 @@ CHECK_SPACE
   "$analysis_python" "$here/multilayer_study.py" reference \
     "$results/multilayer_ab_results/step02/baseline/paired" "$GC_MOE_FIXED_DIR" \
     --prepared "$results/fixed_stream_results_failed/tokens.json"
-  if [[ ${3:-} == --replay-from || ${3:-} == --same-state-from ]]; then
+  if [[ ${3:-} == --replay-from || ${3:-} == --same-state-from || ${3:-} == --trace-first-step-from ]]; then
     replay=$(realpath "$4")
     cmp "$GC_MOE_FIXED_DIR/tokens.json" "$replay/tokens.json"
     cp "$replay"/{placement.json,routes-rank{0..7}.pt} "$GC_MOE_FIXED_DIR/"
