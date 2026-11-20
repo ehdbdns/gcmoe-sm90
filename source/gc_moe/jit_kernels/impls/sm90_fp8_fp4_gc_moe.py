@@ -25,6 +25,7 @@ from ..heuristics.sm90_gc_moe import (
 @dataclass(frozen=True)
 class _Prepared:
     binaries: tuple[RoleBinary, ...]
+    plan_slack: int | None = None
 
 
 _CACHE: dict[tuple, _Prepared] = {}
@@ -201,6 +202,20 @@ def _get_or_compile_binaries(key, identity, specs):
 
 
 
+def prepared_matrix_price(layout, tokens):
+    """Report the mode and actual role-5 constexpr prepared for this measured batch."""
+    with COMPILE_LOCK:
+        prices = {
+            (config.eco_cost_mode, prepared.plan_slack)
+            for (config, cached_layout, *_), prepared in _CACHE.items()
+            if config.tokens == tokens and cached_layout == layout and prepared.plan_slack is not None
+        }
+    if len(prices) != 1:
+        raise ValueError(f'expected one prepared ECO price for {tokens} tokens, got {prices}')
+    mode, slack = prices.pop()
+    return dict(mode=mode, slack=slack)
+
+
 def prepare_role_binaries(config, y, w1, w2, buffer, stats=None, context=None,
                           shared_l1_weights=None, shared_l2_weights=None):
     if torch.cuda.get_device_capability(y.device) != (9, 0):
@@ -222,7 +237,8 @@ def prepare_role_binaries(config, y, w1, w2, buffer, stats=None, context=None,
                 identity = _compiler_identity('sm_90a')
                 specs = _role_specs(config, buffer.layout, schedule, stats is not None)
                 binaries = _get_or_compile_binaries(_binary_key(identity, specs), identity, specs)
-                prepared = _Prepared(binaries)
+                slack = next((kernel.eco_slack for kernel, launch in specs if launch[0] == 5), None)
+                prepared = _Prepared(binaries, slack)
                 _CACHE[key] = prepared
     addresses = [buffer.buffer.data_ptr(), buffer.peer_table.data_ptr(), y.data_ptr(),
                  *(t.data_ptr() for t in (*w1, *w2)), 0 if stats is None else stats.data_ptr(),

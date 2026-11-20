@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Each BS has one publisher and four independent consumers of its replay bank.
+# Each BS has one publisher and all other arms consume its replay bank.
 set -eo pipefail
 [[ $# == 1 ]] || { echo "Expected a new delivery directory" >&2; exit 2; }
 out=$(realpath -m "$1")
@@ -14,11 +14,19 @@ export GC_MOE_KV_BYTES=21474836480 GC_MOE_LONG_COST=1 GC_MOE_ORDER_EXTRA=1
 export GC_MOE_EXEC_ROOT="$PWD" GC_MOE_SM90_STREAM_M_BLOCKS=1 GC_MOE_STUDY_STEP=0
 export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1 GC_CAPTURE_TOKENS=1
 unset GC_MOE_FIXED_REUSE GC_MOE_FIRST_STEP_AUDIT GC_MOE_AA_CONTROL GC_MOE_COST_STUDY
+arms=(vanilla random rr)
+report_args=()
+case ${GC_MOE_MATRIX_SIZE:-20} in
+  20) ;;
+  24) arms+=(eco_linear); report_args+=(--with-linear) ;;
+  *) exit 2 ;;
+esac
+arms+=(eco eco_smr)
 for bs in 32 64 128 256; do
   export GC_MOE_MATRIX_BS="$bs"
   group="$out/bs$bs"
   mkdir "$group"
-  state=$(mktemp -d "${GC_MOE_CHECKPOINT_ROOT:-/tmp}/gcmoe-main20-bs$bs-XXXXXXXX")
+  state=$(mktemp -d "${GC_MOE_CHECKPOINT_ROOT:-/tmp}/gcmoe-main${GC_MOE_MATRIX_SIZE:-20}-bs$bs-XXXXXXXX")
   echo "$state" > "$group/state-path.txt"
   export GC_MOE_FIXED_DIR="$state/replay" GC_MOE_STRICT_STATE_DIR="$state/kv"
   mkdir "$GC_MOE_FIXED_DIR" "$GC_MOE_STRICT_STATE_DIR"
@@ -28,7 +36,7 @@ required = 8*21474836480 + 2*8*40000*int(sys.argv[2])*6*12 + 4*1024**3
 if shutil.disk_usage(sys.argv[1]).free < required:
     raise SystemExit(f"Need {required / 1024**3:.1f} free GiB on the checkpoint filesystem")
 PY
-  for arm in vanilla random rr eco eco_smr; do
+  for arm in "${arms[@]}"; do
     export GC_MOE_MATRIX_ARM="$arm"
     dst="$group/$arm"
     mkdir "$dst"
@@ -57,12 +65,12 @@ PY
     if [[ $arm == rr ]]; then cp "$GC_MOE_FIXED_DIR/placement.json" "$group/"; fi
   done
   (cd "$GC_MOE_FIXED_DIR" && sha256sum stats-rank*.pt measure-rank*.pt stats-demand.npz tokens.json placement.json *-layout.json) > "$group/workload.sha256"
-  "$py" scripts/trace_layer/main20_report.py "$out" --bs "$bs"
+  "$py" scripts/trace_layer/main20_report.py "$out" "${report_args[@]}" --bs "$bs"
   # The group report has verified every arm's readback against its publisher.
   # Only release this job's private disposable payloads; preserve evidence on failure.
   if [[ ${GC_MAIN20_KEEP_KV:-0} != 1 ]]; then
     rm -- "$GC_MOE_STRICT_STATE_DIR"/rank{0..7}.bin
   fi
 done
-"$py" scripts/trace_layer/main20_report.py "$out"
+"$py" scripts/trace_layer/main20_report.py "$out" "${report_args[@]}"
 (cd "$out" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)

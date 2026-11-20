@@ -17,6 +17,7 @@ from long_cost_report import by_rank, require
 
 BATCHES = (32, 64, 128, 256)
 ARMS = ("vanilla", "random", "rr", "eco", "eco_smr")
+ARMS24 = ("vanilla", "random", "rr", "eco_linear", "eco", "eco_smr")
 STEPS, LAYERS, RANKS = 1000, 40, 8
 AUCTION = (
     "rounds",
@@ -54,22 +55,25 @@ def metrics(counts, spans):
     )
 
 
-def arm_data(directory, bs, arm, sha):
+def arm_data(directory, bs, arm, sha, with_linear=False):
     run = load(directory / "run.json")
     eco = arm.startswith("eco")
+    mode = 0 if arm == "eco_linear" else 2
+    expected_price = dict(mode=mode, slack=90 if mode == 0 else 11469) if eco else None
     require(
         run["batch"] == bs
         and run["steps"] == STEPS
         and run["layers"] == LAYERS
         and run["stream"] == 1
-        and run["cost"] == 2
-        and run["rearranged"] == (arm in ("rr", "eco", "eco_smr")),
+        and run["cost"] == mode
+        and run["rearranged"] == (arm == "rr" or eco),
         "wrong arm/window",
     )
     require((directory / "execution.sha").read_text().strip() == sha, "revision mismatch")
     config = run["controls"].copy()
     treatment = dict(
         GC_MOE_MATRIX_ARM=arm,
+        GC_MOE_ECO_COSTFN=str(mode),
         GC_MOE_EPLB=str(int(arm != "vanilla")),
         GC_MOE_ECO=str(int(eco)),
         GC_MOE_SM90_SM_REUSE=str(int(arm == "eco_smr")),
@@ -79,7 +83,6 @@ def arm_data(directory, bs, arm, sha):
     for key, value in treatment.items():
         require(config.pop(key) == value, f"{arm}: wrong {key}")
     fixed = dict(
-        GC_MOE_ECO_COSTFN="2",
         GC_MOE_MATRIX_BS=str(bs),
         GC_MOE_ECO_NO_AUCTION="0",
         GC_MOE_ECO_NULL_PLAN="0",
@@ -95,6 +98,17 @@ def arm_data(directory, bs, arm, sha):
         GC_MEASURE_FLUSH="0",
         GC_MOE_SHARED_IN_GC="1",
     )
+    if with_linear:
+        fixed.update(
+            GC_MOE_MATRIX_SIZE="24",
+            GC_MOE_ECO_WB="26",
+            GC_MOE_ECO_WA="0",
+            GC_MOE_ECO_BLOCKS_ONLY="0",
+            GC_MOE_ECO_TOKENS_ONLY="0",
+            GC_MOE_ECO_ROUNDS="1",
+            GC_MOE_ECO_COLD_ROUNDS="6",
+            GC_MOE_SM90_DISPATCH_SMS="6",
+        )
     require(all(config[k] == v for k, v in fixed.items()), "invalid common configuration")
     control = dict(
         config=config,
@@ -117,6 +131,8 @@ def arm_data(directory, bs, arm, sha):
         require(np.all(physical_totals.sum(0) == STEPS * bs * 6 * RANKS), "incomplete physical rows")
         for row, start in zip(audit, initial):
             require(row["calls"] == calls and row["first_epoch"] == start["epoch"] == first, "missing epochs")
+            if with_linear and arm == "rr":
+                require(row["rr_checked_calls"] == calls, "incomplete DeepInfer RR slot verification")
             control[phase].append(
                 {k: row[k] for k in ("rank", "first_epoch", "ids", "weights", "demand", "compressed_layers")}
             )
@@ -127,6 +143,10 @@ def arm_data(directory, bs, arm, sha):
                     boundary["installed_layout"] == installed_hash,
                     "installed layout does not match live boundary",
                 )
+                if with_linear:
+                    require(
+                        boundary["plan_price"] == expected_price, f"{arm}: wrong prepared role-5 mode/slack"
+                    )
                 snap = boundary["snapshot"]
                 manifest = load(directory.parent / "checkpoint" / f"rank{row['rank']}.json")
                 require(
@@ -183,9 +203,15 @@ def arm_data(directory, bs, arm, sha):
                 "bad timing boundary",
             )
             lookup = np.array([slot_cost(i) for i in range(int(q.max()) + 1)])
-            price = lookup[q].sum(1)
+            fine_price = lookup[q].sum(1)
+            linear_price = q.sum(1) + 26 * ((q + 63) // 64).sum(1)
+            price = linear_price if mode == 0 else fine_price
             require(np.all(clocks[:, 5] == (price if eco else 0)), "incorrect role-5 score")
-            observers.append(np.stack([(c - g) / 1000, np.where(active, u - t, 0) / 1000, price], axis=-1))
+            observers.append(
+                np.stack(
+                    [(c - g) / 1000, np.where(active, u - t, 0) / 1000, fine_price, linear_price], axis=-1
+                )
+            )
             occupancies.append(q)
             require(greedy.shape == (STEPS, bs) and (greedy >= 0).all(), "incomplete native top-1")
             if native is None:
@@ -236,13 +262,15 @@ def auction_metrics(auction):
     )
 
 
-def analyze_group(root, bs, sha):
+def analyze_group(root, bs, sha, with_linear=False):
+    arms = ARMS24 if with_linear else ARMS
     rows = []
     layers = []
     auctions = []
     reference = None
     adaptive = None
     outcomes = {}
+    eco_layout = None
     eco_allocation = None
     eco_auction = None
     group = root / f"bs{bs}"
@@ -253,8 +281,10 @@ def analyze_group(root, bs, sha):
         history.shape == (STEPS, LAYERS, 384) and np.all(history.sum(-1) == bs * 6 * RANKS),
         "incomplete EPLB history",
     )
-    for arm in ARMS:
-        control, placement, native, warm, counts, v, auction, host = arm_data(group / arm, bs, arm, sha)
+    for arm in arms:
+        control, placement, native, warm, counts, v, auction, host = arm_data(
+            group / arm, bs, arm, sha, with_linear
+        )
         require(all(a["demand"] == demand_hash for a in control["stats"]), "EPLB demand hash mismatch")
         if reference is None:
             reference = control
@@ -284,13 +314,15 @@ def analyze_group(root, bs, sha):
                 ),
                 "installed ECO rank membership differs from upstream",
             )
-            allocation = hashlib.sha256(np.ascontiguousarray(counts)).digest()
+            if eco_layout is None:
+                eco_layout = installed
+            require(np.array_equal(installed, eco_layout), "installed ECO slot order differs")
             if arm == "eco":
-                eco_allocation, eco_auction, eco_layout = allocation, auction, installed
-            else:
+                eco_allocation = hashlib.sha256(np.ascontiguousarray(counts)).digest()
+                eco_auction = auction
+            elif arm == "eco_smr":
                 require(
-                    np.array_equal(installed, eco_layout)
-                    and eco_allocation == allocation
+                    eco_allocation == hashlib.sha256(np.ascontiguousarray(counts)).digest()
                     and np.array_equal(auction, eco_auction),
                     "SM-reuse changed ECO placement, quotas or auction",
                 )
@@ -299,7 +331,10 @@ def analyze_group(root, bs, sha):
         spans = v[:, :, :2]
         require(np.all(spans.sum(1) > 0), "empty layer spans")
         actual = spans / spans.sum(1, keepdims=True)
-        predicted = v[:, :, 2] / v[:, :, 2].sum(1, keepdims=True)
+        prices = v[:, :, 2:4]  # fine and linear prices on this same allocation
+        shares = prices / prices.sum(1, keepdims=True)
+        score_index = int(arm == "eco_linear")
+        predicted = shares[:, :, score_index]
         err = np.abs(100 * (predicted[:, :, None] - actual))
         diff = int(np.count_nonzero(native != reference_native))
         rows.append(
@@ -320,6 +355,17 @@ def analyze_group(root, bs, sha):
                 strict_pair_comparable=(diff == 0 and warm == reference_warm),
             )
         )
+        if with_linear:
+            rows[-1].update(
+                primary_price=("linear" if score_index else "fine"),
+                auction_slack=(90 if score_index else 11469) if auction is not None else None,
+            )
+            for i, price_name in enumerate(("fine", "linear")):
+                error = np.abs(100 * (shares[:, :, i, None] - actual))
+                for target_index, target in enumerate(("graph", "routed")):
+                    deviations = error[:, :, target_index]
+                    rows[-1][f"{price_name}_{target}_mae_pp"] = float(deviations.mean())
+                    rows[-1][f"{price_name}_{target}_max_pp"] = float(deviations.max())
         rank_errors = []
         for rank in range(RANKS):
             rank_errors.append(
@@ -366,7 +412,7 @@ def analyze_group(root, bs, sha):
                 for i, values in enumerate(auction):
                     w.writerow([*divmod(i, LAYERS), *values])
     pairs = []
-    for a, b in combinations(ARMS, 2):
+    for a, b in combinations(arms, 2):
         n0, w0, r0 = outcomes[a]
         n1, w1, r1 = outcomes[b]
         diff = int(np.count_nonzero(n0 != n1))
@@ -383,17 +429,26 @@ def analyze_group(root, bs, sha):
                 e2e_change_pct=100 * (r1["e2e_ms_per_step"] / r0["e2e_ms_per_step"] - 1),
             )
         )
+        if with_linear:
+            pairs[-1].update(
+                moe_delta_ms=r1["moe_ms_per_step"] - r0["moe_ms_per_step"],
+                e2e_delta_ms=r1["e2e_ms_per_step"] - r0["e2e_ms_per_step"],
+                routed_mae_delta_pp=r1["routed_mae_pp"] - r0["routed_mae_pp"],
+            )
     return rows, layers, auctions, pairs
 
 
-def report(root, batches):
+def report(root, batches, with_linear=None):
+    if with_linear is None:
+        source = load(root / f"bs{batches[0]}" / "vanilla" / "run.json")
+        with_linear = source["controls"].get("GC_MOE_MATRIX_SIZE", "20") == "24"
     sha = (root / "measurement.sha").read_text().strip()
     rows = []
     layers = []
     auctions = []
     pairs = []
     for bs in batches:
-        a, b, c, d = analyze_group(root, bs, sha)
+        a, b, c, d = analyze_group(root, bs, sha, with_linear)
         rows.extend(a)
         layers.extend(b)
         auctions.extend(c)
@@ -403,11 +458,21 @@ def report(root, batches):
     write_rows(out / "layers.csv", layers)
     write_rows(out / "auction.csv", auctions)
     write_rows(out / "pairs.csv", pairs)
+    if with_linear:
+        write_rows(
+            out / "cost_pairs.csv", [p for p in pairs if (p["arm_a"], p["arm_b"]) == ("eco_linear", "eco")]
+        )
 
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("root", type=Path)
     p.add_argument("--bs", type=int, choices=BATCHES)
+    p.add_argument(
+        "--with-linear",
+        action="store_true",
+        default=None,
+        help="require all 24 arms and audit the active prices",
+    )
     args = p.parse_args()
-    report(args.root, [args.bs] if args.bs else BATCHES)
+    report(args.root, [args.bs] if args.bs else BATCHES, args.with_linear)

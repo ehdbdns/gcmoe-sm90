@@ -1,6 +1,6 @@
-# 当前任务 · 修正 EPLB 后的 20 臂主表
+# 当前任务 · 修正 EPLB 后的 24 臂主表
 
-回执写入本目录的 `REPLY_MAIN20_FINE_COST.md`。每档 BS 固定工作量，测量完整 MoE、端到端、各 rank 预测误差与 ECO 拍卖成交。[八卡任务书](../trace_executor_20261119/MAIN20_FINE_COST_TASK.md)
+回执写入本目录的 `REPLY_MAIN24_COST.md`。每档 BS 固定工作量，新增关闭 SM-reuse 的线性 ECO 价格对照，测量完整 MoE、端到端、各 rank 预测误差与 ECO 拍卖成交。[八卡任务书](../trace_executor_20261119/MAIN24_COST_TASK.md)
 
 # 历史任务 · 1000 + 1000 步的两臂 fine cost 对照
 

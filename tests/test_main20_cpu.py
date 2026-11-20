@@ -1,10 +1,11 @@
-"""DeepInfer history/replica-order regressions and the five-arm archive verifier."""
+"""DeepInfer history/replica-order regressions and the 20- and 24-arm archive verifier."""
 
 from pathlib import Path
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 import hashlib
+import csv
 import json
 import sys
 import numpy as np
@@ -12,7 +13,7 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / s) for s in ("source", "integration", "scripts/trace_layer")]
-from gc_moe.eplb.deepinfer_periodic.policy import rebalance_experts_global
+from gc_moe.eplb.policy import rebalance_experts_global
 from gc_moe.sm90_gc import install_eplb_plan
 from eplb_logic import placement_window
 import main20_report as report
@@ -107,6 +108,81 @@ def test_worker_export(root):
         assert raw["native"].tolist() == [[7], [8]]
 
 
+def test_prepared_prices():
+    from dataclasses import replace
+    from gc_moe.apis.sm90_gc_moe import ValidatedCall
+    from gc_moe.layout.sm90_gc_moe import SM90GCBufferLayout
+    from gc_moe.jit_kernels.impls import sm90_fp8_fp4_gc_moe as jit
+
+    t = torch.zeros(1)
+    config = ValidatedCall(
+        ranks=8,
+        experts=384,
+        capacity=2048,
+        topk=6,
+        hidden=5120,
+        intermediate=2304,
+        tokens=32,
+        bound=2048,
+        clamp=10.0,
+        fast_math=True,
+        physical=448,
+        eco_logical_experts=384,
+        eco_wb=26,
+        eco_wa=0,
+    )
+    ctx = SimpleNamespace(dispatch_sms=6, compute_sms=72)
+    with (
+        patch.dict("os.environ", GC_MOE_MATRIX_ARM="eco", GC_MOE_BLOCK_M_FORCE="64", GC_MOE_MB_CLAIM="1"),
+        patch.object(jit, "_CACHE", {}),
+        patch.object(jit, "_get_or_compile_binaries", return_value=()),
+        patch.object(jit, "_compiler_identity", return_value=None),
+        patch("torch.cuda.get_device_capability", return_value=(9, 0)),
+    ):
+        layout = SM90GCBufferLayout(8, 384, 2048, 6, 5120, 2304, 0, 448, True, True)
+        buf = SimpleNamespace(layout=layout, buffer=t, peer_table=t, rank_idx=0)
+        for batch, mode, slack in [(32, 0, 90), (256, 2, 11469)]:
+            jit.prepare_role_binaries(
+                replace(config, tokens=batch, eco_cost_mode=mode),
+                t,
+                (t, t, t),
+                (t, t, t),
+                buf,
+                stats=t,
+                context=ctx,
+            )
+            assert jit.prepared_matrix_price(layout, batch) == dict(mode=mode, slack=slack)
+        assert jit.prepared_matrix_price(layout, 32) == dict(mode=0, slack=90)
+
+
+def test_rr_counts():
+    from matrix_workload import verify_rr_counts
+
+    # Different upstream inverse order for the two layers. Odd length makes the
+    # physical slot counts distinguish an order swap even with the same logical sum.
+    tape = SimpleNamespace(
+        batch=3,
+        ids=torch.zeros((2, 3, 1), dtype=torch.long),
+        layer_ids=torch.tensor([0, 1]),
+        counts=torch.tensor([[1, 2], [2, 1]], dtype=torch.int32),
+    )
+    buf = SimpleNamespace(
+        fixed_routes=tape,
+        rank_idx=0,
+        group=SimpleNamespace(size=lambda: 1),
+        expert_slots=torch.tensor([[[1, 0]], [[0, 1]]], dtype=torch.int32),
+    )
+    with patch("torch.distributed.all_reduce"):
+        assert verify_rr_counts(buf) == 2
+        tape.counts[0] = torch.tensor([2, 1])
+        try:
+            verify_rr_counts(buf)
+        except ValueError as e:
+            assert "physical slot counters" in str(e)
+        else:
+            raise AssertionError("RR accepted a different copy order")
+
+
 def test_archive(root):
     # Three steps and three layers exercise step/layer indexing and cold/warm boundaries.
     report.STEPS = report.LAYERS = 3
@@ -120,7 +196,14 @@ def test_archive(root):
     demand = hashlib.sha256(history).hexdigest()
     (root / "measurement.sha").write_text("revision")
     fixed = dict(
-        GC_MOE_ECO_COSTFN="2",
+        GC_MOE_MATRIX_SIZE="24",
+        GC_MOE_ECO_WB="26",
+        GC_MOE_ECO_WA="0",
+        GC_MOE_ECO_BLOCKS_ONLY="0",
+        GC_MOE_ECO_TOKENS_ONLY="0",
+        GC_MOE_ECO_ROUNDS="1",
+        GC_MOE_ECO_COLD_ROUNDS="6",
+        GC_MOE_SM90_DISPATCH_SMS="6",
         GC_MOE_MATRIX_BS="32",
         GC_MOE_ECO_NO_AUCTION="0",
         GC_MOE_ECO_NULL_PLAN="0",
@@ -136,7 +219,7 @@ def test_archive(root):
         GC_MEASURE_FLUSH="0",
         GC_MOE_SHARED_IN_GC="1",
     )
-    for arm in report.ARMS:
+    for arm in report.ARMS24:
         dst = group / arm
         dst.mkdir()
         layout = [list(range(384)) + ([] if arm == "vanilla" else list(range(64))) for _ in range(3)]
@@ -144,9 +227,11 @@ def test_archive(root):
         if arm == "rr":
             (group / "placement.json").write_text(json.dumps(layout))
         eco = arm.startswith("eco")
+        linear = arm == "eco_linear"
         cfg = dict(
             fixed,
             GC_MOE_MATRIX_ARM=arm,
+            GC_MOE_ECO_COSTFN="0" if linear else "2",
             GC_MOE_EPLB=str(int(arm != "vanilla")),
             GC_MOE_ECO=str(int(eco)),
             GC_MOE_SM90_SM_REUSE=str(int(arm == "eco_smr")),
@@ -159,8 +244,8 @@ def test_archive(root):
             steps=3,
             layers=3,
             stream=1,
-            cost=2,
-            rearranged=arm in ("rr", "eco", "eco_smr"),
+            cost=0 if linear else 2,
+            rearranged=(arm == "rr" or eco),
             prompt_hash="p",
             output_hash="x",
             prefill_steps=9,
@@ -182,9 +267,14 @@ def test_archive(root):
                     batch_order="b",
                     warm_native="w",
                 )
+                if arm == "rr":
+                    audit["rr_checked_calls"] = 9
                 record = dict(rank=rank, epoch=start)
                 if phase == "measured":
                     record["checkpoint"] = dict(
+                        plan_price=(dict(mode=0, slack=90) if linear else dict(mode=2, slack=11469))
+                        if eco
+                        else None,
                         snapshot=dict(source_sha256="s", readback_sha256="s"),
                         demand=demand,
                         logical_weights="w",
@@ -215,7 +305,20 @@ def test_archive(root):
             clocks[:, 5] = report.slot_cost(192)
             extra["auction"] = np.tile([1, 1, 1, 3, 2, 0, 0], (9, 1))
         for rank in range(8):
-            np.savez(dst / f"rank{rank}.npz", counts=q, clocks=clocks, native=native, epochs=epochs, **extra)
+            local_q, local_clocks = q.copy(), clocks.copy()
+            if linear:
+                if rank == 0:
+                    local_q[:, :2] = [129, 63]
+                local_clocks[:, 5] = local_q.sum(1) + 26 * ((local_q + 63) // 64).sum(1)
+                extra["auction"] = np.tile([1, 1, 0, 3, 2, 0, 1], (9, 1))
+            np.savez(
+                dst / f"rank{rank}.npz",
+                counts=local_q,
+                clocks=local_clocks,
+                native=native,
+                epochs=epochs,
+                **extra,
+            )
     rows, layers, auctions, pairs = report.analyze_group(root, bs, "revision")
     assert len(rows) == 5 and len(layers) == 15 and len(pairs) == 10 and len(auctions) == 2
     assert rows[0]["moe_ms_per_step"] == 0.03 and rows[0]["routed_mae_pp"] == 0
@@ -226,6 +329,49 @@ def test_archive(root):
     )
     assert not rows[1]["strict_pair_comparable"] and rows[1]["native_diff"] == 1
     assert auctions[0]["accepted"] == 9 and auctions[0]["blocked_before_offer"] == 9
+    rows, layers, auctions, pairs = report.analyze_group(root, bs, "revision", with_linear=True)
+    assert len(rows) == 6 and len(layers) == 18 and len(auctions) == 3 and len(pairs) == 15
+    old, new = rows[3:5]
+    assert old["auction_slack"] == 90 and new["auction_slack"] == 11469
+    assert (
+        old["routed_mae_pp"] == old["linear_routed_mae_pp"]
+        and old["fine_routed_mae_pp"] != old["routed_mae_pp"]
+    )
+    assert (
+        auctions[0]["arm"] == "eco_linear" and auctions[0]["accepted"] == 0 and auctions[1]["accepted"] == 9
+    )
+    report.report(root, [bs])
+    with (group / "cost_pairs.csv").open() as f:
+        (cost_pair,) = csv.DictReader(f)
+    assert (cost_pair["arm_a"], cost_pair["arm_b"], cost_pair["strict_pair_comparable"]) == (
+        "eco_linear",
+        "eco",
+        "True",
+    )
+    linear_dir = group / "eco_linear"
+    run_file = linear_dir / "run.json"
+    archived = run_file.read_text()
+    run = json.loads(archived)
+    run["measured"]["initial"][7]["checkpoint"]["plan_price"]["slack"] = 11469
+    run_file.write_text(json.dumps(run))
+    try:
+        report.arm_data(linear_dir, bs, "eco_linear", "revision", with_linear=True)
+    except ValueError as e:
+        assert "mode/slack" in str(e)
+    else:
+        raise AssertionError("accepted a linear arm with fine slack")
+    run_file.write_text(archived)
+    path = linear_dir / "rank0.npz"
+    with np.load(path) as data:
+        wrong = dict(data)
+    wrong["clocks"][:, 5] = report.slot_cost(129) + report.slot_cost(63)
+    np.savez(path, **wrong)
+    try:
+        report.arm_data(linear_dir, bs, "eco_linear", "revision", with_linear=True)
+    except ValueError as e:
+        assert "role-5 score" in str(e)
+    else:
+        raise AssertionError("accepted a linear arm with fine scores")
     path = group / "eco" / "rank7.npz"
     with np.load(path) as f:
         data = dict(f)
@@ -242,6 +388,8 @@ def test_archive(root):
 if __name__ == "__main__":
     torch.set_num_threads(1)
     test_policy()
+    test_prepared_prices()
+    test_rr_counts()
     with TemporaryDirectory() as tmp:
         test_worker_export(Path(tmp))
         test_archive(Path(tmp))

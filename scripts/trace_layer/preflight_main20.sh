@@ -11,6 +11,10 @@ df -h "$out" "${GC_MOE_CHECKPOINT_ROOT:-/tmp}"
 nvidia-smi --query-gpu=index,uuid,name,memory.used --format=csv
 nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name --format=csv,noheader > "$out/preexisting-processes.csv"
 test ! -s "$out/preexisting-processes.csv"
+if [[ ${GC_MOE_MATRIX_SIZE:-20} == 24 ]]; then
+  # Byte-identical to DeepInfer a679bb86 (deepinfer/model_executor/eplb/policy.py).
+  echo '52241603827a1a1d19a395d48f5d618a7336fd1ceee631127e6782c644f736dc  source/gc_moe/eplb/policy.py' | sha256sum -c -
+fi
 for test_file in tests/test_*_cpu.py; do "$py" "$test_file"; done
 "$py" tests/test_stream_checkpoint_cpu.py --gpu-preflight
 "$py" tests/test_attention_order_cpu.py --cuda
@@ -18,17 +22,25 @@ for test_file in tests/test_*_cpu.py; do "$py" "$test_file"; done
 export GC_MOE_MB_CLAIM=1 GC_MOE_BLOCK_M_FORCE=64 GC_MOE_ECO_COSTFN=2 GC_MOE_SM90_STREAM_M_BLOCKS=1
 export GC_MOE_ECO_MAX_COPIES=8 GC_MOE_ECO_PER_LAYER=1 GC_MOE_LAYERS=40 GC_MOE_FINE_TRACE=0
 export GC_MOE_SM90_PULL_TMA=1 GC_MOE_IR_STEP=0 GC_MOE_SM90_DISPATCH_SMS=6 SMOKE_ECO_WB=26
-for arm in vanilla random rr eco eco_smr; do
-  eco=0; reuse=0
+arms=(vanilla random rr)
+case ${GC_MOE_MATRIX_SIZE:-20} in
+  20) ;;
+  24) arms+=(eco_linear) ;;
+  *) exit 2 ;;
+esac
+arms+=(eco eco_smr)
+for arm in "${arms[@]}"; do
+  eco=0; reuse=0; mode=2
   case "$arm" in
+    eco_linear) eco=1; mode=0 ;;
     eco) eco=1 ;;
     eco_smr) eco=1; reuse=1 ;;
   esac
-  GC_MOE_LONG_COST=1 GC_MOE_FIXED_DIR="$out" GC_MOE_MATRIX_ARM="$arm" GC_MOE_EPLB_WINDOW=1000 \
+  GC_MOE_ECO_COSTFN="$mode" GC_MOE_LONG_COST=1 GC_MOE_FIXED_DIR="$out" GC_MOE_MATRIX_ARM="$arm" GC_MOE_EPLB_WINDOW=1000 \
   GC_MOE_STEP_PROFILE=1 GC_MOE_ECO_TRACE=1 GC_MOE_PULL_TRACE=1 SMOKE_ECO="$eco" GC_MOE_SM90_SM_REUSE="$reuse" \
     "$py" scripts/smoke_compile_eco.py 2>&1 | tee "$out/compile-$arm.log"
   roles='[1, 4, 2, 3]'
-  if [[ $arm == eco ]]; then roles='[1, 4, 2, 5, 3]'; fi
+  if [[ $eco == 1 ]]; then roles='[1, 4, 2, 5, 3]'; fi
   if [[ $arm == eco_smr ]]; then roles='[1, 4, 2, 5, 6, 3]'; fi
   grep -Fq "compiled roles $roles" "$out/compile-$arm.log"
 done

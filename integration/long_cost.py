@@ -135,6 +135,9 @@ def register_long_rpc(worker_class, get_buffer, modules):
         if buf.layout.matrix:
             from matrix_workload import source_history
             audit['demand'] = source_history(buf, modules, phase)
+            if os.environ.get('GC_MOE_MATRIX_SIZE') == '24' and os.environ.get('GC_MOE_MATRIX_ARM') == 'rr':
+                from matrix_workload import verify_rr_counts
+                audit['rr_checked_calls'] = verify_rr_counts(buf)
         if phase == "stats":
             if buf.layout.matrix:
                 buf._matrix_demand = audit['demand']

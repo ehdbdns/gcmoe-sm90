@@ -51,6 +51,13 @@ def main():
     print('schedule', schedule, flush=True)
     specs = _role_specs(config, layout, schedule, step_profile and matrix != "vanilla")
     print('roles', [(s[1][0], s[1][1], s[1][2], s[1][3]) for s in specs], flush=True)
+    if eco and os.getenv('GC_MOE_MATRIX_SIZE') == '24':
+        plan = next(kernel for kernel, launch in specs if launch[0] == 5)
+        expected = (0, 90) if matrix == 'eco_linear' else (2, 11469)
+        actual = (config.eco_cost_mode, plan.eco_slack)
+        if actual != expected:
+            raise ValueError(f'{matrix}: prepared {actual}, expected {expected}')
+        print(f'{matrix} role 5 cost={actual[0]} slack={actual[1]}', flush=True)
     identity = _compiler_identity('sm_90a')
     t0 = time.time()
     binaries = _compile_roles(specs, identity)

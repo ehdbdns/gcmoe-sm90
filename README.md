@@ -7,7 +7,7 @@
 
 ## 主表重测进度
 
-当前 H20 M64 的 ECO 默认使用逐 valid 价格。在固定放置的 BS256 两臂对照中，完整 MoE 由 35.7168 降至 35.5798 ms/步。新一轮将按 DeepInfer 逐步统计重排、保留 RR 副本顺序并固定同档输入输出，重测下方五臂和四档 BS。[1000 步两臂结果](docs/trace_handover_20261119/REPLY_LONG_COST_1000.md) · [20 臂任务书](docs/trace_executor_20261119/MAIN20_FINE_COST_TASK.md)
+当前 H20 M64 的 ECO 默认使用逐 valid 价格。在固定放置的 BS256 两臂对照中，完整 MoE 由 35.7168 降至 35.5798 ms/步。新一轮将按 DeepInfer 逐步统计重排、保留 RR 副本顺序并固定同档输入输出，每档 BS 在历史五臂上增加原始线性价格 ECO 臂，共 24 个实验。[1000 步两臂结果](docs/trace_handover_20261119/REPLY_LONG_COST_1000.md) · [24 臂任务书](docs/trace_executor_20261119/MAIN24_COST_TASK.md)
 
 ## 历史结果 · 五臂 × 四档 batch（2026-11-16，旧 ECO 和线性价格）
 

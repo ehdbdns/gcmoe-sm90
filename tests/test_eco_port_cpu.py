@@ -44,7 +44,7 @@ def test_repeated_rearrangement(buf, first, second):
     scope['_EXPERT_REGISTRY'] = [mod]
     with patch.dict(os.environ, GC_MOE_ECO='1', GC_MOE_SLOT_PLACEMENT='identity'), \
             patch('torch.distributed.all_reduce'), patch('torch.distributed.broadcast'), \
-            patch('gc_moe.eplb.deepinfer_periodic.policy.rebalance_experts_global') as rebalance:
+            patch('gc_moe.eplb.policy.rebalance_experts_global') as rebalance:
         origins = plan.tolist()
         for target in targets:
             stats.copy_(torch.tensor([[7, 3, 1], [4, 8, 6]]))

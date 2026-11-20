@@ -1615,7 +1615,7 @@ def rearrange_now() -> bool:
         return True
 
     import torch.distributed as dist
-    from gc_moe.eplb.deepinfer_periodic.policy import rebalance_experts_global
+    from gc_moe.eplb.policy import rebalance_experts_global
 
     m = live[0]
     buf = m._get_buffer()

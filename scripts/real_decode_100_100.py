@@ -628,7 +628,13 @@ def main():
                     'GC_MOE_ORDER_EXTRA', 'GC_MOE_STEP_PROFILE', 'GC_MOE_SM90_STREAM_M_BLOCKS')
         if matrix:
             required = tuple(k for k in required if k not in ('GC_MOE_EPLB', 'GC_MOE_ECO', 'GC_MOE_COST_STUDY'))
-            if matrix not in ('vanilla', 'random', 'rr', 'eco', 'eco_smr') or int(os.environ['GC_MOE_MATRIX_BS']) != 8*a.seqs_per_rank:
+            arms = ('vanilla', 'random', 'rr', 'eco', 'eco_smr')
+            if os.getenv('GC_MOE_MATRIX_SIZE') == '24':
+                arms += ('eco_linear',)
+                expected_mode = '0' if matrix == 'eco_linear' else '2'
+                if os.getenv('GC_MOE_ECO_COSTFN') != expected_mode:
+                    ap.error(f'{matrix} requires GC_MOE_ECO_COSTFN={expected_mode}')
+            if matrix not in arms or int(os.environ['GC_MOE_MATRIX_BS']) != 8*a.seqs_per_rank:
                 ap.error('invalid main table arm or batch')
         if (any(os.getenv(k) != '1' for k in required)
                 or not os.getenv('GC_MOE_FIXED_DIR') or not os.getenv('GC_MOE_STRICT_STATE_DIR')

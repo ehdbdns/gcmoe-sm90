@@ -1,4 +1,4 @@
-"""Boundary checks for the five placements at a single batch size."""
+"""Boundary checks for the placements at a single batch size."""
 
 import os
 from pathlib import Path
@@ -40,6 +40,31 @@ def source_history(buf, modules, phase):
         with path.open("xb") as f:
             np.savez_compressed(f, logical=history.cpu().numpy())
     return digest(history)
+
+
+def verify_rr_counts(buf):
+    """Check dispatch slot counters against the pinned TileKernels gate outside timing."""
+    tape = buf.fixed_routes
+    rank = int(buf.rank_idx)
+    width = tape.counts.shape[1]
+    inverse = buf.expert_slots
+    copies = (inverse >= 0).sum(-1)
+    token_key = (rank + 23333 * torch.arange(tape.batch, device=inverse.device)).view(1, -1, 1)
+    mismatches = torch.zeros((), dtype=torch.long, device=inverse.device)
+    for start in range(0, len(tape.ids), 256):
+        ids = tape.ids[start : start + 256]
+        layer = tape.layer_ids[start : start + len(ids)].long().view(-1, 1, 1)
+        copy = token_key % copies[layer, ids]
+        slot = inverse[layer, ids, copy].long().flatten(1)
+        expected = tape.counts.new_zeros((len(ids), width * buf.group.size()))
+        expected.scatter_add_(1, slot, torch.ones_like(slot, dtype=expected.dtype))
+        dist.all_reduce(expected, group=buf.group)
+        received = tape.counts[start : start + len(ids)]
+        mismatches += torch.count_nonzero(expected[:, rank * width : (rank + 1) * width] != received)
+    dist.all_reduce(mismatches, group=buf.group)
+    if mismatches.item():
+        raise ValueError(f"RR differs from the upstream gate at {mismatches.item()} physical slot counters")
+    return len(tape.ids)
 
 
 def prepare_matrix(worker, buf, modules, ref):
@@ -84,6 +109,18 @@ def prepare_matrix(worker, buf, modules, ref):
         path = Path(os.environ["GC_MOE_FIXED_DIR"]) / (os.environ["GC_MOE_MATRIX_ARM"] + "-layout.json")
         with path.open("x") as f:
             json.dump(layout, f)
+    plan_price = None
+    if buf.eco and os.environ.get("GC_MOE_MATRIX_SIZE") == "24":
+        from gc_moe.jit_kernels.impls.sm90_fp8_fp4_gc_moe import prepared_matrix_price
+
+        plan_price = prepared_matrix_price(buf.layout, tape.batch)
+        expected = (
+            {"mode": 0, "slack": 90}
+            if os.environ["GC_MOE_MATRIX_ARM"] == "eco_linear"
+            else {"mode": 2, "slack": 11469}
+        )
+        if plan_price != expected:
+            raise ValueError(f"prepared ECO price {plan_price} differs from assigned {expected}")
     controls = runner_boundary(worker.model_runner, ref)
     controls.update(
         next_epoch=int(buf.header[0].item()), logical_weights=json_hash(canonical), demand=buf._matrix_demand
@@ -104,6 +141,7 @@ def prepare_matrix(worker, buf, modules, ref):
     ]
     return dict(
         snapshot=snap,
+        plan_price=plan_price,
         logical_weights=controls["logical_weights"],
         placement=json_hash(by_rank),
         installed_layout=json_hash(layout),
