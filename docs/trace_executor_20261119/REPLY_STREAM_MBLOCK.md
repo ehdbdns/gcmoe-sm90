@@ -357,6 +357,69 @@ sha256（`raw/`，两轮各自记录在 `sha256.txt`）：
 A `capture.json 57ea7f5b…`、`fine.json 8c3ea96a…`；
 B 见 `streamed/sha256.txt`。
 
+### 8.3 逐 rank token / M 块计数（A 与 B 两层）
+
+`*.counts.json` 里每 rank 的 `tokens`（该 rank 实际持有的 token 数）、
+`routed_rows`（= tokens × topk 6 后的行数）、`m_blocks`（= ⌈rows/64⌉ 的 M 块数）：
+
+| 层 | rank | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 合计 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A L8 tok | | 189 | 194 | 203 | 194 | 192 | 201 | 174 | 189 | 1536 |
+| A L8 mb | | 33 | 34 | 29 | 29 | 31 | 30 | 33 | 32 | 251 |
+| B L8 tok | | 188 | 212 | 191 | 196 | 180 | 206 | 186 | 177 | 1536 |
+| B L8 mb | | 33 | 34 | 31 | 32 | 32 | 30 | 31 | 29 | 252 |
+| A L20 tok | | 199 | 190 | 196 | 191 | 224 | 195 | 187 | 154 | 1536 |
+| A L20 mb | | 31 | 32 | 30 | 31 | 28 | 29 | 32 | 27 | 240 |
+| B L20 tok | | 218 | 233 | 221 | 221 | 198 | 190 | 192 | 63 | 1536 |
+| B L20 mb | | 34 | 36 | 32 | 30 | 28 | 30 | 27 | 14 | 231 |
+
+每轮合计恒为 1536 = 256 序列 × topk 6 ÷ 8 rank 均摊前的实际持有总量（12288 行 / 8）。
+`parse.log` 会逐 rank 打印同一组值。
+
+## 8.4 Absolute trace（本轮补画）
+
+任务书正文只要求「两层七段 Perfetto」，未要求 CTA 级 absolute trace；
+按你之前的要求（所有 CTA 时间轴 + compute CTA 任务归属、大图不压缩）本轮补齐，
+**仍用仓库现成脚本 `scripts/plot_absolute_trace.py`，未自写绘图代码**。
+
+输入适配同上一轮（该脚本吃 `eco_trace.ranks[r].fine_rows`，
+本轮细粒度记录在 `raw/fine.json → ranks[r].epochs[e]`，用 6 行拼装，不改脚本）：
+
+```python
+f = json.load(open('raw/fine.json'))
+ranks = [{'fine_rows': r['epochs'][str(EP)], 'fine_count': ..., 'fine_recs': ...}
+         for r in f['ranks']]
+json.dump({'eco_trace': {'ranks': ranks}}, open('/tmp/rt/abs/<tag>_<layer>.json', 'w'))
+python scripts/plot_absolute_trace.py /tmp/rt/abs/<tag>_<layer>.json 6 <out.png>
+```
+
+产物在 `stream_results/abstrace/`（每层一张整层图 + 两张放大图 + 一份 CSV）：
+
+| 文件 | 尺寸 | 内容 |
+|---|---|---|
+| `baseline_layer08_ep14729.rank6.png` | 22486×10975（247 Mpx） | 整层：上 71 compute CTA（每 tile 标 `E<e> T<n> M<m>`），下 56 pull CTA（每槽标 `E<e> s<slot>`）|
+| `streamed_layer08_ep14689.rank6.png` | 22486×10975（247 Mpx） | 同上，流式 |
+| `..._layer20_...rank6.png` | 22486×10975 | layer 20 两张 |
+| `*.zoom_*.png` | 16486×22062（364 Mpx） | 每层两张放大（早段首批 L1 落地 / 尾段 L2+push）|
+| `*.abstrace_rank6.csv` | — | 逐 slice 的 `kind,cta,begin_us,end_us,dur_us,expert,ntile,mblock,start_row,valid,phase,global_slot` |
+
+脚本自检（四张全部 `unpaired: pull=0 gemm=0 push=0`）：
+
+| 轮次/层 | pull span (CTA) | GEMM span (CTA) | push span | pull_done | 绘图终点 |
+|---|---|---:|---:|---:|---:|
+| A L8 | 56 (56) | 1254 (71) | 660 | 373.0 µs | 745.6 µs |
+| B L8 | 56 (56) | 1178 (71) | 620 | 359.0 µs | 868.0 µs |
+| A L20 | 56 (56) | 1216 (71) | 640 | 268.0 µs | 752.8 µs |
+| B L20 | 56 (56) | 1026 (71) | 540 | 424.0 µs | 820.1 µs |
+
+时间基准：该脚本以**本层第一个 `slot_begin` 为 0**，比 `detail.json` 的 dispatch 入口
+基准早约 24 µs（与上一轮一致）。图止于最后一个 GEMM/tile 结束，不含 combine 与 kernel 退出
+（那部分看 `*.detail.png`）。
+
+**大图上直接可见的 A/B 差别**：B（流式）的橙色 compute 条从 ~350 µs 起持续铺到 ~865 µs，
+中间没有明显的整段空窗；A（基线）则在 ~200 µs 集中起跑、~745 µs 前收干净。
+这与 §5 的「总工作量相同、跨度 +21%」一致。
+
 ## 9. 剩余等待位置（任务书 §3 末项）
 
 | 等待点 | baseline | streamed |
