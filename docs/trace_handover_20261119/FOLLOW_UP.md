@@ -1,5 +1,11 @@
-# 当前八卡任务
+# R4 八卡回执复核
 
-已收到 R3 回执 `ccd28c9`。固定负载下 E2E 下降 2.07%，整步 MoE 下降 0.73%，采样步 60/256 个原生 top‑1 有差异。执行 R4，两臂使用此次修复的 ECO、旧线性价格和同一参考负载。两次都用 baseline 预热，重排后才切换 stream。回执写入本目录的 `REPLY_FIXED_STREAM_R4.md`。[R4 任务书](../trace_executor_20261119/MULTILAYER_AB_TASK.md)
+R4 已完成，共启动两次模型。两臂均使用 `f73ceaa`、修复后的 ECO 和旧线性价格 `26 × M 块数 + routed rows`。100 个计时步的 E2E 从 83.362 降至 82.200 ms/步（−1.39%）。step 2 的 40 层 MoE 从 34.142 升至 34.523 ms（+1.12%），其中 9 层变快，31 层变慢。当前证据不足以确认 stream 的等价加速。每臂只有一次运行。[R4 回执](REPLY_FIXED_STREAM_R4.md) · [配对指标](../trace_executor_20261119/fixed_stream_results_r4/paired.csv)
 
-执行者仅可处理语义等价的编译问题。每臂限启动模型一次，其余情况保留证据直接回执。valid 耗时函数任务继续暂缓。
+复核了文件校验和、两臂的审计记录及 40 层逐槽计数。回放的 105 步 × 40 层都使用相同的路由 ID、权重、源内行号和逐槽物理行数。两臂都用 baseline 预热，但八个 rank 最后一次预热的量化输入和尺度摘要均有差异，预热原生预测摘要也不同。回放第 0 步已有 44/256 个原生 top‑1 不同，step 2 为 51/256，105 步共 3,640/26,880 个不同。强制反馈的 token 序列相同。现有采样无法定位预热内首次发生数值分歧的调用。[两臂审计判定](../trace_executor_20261119/fixed_stream_results_r4/comparison.json)
+
+逐块调度已在设备上生效。11 个详细采样层共有 512 个多 M 块槽实例。以同一 rank、同一槽的首个 L1 tile 与该槽 pull 结束比较，baseline 有 0 个提前开算，stream 有 261 个。以同一 M 块的最后一个 L1 tile 和首个 L2 tile 比较，两臂各 3,066 块均满足依赖。第 20 层 rank 0 的槽 51 在两臂都接收 320 行，baseline 在整槽 pull 完成后 217 µs 开始 L1，stream 则提前 72 µs 开始。[第 20 层 baseline absolute](../trace_executor_20261119/fixed_stream_results_r4/step02/baseline/paired/step002_layer20_epoch14581.absolute.perfetto.json) · [第 20 层 stream absolute](../trace_executor_20261119/fixed_stream_results_r4/step02/stream/paired/step002_layer20_epoch14581.absolute.perfetto.json)
+
+退化最大的第 3 层，八卡最大 MoE 从 861.0 升至 1,071.7 µs。rank 6 的有效领票至 routed 结束从 623.7 延至 846.7 µs。它的 combine 从 31.7 降至 17.1 µs，其余七个 rank 在 stream 的 combine 内停留 235.8–275.7 µs。combine 等待同伴发布 compute_ready，观察与 rank 6 晚到相符。这一层只有总览 trace，无法将其 routed 尾部归因到某个 CTA、槽或队列。[第 3 层 baseline counts](../trace_executor_20261119/fixed_stream_results_r4/step02/baseline/paired/step002_layer03_epoch14564.counts.json) · [第 3 层 stream counts](../trace_executor_20261119/fixed_stream_results_r4/step02/stream/paired/step002_layer03_epoch14564.counts.json)
+
+本轮已结案。执行者保留原始数据和日志，valid 耗时函数对照继续暂缓。
