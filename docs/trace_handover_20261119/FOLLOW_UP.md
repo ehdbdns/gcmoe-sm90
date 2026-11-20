@@ -1,4 +1,8 @@
-# 当前任务 · 固定 stream，验证 fine cost
+# 当前任务 · 1000 + 1000 步的两臂 fine cost 对照
+
+在同一台八卡 H20 上固定 stream，先测线性价格，再测逐 valid 价格。主指标为重排后 1000 步完整 MoE 耗时。请回执至本目录的 `REPLY_LONG_COST_1000.md`。[八卡执行任务书](../trace_executor_20261119/LONG_COST_1000_TASK.md)
+
+# 历史任务 · 固定 stream，验证 fine cost
 
 执行线性价格和逐 valid 价格两臂，各启动一次模型。回执写入本目录的 `REPLY_VALID_COST.md`。[执行任务书](../trace_executor_20261119/VALID_COST_TASK.md)
 

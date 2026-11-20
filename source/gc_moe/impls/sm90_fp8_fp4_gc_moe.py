@@ -159,6 +159,7 @@ class SM90GCMoERoleKernel:
         # this is what turns an epoch into (layer, step). Must match the
         # driver's layer count (`GC_MOE_LAYERS`, default 40).
         self.n_layers = layout.n_layers
+        self.long_cost = layout.long_cost
         # [PULL-TRACE] Independent of ECO: measures the pull phase on the
         # plain (no-replica) path too, which had no instrumentation before.
         self.fixed_route_order = layout.fixed_route_order
@@ -1415,6 +1416,10 @@ class SM90GCMoERoleKernel:
         if cutlass.const_expr(self.eco_trace):
             self._eco_rank_time(slab, self.eco_quota_off, self.eco_T_off)
             if tid == Uint32(0):
+                if cutlass.const_expr(self.long_cost):
+                    long_row = self._long_row(base, epoch)
+                    long_row[4] = Uint64(epoch)
+                    long_row[5] = Uint64(self._eco_s(slab, self.eco_T_off, rank))
                 for _r in cutlass.range_constexpr(self.ranks):
                     self._pull_tl_write_raw(base, epoch, Uint32(24) + Uint32(_r),
                                             Uint32(self._eco_s(slab, self.eco_T_off, Uint32(_r))))
@@ -3747,6 +3752,10 @@ class SM90GCMoERoleKernel:
         return data_iter + Uint32(k_size // 128)
 
     @cute.jit
+    def _long_row(self, base: Uint64, epoch: Uint32):
+        return self._field(base, 'long_clocks', Uint64) + (epoch % Uint32(1000 * self.n_layers)) * Uint32(6)
+
+    @cute.jit
     def _consume_tasks(self, base: Uint64, peers: cute.Pointer, slab: cute.Pointer,
                         sec1: cute.Pointer, sec2: cute.Pointer, clamp: Float32, stream: cutlass.Constexpr):
         tid, _, _ = cute.arch.thread_idx()
@@ -3763,6 +3772,7 @@ class SM90GCMoERoleKernel:
         task_iter, data_iter = Uint32(0), Uint32(0)
         # [ECO-FINE] `epoch` above is stale for a resident CTA, so every
         # record below re-reads `eco_tl_step` instead.
+        first_tile_ns, last_tile_ns = Uint64(0), Uint64(0)
         running = True
         while running:
             slot = task_iter % 2
@@ -3814,12 +3824,18 @@ class SM90GCMoERoleKernel:
                         # published right now.
                         self._pull_tl_min_first(
                             base, Uint32(self._field(base, 'eco_tl_step', Uint32)[0]), 15)
+                if cutlass.const_expr(self.long_cost):
+                    if tid == 128 and first_tile_ns == Uint64(0):
+                        first_tile_ns = read_globaltimer()
                 if phase == 1:
                     data_iter = self._select_persistent_tile(base, peers, slab, data_iter,
                                      expert, ntile, start, valid, sec1, clamp, True)
                 else:
                     data_iter = self._select_persistent_tile(base, peers, slab, data_iter,
                                      expert, ntile, start, valid, sec2, clamp, False)
+                if cutlass.const_expr(self.long_cost):
+                    if tid == 128:
+                        last_tile_ns = read_globaltimer()
                 # [ABSTRACE] type 7 = that M block finished (same fields as 6).
                 if cutlass.const_expr(self.fine_trace):
                     if tid == Uint32(128):
@@ -3834,6 +3850,13 @@ class SM90GCMoERoleKernel:
                     else:
                         if last != 0:
                             atom_acq_rel_add_u32(self._field(base, 'l1_done', Uint32) + expert, Uint32(1))
+
+        if cutlass.const_expr(self.long_cost):
+            if tid == 128 and first_tile_ns != Uint64(0):
+                published_epoch = ld_acquire_gpu_u32(self._field(base, 'eco_tl_step', Uint32))
+                clocks = self._long_row(base, published_epoch)
+                red_global_min_u64(clocks + 1, first_tile_ns)
+                red_global_max_u64(clocks + 2, last_tile_ns)
 
     @cute.jit
     def _select_persistent_tile(self, base: Uint64, peers: cute.Pointer, slab: cute.Pointer,
@@ -4524,6 +4547,14 @@ class SM90GCMoERoleKernel:
                 stats: cute.Pointer, sw1: cute.Pointer, ss1: cute.Pointer,
                 sw2: cute.Pointer, ss2: cute.Pointer, rank: Uint32, tokens: Uint32, clamp: Float32):
         base = Uint64(workspace.toint())
+        call_epoch = Uint32(0)
+        if cutlass.const_expr(self.long_cost):
+            # Read this invocation's tag before combine can advance the header.
+            if cutlass.const_expr(self.role in (1, 4, 5, 3)):
+                call_epoch = ld_acquire_gpu_u32(self._field(base, 'header', Uint32))
+                if cutlass.const_expr(self.role != 3):
+                    if cute.arch.thread_idx()[0] == 0:
+                        red_global_min_u64(self._long_row(base, call_epoch), read_globaltimer())
         if cutlass.const_expr(self.role == 1):
             if cutlass.const_expr(self.direct_route_scan):
                 self._dispatch_direct(base, peers, rank, tokens, stats)
@@ -4561,6 +4592,9 @@ class SM90GCMoERoleKernel:
             self._eco_plan(base, peers, rank, tokens, slab)
         else:
             self._combine(base, peers, y, rank, tokens)
+            if cutlass.const_expr(self.long_cost):
+                if cute.arch.thread_idx()[0] == 0:
+                    red_global_max_u64(self._long_row(base, call_epoch) + 3, read_globaltimer())
 
     @cute.jit
     def __call__(self, workspace: cute.Pointer, peers: cute.Pointer, y: cute.Pointer,

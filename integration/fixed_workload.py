@@ -53,6 +53,7 @@ class RouteTape:
         self.position = torch.zeros(1, dtype=torch.long, device=device)
         self.index = torch.zeros_like(self.position)
         self.replaying = torch.zeros((), dtype=torch.bool, device=device)
+        self.use_reference = self.replaying
         self.selected_ids = torch.empty_like(self.ids[:1])
         self.selected_weights = torch.empty_like(self.weights[:1])
 
@@ -61,13 +62,16 @@ class RouteTape:
         # measured arms. In warmup this ring retains the latest real routes.
         torch.remainder(self.position, len(self.ids), out=self.index)
         self.layer_ids.index_fill_(0, self.index, layer)
-        torch.index_select(self.ordinals, 0, self.index, out=ordinal_out.unsqueeze(0))
         for bank, scratch, live in ((self.ids, self.selected_ids, live_ids),
                                     (self.weights, self.selected_weights, live_weights)):
             torch.index_select(bank, 0, self.index, out=scratch)
-            torch.where(self.replaying, scratch, live.reshape_as(scratch), out=scratch)
+            torch.where(self.use_reference, scratch, live.reshape_as(scratch), out=scratch)
             bank.index_copy_(0, self.index, scratch)
+        self.select_ordinals(ordinal_out)
         return self.selected_ids[0], self.selected_weights[0]
+
+    def select_ordinals(self, ordinal_out):
+        torch.index_select(self.ordinals, 0, self.index, out=ordinal_out.unsqueeze(0))
 
     def finish_call(self, buf, output=None):
         if hasattr(self, 'first_step_probe'):

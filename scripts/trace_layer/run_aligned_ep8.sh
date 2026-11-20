@@ -7,6 +7,7 @@ study=0
 layers=(8 20)
 fine_layers=("${layers[@]}")
 case "$variant" in
+  --study-long-cost) study=1 ;;
   --study-paired)
     study=1
     layers=({0..39})
@@ -44,7 +45,7 @@ source scripts/env.sh
 test -x "$GC_ENV/bin/python"
 export GC_MOE_SRC="$PWD/source"
 export PYTHONPATH="$PWD/source:$PWD/patches:$PWD/integration"
-if [[ $variant == --study-paired ]]; then
+if [[ $variant == --study-paired || $variant == --study-long-cost ]]; then
   # The in-process EngineCore advances only when the driver calls step().
   # The separate TP/EP worker processes still own the eight GPUs.
   export VLLM_ENABLE_V1_MULTIPROCESSING=0
@@ -121,6 +122,13 @@ fi
 step="3: capture"
 bash scripts/warm_page_cache.sh "$MODEL" 2>&1 | tee "$out/warm.log"
 driver="$analysis_dir/../real_decode_100_100.py"
+if [[ $variant == --study-long-cost ]]; then
+  export GC_MOE_STEP_PROFILE=1
+  "$GC_ENV/bin/python" -u "$driver" --long-cost-study --label LONG_COST --output "$out/run.json" \
+    --seqs-per-rank 32 --prefill-lo 256 --prefill-hi 2048 --warm-steps 1000 --measure-steps 1000 \
+    2>&1 | tee "$out/run.log"
+  exit 0
+fi
 if [[ $variant == --study-e2e ]]; then
   export GC_MOE_PULL_TRACE=0 GC_MOE_ECO_TRACE=0 GC_MOE_FINE_TRACE=0 GC_MOE_STEP_PROFILE=0
   "$GC_ENV/bin/python" -u "$driver" --label STUDY_E2E --output "$out/result.json" \

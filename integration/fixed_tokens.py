@@ -9,10 +9,14 @@ import torch
 
 
 class ReferenceTokens:
-    def __init__(self, tokens, device):
+    def __init__(self, tokens, device, capacity=None, follow_native=None):
         self.keys = {f'req{i}': i for i in range(len(tokens))}
         lengths = [len(tokens[key]) for key in self.keys]
-        table = torch.zeros((len(tokens), max(lengths)), dtype=torch.long)
+        width = max(lengths) if capacity is None else capacity
+        if width < max(lengths):
+            raise ValueError('token reference exceeds the decode budget')
+        self.follow_native = (None if follow_native is None else torch.tensor(follow_native, device=device))
+        table = torch.zeros((len(tokens), width), dtype=torch.long)
         for key, i in self.keys.items():
             table[i, :lengths[i]] = torch.tensor(tokens[key])
         self.table = table.to(device)
@@ -34,6 +38,8 @@ class ReferenceTokens:
         pos = self.positions.index_select(0, rows)
         self.native[rows, pos] = sampled[:, 0].long()
         expected = self.table[rows, pos]
+        if self.follow_native is not None:
+            expected = torch.where(self.follow_native, sampled[:, 0], expected)
         sampled[:, 0].copy_(torch.where(num_sampled.bool(), expected, sampled[:, 0]))
         self.positions.index_add_(0, rows, num_sampled.long())
 
@@ -64,15 +70,23 @@ class ReferenceTokens:
         return values
 
 
-def install(runner, directory):
+def install(runner, directory, capacity=None):
     # V2 computes its native greedy sample and gathers TP shards inside
     # sample(). Replace the result before KV bookkeeping and frontend export.
     from vllm.v1.worker.gpu.model_runner import GPUModelRunner
 
     if not isinstance(runner, GPUModelRunner):
         raise ValueError('the controlled workload requires the vLLM V2 GPUModelRunner')
-    with (Path(directory) / 'tokens.json').open() as src:
-        reference = ReferenceTokens(json.load(src)['tokens'], runner.device)
+    follow_native = None
+    if capacity is not None:
+        from fixed_workload import publishes_checkpoint
+        follow_native = publishes_checkpoint()
+    if follow_native:
+        tokens = {f'req{i}': [] for i in range(256)}
+    else:
+        with (Path(directory) / 'tokens.json').open() as src:
+            tokens = json.load(src)['tokens']
+    reference = ReferenceTokens(tokens, runner.device, capacity, follow_native)
     original = runner.sample
 
     def sample(hidden_states, input_batch, grammar_output):

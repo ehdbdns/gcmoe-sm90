@@ -616,7 +616,19 @@ def main():
                     help='export fine rows for these zero-based layers of the aligned step')
     ap.add_argument('--timing-tail-steps', type=int, default=0,
                     help='time additional decode steps in the same process after the aligned trace')
+    ap.add_argument('--long-cost-study', action='store_true',
+                    help='one 1000-step EPLB statistics window and one 1000-step paired cost window')
     a = ap.parse_args()
+    long_cost = a.long_cost_study
+    if long_cost:
+        required = ('GC_MOE_LONG_COST', 'GC_MOE_EPLB', 'GC_MOE_ECO', 'GC_MOE_COST_STUDY',
+                    'GC_MOE_ORDER_EXTRA', 'GC_MOE_STEP_PROFILE', 'GC_MOE_SM90_STREAM_M_BLOCKS')
+        if (any(os.getenv(k) != '1' for k in required)
+                or not os.getenv('GC_MOE_FIXED_DIR') or not os.getenv('GC_MOE_STRICT_STATE_DIR')
+                or a.profile_out or a.profile_aligned_step or a.timing_tail_steps or a.fine_layers
+                or os.getenv('GC_MOE_FINE_TRACE') != '0' or os.getenv('GC_MEASURE_FLUSH') != '0'
+                or (a.seqs_per_rank, a.warm_steps, a.measure_steps) != (32, 1000, 1000)):
+            ap.error('long cost study requires the fixed, unprofiled 1000+1000 EP8 configuration')
     if a.timing_tail_steps < 0 or (a.timing_tail_steps and
             (not a.fine_layers or os.environ.get('VLLM_ENABLE_V1_MULTIPROCESSING') != '0')):
         ap.error('the timing tail requires a fine aligned capture with an in-process EngineCore')
@@ -726,11 +738,15 @@ def main():
                           if (k.startswith(('GC_MOE_', 'GC_MEASURE_')) or k in runtime_keys)
                           and k != 'GC_MOE_SM90_STREAM_M_BLOCKS'}
         from pathlib import Path
-        fixed = json.loads((Path(fixed_dir) / 'tokens.json').read_text())
+        from fixed_workload import publishes_checkpoint
+        recording_tokens = long_cost and publishes_checkpoint()
+        if not recording_tokens:
+            fixed = json.loads((Path(fixed_dir) / 'tokens.json').read_text())
         prompt_hash = hashlib.sha256(json.dumps(prompts, separators=(',', ':')).encode()).hexdigest()
-        if (prompt_hash != fixed['prompt_hash'] or set(fixed['tokens']) != {f'req{i}' for i in range(nseq)}
-                or (nseq, a.warm_steps, flush, a.measure_steps, tail_warmup, a.timing_tail_steps)
-                != (256, 200, 2, 1, 2, 100)):
+        if ((not recording_tokens and (prompt_hash != fixed['prompt_hash']
+                                       or set(fixed['tokens']) != {f'req{i}' for i in range(nseq)}))
+                or (not long_cost and (nseq, a.warm_steps, flush, a.measure_steps, tail_warmup, a.timing_tail_steps)
+                    != (256, 200, 2, 1, 2, 100))):
             raise ValueError('fixed workload does not match the prompts or decode protocol')
     llm = LLM(
         model=os.environ['MODEL'], tensor_parallel_size=8,
@@ -748,10 +764,10 @@ def main():
         compilation_config=_compilation_config(),
         enforce_eager=os.environ.get('ENFORCE_EAGER', '0') == '1',
         **({'async_scheduling': False, 'pipeline_parallel_size': 1, 'seed': 0}
-           if a.profile_aligned_step else {}))
+           if a.profile_aligned_step or long_cost else {}))
 
     engine = llm.llm_engine
-    if a.timing_tail_steps:
+    if a.timing_tail_steps or long_cost:
         from vllm.v1.engine.core_client import InprocClient
 
         if not isinstance(engine.engine_core, InprocClient):
@@ -841,7 +857,8 @@ def main():
         engine.collective_rpc('_gc_moe_meas_enable')
 
     if fixed_dir:
-        installed = engine.collective_rpc('_gc_moe_fixed_tokens')
+        installed = (engine.collective_rpc('_gc_moe_fixed_tokens', args=(decode_budget,)) if long_cost
+                     else engine.collective_rpc('_gc_moe_fixed_tokens'))
         if installed != [True] * ranks:
             raise RuntimeError('reference sampler was not installed on every worker')
 
@@ -859,7 +876,7 @@ def main():
     prefill_steps = 0
     while len(stepped) < nseq:
         outs = engine.step()
-        if a.timing_tail_steps:
+        if a.timing_tail_steps or long_cost:
             _collect(outs)
         prefill_steps += 1
         for o in outs:
@@ -872,7 +889,26 @@ def main():
           f'{prefill_s:.1f}s (not timed)', flush=True)
 
     # ---- 2. warm decode: EPLB learning window ----------------------------
-    warn_s = time_window(a.warm_steps)
+    def long_window(phase):
+        start = engine.collective_rpc('_gc_moe_long_begin', args=(phase,))
+        for key in ('running', 'gen_tokens', 'ctx_tokens'):
+            rec[key].clear()
+        before = [len(got[rid]) for rid in ids]
+        blocks = []
+        rec['on'] = True
+        elapsed = time_window(1000, blocks)
+        rec['on'] = False
+        if (rec['gen_tokens'] != [nseq]*1000 or rec['ctx_tokens'] != [0]*1000
+                or any(len(got[rid]) != n+1000 for rid,n in zip(ids,before))):
+            raise ValueError(f'{phase}: expected 1000 full pure-decode steps for all requests')
+        audit = engine.collective_rpc('_gc_moe_long_finish', args=(phase, str(Path(a.output).parent)))
+        return dict(ms_per_step=elapsed, ten_step_ms=blocks, initial=start, audit=audit)
+
+    if long_cost:
+        training = long_window('stats')
+        warn_s = training['ms_per_step']
+    else:
+        warn_s = time_window(a.warm_steps)
     print(f'[warm] {a.warm_steps} decode steps: {warn_s:.2f} ms/step '
           f'(device-synced window)', flush=True)
 
@@ -886,13 +922,29 @@ def main():
         try:
             outs = engine.collective_rpc('_gc_moe_rearrange')
             rearranged = any(bool(x) for x in outs)
-            if a.profile_aligned_step and (len(outs) != ranks or not all(outs)):
+            if (a.profile_aligned_step or long_cost) and (len(outs) != ranks or not all(outs)):
                 raise RuntimeError(f'rearrangement did not complete on all ranks: {outs}')
         except Exception as exc:  # noqa: BLE001
             print(f'[eplb] rearrangement FAILED: {exc}', flush=True)
             raise
     print(f'[eplb] rearrangement {"done" if rearranged else "not applicable"}',
           flush=True)
+
+    if long_cost:
+        measured = long_window('measure')
+        if recording_tokens:
+            with (Path(fixed_dir) / 'tokens.json').open('x') as f:
+                json.dump(dict(prompt_hash=prompt_hash, tokens=got), f, separators=(',', ':'))
+        elif got != fixed['tokens']:
+            raise ValueError('feedback differs from the native linear-arm trajectory')
+        result = dict(stats=training, measured=measured, prompt_hash=prompt_hash,
+                      output_hash=hashlib.sha256(json.dumps(got, sort_keys=True).encode()).hexdigest(),
+                      prefill_steps=prefill_steps, steps=1000, layers=aligned_layers, batch=nseq,
+                      stream=int(os.environ['GC_MOE_SM90_STREAM_M_BLOCKS']), controls=fixed_controls,
+                      cost=int(os.environ['GC_MOE_ECO_COSTFN']), rearranged=rearranged)
+        with Path(a.output).open('x') as f:
+            json.dump(result, f)
+        return
 
     aa_control = os.getenv('GC_MOE_AA_CONTROL') == '1'
     frozen_state = []

@@ -46,6 +46,7 @@ class SM90GCBufferLayout:
     step_profile: bool = field(init=False)
     fine_records: int = field(init=False)
     fixed_route_order: bool = field(init=False)
+    long_cost: bool = field(init=False)
 
     def __post_init__(self):
         ranks, experts, capacity, topk = self.ranks, self.experts, self.capacity, self.topk
@@ -72,6 +73,7 @@ class SM90GCBufferLayout:
         object.__setattr__(self, 'pull_trace', os.environ.get('GC_MOE_PULL_TRACE') == '1')
         object.__setattr__(self, 'step_profile', os.environ.get('GC_MOE_STEP_PROFILE') == '1')
         object.__setattr__(self, 'fixed_route_order', self.eco and bool(os.environ.get('GC_MOE_FIXED_DIR')))
+        object.__setattr__(self, 'long_cost', os.environ.get('GC_MOE_LONG_COST') == '1')
         views = {}
         cursor = 0
         def reserve(name, shape, dtype, itemsize):
@@ -283,6 +285,9 @@ class SM90GCBufferLayout:
             # (rows 254 and 255, column 10/11), so no header slot is needed.
             reserve('pull_tl', (256 * max(32, 24 + ranks),), 'int32', 4)
 
+        if self.long_cost:
+            # One row for every layer in 1000 decode steps; reset outside the timed window.
+            reserve('long_clocks', (1000 * layers, 6), 'int64', 8)
         if self.step_profile:
             # Match pull_tl's epoch ring. Every local slot is written once,
             # including empty slots, by its dispatch CTA.

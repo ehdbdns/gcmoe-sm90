@@ -1383,6 +1383,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                # them, and the extra views land on top of `eco_meta`
                # (measured: phy2log read back as the identity 0,1,2,3...).
                os.environ.get('GC_MOE_FINE_TRACE') == '1',
+               os.environ.get('GC_MOE_LONG_COST') == '1',
                os.environ.get('GC_MOE_SM90_STREAM_M_BLOCKS') == '1',
                _eplb_enabled() and _eco_enabled())
         # Every layer of this model has identical expert shapes, so one
@@ -1415,12 +1416,17 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             if os.environ.get('GC_MOE_FIXED_DIR'):
                 from fixed_workload import RouteTape
                 buf = self._buffer
-                buf.fixed_routes = RouteTape(buf.buffer.device, buf.num_topk, buf.profile_slot_counts.shape[1])
+                if os.environ.get('GC_MOE_LONG_COST') == '1':
+                    from long_cost import LongRouteTape
+                    tape_type = LongRouteTape
+                else:
+                    tape_type = RouteTape
+                buf.fixed_routes = tape_type(buf.buffer.device, buf.num_topk, buf.profile_slot_counts.shape[1])
                 if os.environ.get('GC_MOE_FIRST_STEP_AUDIT') == '1':
                     from replay_probe import ReplayProbe
                     buf.fixed_routes.first_step_probe = ReplayProbe(
                         buf, buf.fixed_routes, steps=2 if os.getenv('GC_MOE_AA_CONTROL') == '1' else 1)
-                elif os.environ.get('GC_MOE_STRICT_STATE_DIR'):
+                elif os.environ.get('GC_MOE_STRICT_STATE_DIR') and os.environ.get('GC_MOE_LONG_COST') != '1':
                     tape = buf.fixed_routes
                     x = buf.x[:tape.batch]
                     tape.boundary_probe = dict(quantized=torch.empty_like(x, dtype=torch.uint8),
@@ -1652,6 +1658,17 @@ def rearrange_now() -> bool:
     if not per_layer:
         demand = demand.sum(0, keepdim=True)
     dist.all_reduce(demand, group=dist.group.WORLD)
+    if os.environ.get('GC_MOE_LONG_COST') == '1':
+        if demand.shape != (40, experts) or not torch.all(demand.sum(1) == 1000 * 256 * 6 * ranks):
+            raise ValueError('EPLB statistics do not cover exactly 1000 full-batch decode steps')
+        from pathlib import Path
+        from fixed_workload import publishes_checkpoint
+        path = Path(os.environ['GC_MOE_FIXED_DIR']) / 'stats-demand.pt'
+        if publishes_checkpoint():
+            if buf.rank_idx == 0:
+                torch.save(demand.cpu(), path)
+        elif not torch.equal(demand.cpu(), torch.load(path, weights_only=True)):
+            raise ValueError('logical EPLB statistics differ between arms')
     hist = demand.unsqueeze(0)
 
     # --- 2. plan on rank 0, broadcast -------------------------------------
@@ -2356,13 +2373,17 @@ def _install_worker_rpc() -> None:
 
     Worker._gc_moe_profile_snapshot = gc_moe_profile_snapshot
 
-    def gc_moe_fixed_tokens(self):
+    def gc_moe_fixed_tokens(self, capacity=None):
         from fixed_tokens import install
 
-        self._gc_reference_tokens = install(self.model_runner, os.environ['GC_MOE_FIXED_DIR'])
+        self._gc_reference_tokens = install(self.model_runner, os.environ['GC_MOE_FIXED_DIR'], capacity)
         return True
 
     Worker._gc_moe_fixed_tokens = gc_moe_fixed_tokens
+
+    if os.environ.get('GC_MOE_LONG_COST') == '1':
+        from long_cost import register_long_rpc
+        register_long_rpc(Worker, profile_buffer, _EXPERT_REGISTRY)
 
     def gc_moe_fixed_routes(self, finish=False):
         from fixed_workload import digest, publishes_checkpoint, recording_reference
