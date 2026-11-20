@@ -10,33 +10,23 @@ import torch
 from gc_moe.eplb.deepinfer_periodic.shuffle import plan_transfers
 
 
+def layer_demand_from_stats(stats, layout, rank_idx, per_rank, experts):
+    """Attribute each layer's local slot counters using its installed layout."""
+    rows = torch.as_tensor(layout, dtype=torch.int64, device=stats.device)
+    if rows.ndim == 1:
+        rows = rows.unsqueeze(0)
+    if rows.ndim != 2 or rows.shape[0] not in (1, stats.shape[0]):
+        raise ValueError('expected one placement or a placement for each layer')
+    if (stats.ndim != 2 or stats.shape[1] != per_rank or rows.shape[1] % per_rank
+            or not 0 <= rank_idx < rows.shape[1] // per_rank):
+        raise ValueError('slot statistics and placement dimensions disagree')
+    local_ids = rows[:, rank_idx * per_rank:(rank_idx + 1) * per_rank].expand_as(stats)
+    demand = stats.new_zeros((stats.shape[0], experts), dtype=torch.float32)
+    return demand.scatter_add_(1, local_ids, stats.float())
+
+
 def demand_from_stats(stats, layout, rank_idx, per_rank, experts):
-    """Turn this rank's per-layer per-slot counters into logical-expert demand.
-
-    Args:
-        stats: ``[layers, per_rank]`` token counters for THIS rank.
-        layout: ``[physical]`` slot -> logical expert (identical on all ranks).
-        rank_idx: this rank's index.
-        per_rank: physical slots per rank.
-        experts: logical expert count.
-
-    Returns:
-        ``[experts]`` float tensor (not reduced across ranks).
-    """
-    physical = len(layout)
-    if stats.shape[1] != per_rank:
-        raise ValueError(f'stats has {stats.shape[1]} slots, expected {per_rank}')
-    if physical != per_rank * (physical // per_rank):
-        raise ValueError('layout is not divisible by per_rank')
-    dev = stats.device
-    layout_t = torch.as_tensor(layout, dtype=torch.int64, device=dev)
-    slot_ids = torch.arange(per_rank, device=dev) + rank_idx * per_rank
-    per_slot = torch.zeros(physical, dtype=torch.float32, device=dev)
-    # Sum over layers: one static layout must cover the whole traffic mix.
-    per_slot.index_add_(0, slot_ids, stats.sum(0).float())
-    demand = torch.zeros(experts, dtype=torch.float32, device=dev)
-    demand.scatter_add_(0, layout_t, per_slot)
-    return demand
+    return layer_demand_from_stats(stats, layout, rank_idx, per_rank, experts).sum(0)
 
 
 DEEPINFER_LARGE_PRIME = 23333

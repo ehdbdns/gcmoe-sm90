@@ -155,6 +155,17 @@ def rank_detail(row, fine, epoch):
         tiles[ident(first)] = item
     require(observed == expected, f'missing {len(expected - observed)} expected tiles')
 
+    if not releases:
+        # Baseline publishes L2 at slot granularity after every L1 (M, N).
+        l1_finished = {}
+        for item in tiles.values():
+            if item['phase'] == 1:
+                key = item['slot']
+                l1_finished[key] = max(item['end_us'], l1_finished.get(key, item['end_us']))
+        for item in tiles.values():
+            if item['phase'] == 2:
+                require(l1_finished[item['slot']] <= item['start_us'],
+                        f"L2 started before all L1 tiles in slot {item['slot']} finished")
     pushes = {}
     for first, last in pair_records(rows, 8, 9, ident):
         key = ident(first)

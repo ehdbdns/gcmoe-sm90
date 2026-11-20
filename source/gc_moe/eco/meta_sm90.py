@@ -77,7 +77,7 @@ def reorder_single_copy_first(phy, num_ranks: int):
         order.append([s - lo for s in seq])
     return out, order
 
-def build_eco_meta(phy, num_ranks: int, num_logical: int) -> np.ndarray:
+def build_eco_meta(phy, num_ranks: int, num_logical: int, max_active: int = 32) -> np.ndarray:
     """Build the int32 EcoMeta for one static placement.
 
     Args:
@@ -91,6 +91,9 @@ def build_eco_meta(phy, num_ranks: int, num_logical: int) -> np.ndarray:
     """
     phy = np.asarray(phy, np.int64)
     P, R, E = len(phy), num_ranks, num_logical
+    if (phy.ndim != 1 or not 1 <= R <= 32 or not 0 < E <= P <= K_EMPTY
+            or P % R or np.any((phy < 0) | (phy >= E)) or not 1 <= max_active <= 32):
+        raise ValueError('invalid EcoMeta placement geometry or expert ID')
     S = P // R
 
     # copies[e]: active copies (one per rank) then passive ones; a copy is
@@ -110,6 +113,9 @@ def build_eco_meta(phy, num_ranks: int, num_logical: int) -> np.ndarray:
         if not copies[e]:
             raise ValueError(f'logical expert {e} has no active copy; '
                              'its tokens would be dropped')
+        if len(copies[e]) > max_active:
+            raise ValueError(f'logical expert {e} has {len(copies[e])} active copies, '
+                             f'compiled ECO width is {max_active}')
 
     words = [0] * 16
     for e in range(E):
@@ -137,8 +143,10 @@ def build_eco_meta(phy, num_ranks: int, num_logical: int) -> np.ndarray:
                       np.int32)
 
 
-def read_copies(meta: np.ndarray, e: int, max_copies: int = 4):
+def read_copies(meta: np.ndarray, e: int, max_copies: int = 32):
     """Decode copies[e][0..max_copies) the way the kernel does."""
+    if not 1 <= max_copies <= 32:
+        raise ValueError('copy scan exceeds the EcoMeta row')
     base = 16 + e * COPIES_WORDS_PER_EXPERT
     out = []
     for k in range(max_copies):
@@ -147,30 +155,28 @@ def read_copies(meta: np.ndarray, e: int, max_copies: int = 4):
     return out
 
 
-def install_into_buffer(buf, physical_to_logical, num_ranks: int,
-                        num_logical: int):
-    """Write EcoMeta into a live SM90 buffer's `eco_meta` view.
-
-    [T17-PERLAYER] `physical_to_logical` may be a SINGLE `[P]` placement (one
-    layout shared by every layer) or a `[layers, P]` stack, where each layer has
-    its own placement -- which is what DeepInfer produces. The buffer reserves
-    one EcoMeta row per layer, so both forms are accepted; the single form is
-    broadcast to every row so old callers keep working.
-    """
-    import torch
+def prepare_meta(buf, physical_to_logical, num_ranks, num_logical):
+    """Validate all placement rows before moving any weights or publishing tables."""
     phy = np.asarray(physical_to_logical, np.int64)
     if phy.ndim == 1:
-        lay = int(__import__('os').environ.get('GC_MOE_LAYERS', '40'))
-        phy = np.broadcast_to(phy, (lay, phy.shape[0])).copy()
-    layers, P = phy.shape
-    meta = np.concatenate([build_eco_meta(phy[l], num_ranks, num_logical)
-                           for l in range(layers)])
-    want = buf.eco_meta.numel()
-    if len(meta) != want:
-        raise ValueError(f'meta has {len(meta)} words '
-                         f'({layers} layers x {P} slots), buffer view has {want}')
-    buf.eco_meta.copy_(torch.as_tensor(meta, dtype=torch.int32,
-                                       device=buf.eco_meta.device))
+        phy = phy[None, :]
+    shape = (buf.layout.n_layers, buf.physical)
+    if phy.shape == (1, shape[1]):
+        phy = np.broadcast_to(phy, shape)
+    if phy.shape != shape:
+        raise ValueError(f'expected EcoMeta placement {shape}, got {phy.shape}')
+    if not buf.layout.eco_per_layer and np.any(phy != phy[0]):
+        raise ValueError('distinct ECO placements require GC_MOE_ECO_PER_LAYER=1')
+    return np.concatenate([build_eco_meta(row, num_ranks, num_logical, buf.layout.eco_max_copies)
+                           for row in phy])
+
+
+def install_prepared_meta(buf, meta):
+    import torch
+    with torch.inference_mode():
+        buf.eco_meta.copy_(torch.as_tensor(meta, dtype=torch.int32, device=buf.eco_meta.device))
+        # The old state's quotas name physical slots in the previous placement.
+        buf.eco_state.zero_()
     # [ECO-FINE] read-back check: a silent no-op copy here would make the plan
     # read a stale (identity) placement, which shows up as every expert
     # looking like it has exactly 2 copies and one slot owning all tokens.
@@ -184,3 +190,7 @@ def install_into_buffer(buf, physical_to_logical, num_ranks: int,
         else:
             print(f'[eco] EcoMeta read-back OK ({len(back)} words)', flush=True)
     return meta
+
+
+def install_into_buffer(buf, physical_to_logical, num_ranks: int, num_logical: int):
+    return install_prepared_meta(buf, prepare_meta(buf, physical_to_logical, num_ranks, num_logical))

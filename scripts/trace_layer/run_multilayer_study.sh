@@ -13,7 +13,7 @@ analysis_python=$(cd "$root" && source scripts/env.sh && printf '%s/bin/python' 
 test -x "$analysis_python"
 unset GC_MOE_FIXED_DIR GC_MOE_FIXED_REUSE
 if [[ ${3:-} == --valid-cost ]]; then
-  phase_one="$here/../../docs/trace_executor_20261119/fixed_stream_results/comparison.json"
+  phase_one="$here/../../docs/trace_executor_20261119/fixed_stream_results_r4/comparison.json"
   "$analysis_python" - "$phase_one" <<'CHECK'
 import json
 import sys
@@ -28,7 +28,11 @@ echo "$sha" > "$bundle/measurement.sha"
 if [[ ${3:-} == --valid-cost ]]; then
   echo valid_cost > "$bundle/comparison.txt"
 else
-  echo fixed_stream > "$bundle/comparison.txt"
+  if [[ ${3:-} == --replay-from ]]; then
+    echo fixed_stream_r4 > "$bundle/comparison.txt"
+  else
+    echo fixed_stream > "$bundle/comparison.txt"
+  fi
   GC_MOE_FIXED_DIR=$(mktemp -d /tmp/gcmoe-route-replay-XXXXXXXX)
   export GC_MOE_FIXED_DIR VLLM_USE_V2_MODEL_RUNNER=1 VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1
   echo "$GC_MOE_FIXED_DIR" > "$bundle/workload-path.txt"

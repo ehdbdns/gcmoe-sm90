@@ -122,7 +122,7 @@ def validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,
                           # expert reached 5-6 copies, so the old default of 4
                           # silently dropped copies (their tokens were pulled by
                           # nobody). EcoMeta holds 32 int16 per expert.
-                          int(os.environ.get('GC_MOE_ECO_MAX_COPIES', '8')),
+                          buffer.layout.eco_max_copies,
                           int(os.environ.get('GC_MOE_ECO_WB', '0')),
                           int(os.environ.get('GC_MOE_ECO_WA', '0')),
                           int(os.environ.get('GC_MOE_ECO_ROUNDS', '1')),

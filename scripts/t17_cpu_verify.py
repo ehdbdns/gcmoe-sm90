@@ -14,6 +14,8 @@ import torch
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(HERE, 'source'))
+sys.path.insert(0, os.path.join(HERE, 'integration'))
+from eplb_logic import layer_demand_from_stats
 from gc_moe.eplb.deepinfer_periodic.policy import rebalance_experts_global
 
 
@@ -29,17 +31,8 @@ def demand_per_layer(stats, layout, per_rank, experts):
 
     与 integration/eplb_logic.py::demand_from_stats 相同的变换，但保留 layer 维。
     """
-    R, L, S = stats.shape
-    physical = len(layout)
-    out = torch.zeros(L, experts)
-    lay = torch.as_tensor(layout, dtype=torch.long)
-    for r in range(R):
-        slot_ids = torch.arange(S) + r * S
-        # [layers, physical]
-        per_slot = torch.zeros(L, physical)
-        per_slot.index_add_(1, slot_ids, stats[r].float())
-        out.index_add_(1, lay, per_slot)
-    return out
+    return sum(layer_demand_from_stats(row, layout, r, per_rank, experts)
+               for r, row in enumerate(stats))
 
 
 def eval_placement(plan_flat, demand_row, layout, per_rank, experts, ranks):
@@ -60,7 +53,7 @@ def main():
     L = stats.shape[1]
     print(f'stats {tuple(stats.shape)}  layout {layout.shape}  per_rank={per_rank} '
           f'ranks={ranks} experts={experts} layers={L}')
-    P = len(layout)
+    P = layout.shape[-1]
 
     dem = demand_per_layer(stats, layout, per_rank, experts)      # [L, E]
     torch.set_printoptions(precision=1, linewidth=200)

@@ -184,15 +184,19 @@ def plot(path, rank, out):
 
     pos = sum((back[i] > 0) * (ts[i + 1] - ts[i]) for i in range(len(ts) - 1)) if len(ts) > 1 else 0
     span = (ts[-1] - ts[0]) if len(ts) > 1 else 1
-    return dict(label=label, epoch=ep, slots=len(prod), mblocks=total,
-                total_mblocks=total, plot_unit='tasks (slot x N-tile)',
+    role2_blocks = {(x[3], x[4]) for x in E if x[1] == 6 and x[2] < ROLE6_OFFSET}
+    role6_blocks = {(x[3], x[4]) for x in E if x[1] == 6 and x[2] >= ROLE6_OFFSET}
+    blocks = len(role2_blocks | role6_blocks)
+    return dict(label=label, epoch=ep, slots=len(prod), mblocks=blocks,
+                total_mblocks=blocks, total_tasks=total, plot_unit='tasks (slot x N-tile)',
                 # A decode layer pulls in ~20-300 us; anything near a
                 # millisecond means the plot fell back to a PREFILL call, which
                 # would be a silent, 100x-wrong figure. Flag it loudly.
                 suspect=bool(pull_done and pull_done > 600),
                 pull_done_us=pull_done,
                 role6_first_us=r6_first,
-                role2_blocks=len(c2), role6_blocks=len(c6),
+                role2_blocks=len(role2_blocks), role6_blocks=len(role6_blocks),
+                role2_tasks=len(c2), role6_tasks=len(c6),
                 cons_first_us=(min(c2 + c6) if (c2 or c6) else None),
                 cons_end_us=last,
                 backlog_pos_pct=round(100.0 * pos / max(span, 1), 1))

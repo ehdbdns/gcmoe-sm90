@@ -144,6 +144,35 @@ def main():
         write(s_dir/'workload.json', fixed_audit)
         compare(paired)
         assert not read(paired/'comparison.json')['fixed_workload_faster']
+        # Current protocol also binds the physical row order, actual switch,
+        # native samples outside step 2 and the configured objective.
+        (paired/'comparison.txt').write_text('fixed_stream_r4')
+        controls = dict(GC_MOE_ECO='1', GC_MOE_ECO_COSTFN='0', GC_MOE_ECO_WB='26',
+                        GC_MOE_ECO_WA='0', GC_MOE_ECO_NO_AUCTION='0', GC_MOE_ECO_NULL_PLAN='0',
+                        GC_MOE_ECO_NOSPLIT='0', GC_MOE_ECO_TOKENS_ONLY='0', GC_MOE_ECO_BLOCKS_ONLY='0',
+                        GC_MOE_BLOCK_M_FORCE='64', GC_MOE_MB_CLAIM='1', GC_MOE_FIXED_REUSE='1')
+        for arm, directory in enumerate((b_dir, s_dir)):
+            run = read(directory/'run.json')
+            write(directory/'run.json', dict(run, fixed_controls=controls))
+            state = read(b_dir/'workload.json')
+            for initial in state['initial']:
+                initial.update(warmup_stream=0, last_warm_input='x', last_warm_scales='sf')
+            for rank in state['ranks']:
+                rank.update(route_ordinals='stable', replay_stream=arm)
+            state['ranks'][0]['native_history'] = dict(warm_top1_sha256='warm', replay_top1=[[2]*256 for _ in range(105)])
+            write(directory/'workload.json', state)
+        compare(paired)
+        assert read(paired/'comparison.json')['scheduling_gate_passed']
+        state = read(s_dir/'workload.json')
+        state['ranks'][0]['native_history']['replay_top1'][104][3] = 9
+        write(s_dir/'workload.json', state)
+        compare(paired)
+        summary = read(paired/'comparison.json')
+        assert summary['first_native_difference_step'] == 104 and not summary['scheduling_gate_passed']
+        state['ranks'][0]['route_ordinals'] = 'different'
+        write(s_dir/'workload.json', state)
+        compare(paired)
+        assert not read(paired/'comparison.json')['fixed_workload_faster']
         (paired/'comparison.txt').write_text('valid_cost')
         (paired/'measurement.sha').write_text(STREAM_SHA)
         write(b_dir/'run.json', dict(base, stream_m_blocks=1, execution_sha=STREAM_SHA))

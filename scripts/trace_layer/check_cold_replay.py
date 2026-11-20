@@ -61,6 +61,8 @@ def check(directory, runner):
         print(f'{layer},{pred},{obs}')
     print(f'R2 step 0: matching layers={sum(p == o for p, o in zip(predicted, observed))}/40 '
           f'predicted_missing={sum(predicted)} observed_missing={sum(observed)}')
+    if predicted != observed or sum(observed) != 54016:
+        raise ValueError('frozen replay did not reproduce the recorded R2 cold-start deficits')
 
 
 if __name__ == '__main__':

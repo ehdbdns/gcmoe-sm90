@@ -38,10 +38,40 @@ class SM90GCBufferLayout:
     trace: bool = False
 
     stream_blocks: bool = field(init=False)
+    n_layers: int = field(init=False)
+    eco_per_layer: bool = field(init=False)
+    eco_max_copies: int = field(init=False)
+    ir_steps: int = field(init=False)
+    pull_trace: bool = field(init=False)
+    step_profile: bool = field(init=False)
+    fine_records: int = field(init=False)
+    fixed_route_order: bool = field(init=False)
 
     def __post_init__(self):
         ranks, experts, capacity, topk = self.ranks, self.experts, self.capacity, self.topk
         hidden, intermediate, shared_experts = self.hidden, self.intermediate, self.shared_experts
+        layers = int(os.environ.get('GC_MOE_LAYERS', '40'))
+        if layers < 1:
+            raise ValueError('GC_MOE_LAYERS must be positive')
+        width = int(os.environ.get('GC_MOE_ECO_MAX_COPIES', str(ranks))) if self.eco else 0
+        if self.eco and not 1 <= width <= 32:
+            raise ValueError('GC_MOE_ECO_MAX_COPIES must fit the 32-entry EcoMeta row')
+        object.__setattr__(self, 'n_layers', layers)
+        object.__setattr__(self, 'eco_per_layer', self.eco and os.environ.get('GC_MOE_ECO_PER_LAYER', '1') == '1')
+        object.__setattr__(self, 'eco_max_copies', min(width, ranks))
+        def optional_capacity(switch, default, count, default_count):
+            if os.environ.get(switch, default) != '1':
+                return 0
+            value = int(os.environ.get(count, default_count))
+            if value <= 0:
+                raise ValueError(f'{count} must be positive when {switch}=1')
+            return value
+
+        object.__setattr__(self, 'ir_steps', optional_capacity('GC_MOE_IR_STEP', '1', 'GC_IRSTEP_STEPS', '1024'))
+        object.__setattr__(self, 'fine_records', optional_capacity('GC_MOE_FINE_TRACE', '0', 'GC_MOE_FINE_RECS', '262144'))
+        object.__setattr__(self, 'pull_trace', os.environ.get('GC_MOE_PULL_TRACE') == '1')
+        object.__setattr__(self, 'step_profile', os.environ.get('GC_MOE_STEP_PROFILE') == '1')
+        object.__setattr__(self, 'fixed_route_order', self.eco and bool(os.environ.get('GC_MOE_FIXED_DIR')))
         views = {}
         cursor = 0
         def reserve(name, shape, dtype, itemsize):
@@ -63,7 +93,7 @@ class SM90GCBufferLayout:
         rows = ranks * capacity
         # epoch, input_ready, input_tokens, task_queue, finalize_count,
         # compute_done, finalized; all epochs monotonically increase.
-        reserve('header', (32,), 'int32', 4)
+        reserve('header', (35,), 'int32', 4)  # words 32..34 are role-6 diagnostics
         reserve('peer_table', (ranks,), 'int64', 8)
         reserve('expert_ready', (local,), 'int32', 4)
         reserve('expert_count', (local,), 'int32', 4)
@@ -83,11 +113,12 @@ class SM90GCBufferLayout:
         # tokens per expert, i.e. ceil(capacity/max_m) blocks; 64 covers
         # cap=2048 at block_m=64. `active_count` is compared against these
         # tickets only, so the extra rows cost nothing when unused.
-        stream_blocks = os.environ.get('GC_MOE_SM90_STREAM_M_BLOCKS') == '1'
+        stream_blocks = self.fixed_route_order or os.environ.get('GC_MOE_SM90_STREAM_M_BLOCKS') == '1'
         object.__setattr__(self, 'stream_blocks', stream_blocks)
         # Streaming supports M >= 16. Across local slots there are at most
         # ranks * capacity * topk routes plus one partial block per slot.
-        batches = ((rows * topk + 15) // 16 + local if stream_blocks else local * 64)
+        min_block_m = 16 if stream_blocks else 8
+        batches = max(local * 64, (rows * topk + min_block_m - 1) // min_block_m + local)
         reserve('active_expert', (batches,), 'int32', 4)
         reserve('active_ready', (batches,), 'int32', 4)
         reserve('active_mb', (batches,), 'int32', 4)
@@ -98,19 +129,22 @@ class SM90GCBufferLayout:
             reserve('stream_l2_ready', (batches,), 'int32', 4)
         reserve('compute_ready', (ranks,), 'int32', 4)
         reserve('combine_block_done', (1024,), 'int32', 4)
+        if self.fixed_route_order:
+            reserve('replay_stream_mode', (1,), 'int32', 4)
+            reserve('route_ordinal', (capacity, topk), 'int32', 4)
+            reserve('used_route_ordinal', (capacity, topk), 'int32', 4)
         reserve('send_count', (physical,), 'int32', 4)
         reserve('source_index', (local, ranks, capacity), 'int32', 4)
         # [T17-PERLAYER] slot_logical[layer][g]: the logical expert served by
         # physical slot g IN THAT LAYER. DeepInfer plans every layer
         # separately, so this table cannot be shared across layers -- doing so
         # measured IR 1.2803 vs 1.1324 for the per-layer form.
-        _nl_slot = int(os.environ.get('GC_MOE_LAYERS', '40'))
-        reserve('slot_logical', (_nl_slot, physical), 'int32', 4)
+        reserve('slot_logical', (layers, physical), 'int32', 4)
         # expert_slots[layer][e][k]: physical slot ids holding a copy of
         # logical expert e in that layer (-1 = unused). MAX_REPLICAS = 8
         # because a per-layer plan concentrates more copies on one expert
         # (measured up to 16/layer); the host-side reader clamps at 8.
-        reserve('expert_slots', (_nl_slot, experts, 8), 'int32', 4)
+        reserve('expert_slots', (layers, experts, 8), 'int32', 4)
         # ── ECO (EPLB placement + online plan) ───────────────────────────
         # Only allocated when `eco` is on, so the plain path keeps its exact
         # byte layout. Sizes use PHYSICAL slots (physical = ranks*local).
@@ -144,9 +178,8 @@ class SM90GCBufferLayout:
             # `layers` comes from the compile-time geometry below.
             # The layer count comes from the same env the kernel reads
             # (`GC_MOE_LAYERS`, default 40) so the two cannot disagree.
-            _nlay = int(os.environ.get('GC_MOE_LAYERS', '40'))
             reserve('eco_meta',
-                    (_nlay * (16 + experts * 16 + physical + ranks),),
+                    (layers * (16 + experts * 16 + physical + ranks),),
                     'int32', 4)
             # [T17-PERLAYER] The warm start (`_eco_do_warm`) reads the PREVIOUS
             # call's per-slot quotas and per-expert counts and reuses as much of
@@ -157,7 +190,7 @@ class SM90GCBufferLayout:
             # them (or leave real copies with no quota). One row per layer keeps
             # the warm start meaningful -- call it on layer L and it sees layer
             # L's own previous plan, one decode step earlier.
-            reserve('eco_state', (_nlay * 2 * physical,), 'int32', 4)
+            reserve('eco_state', (layers * 2 * physical,), 'int32', 4)
             # [ECO-MEAS] ECO timeline trace: 32 slots x 8B of globaltimer ns.
             #   [0..5]  stage timestamps (store)
             #   [24]    role-1 start of this call (graph-replay anchor)
@@ -177,7 +210,7 @@ class SM90GCBufferLayout:
             reserve('eco_tl', (256 * 21,), 'int32', 4)
             reserve('eco_tl_ctr', (16,), 'int32', 4)
             reserve('eco_tl_step', (1,), 'int32', 4)
-        elif os.environ.get('GC_MOE_PULL_TRACE') == '1':
+        elif self.pull_trace:
             # [PHASES] The compute role needs a NON-STALE name for the call it
             # is serving: `header[0]` is captured once at kernel entry by a
             # resident CTA, so on every later call it still holds an old epoch
@@ -202,16 +235,12 @@ class SM90GCBufferLayout:
         # what made the run not fit in KV at all).
         #
         # Indexing: the dispatch epoch advances by ONE PER LAYER, verified on
-        # real traces (9305,9306,... contiguous across 8 ranks, and
-        # epoch % 40 cycles 0..39 exactly). So
-        #     layer = epoch %  layers
-        #     step  = (epoch - epoch0) // layers        (epoch0 = window start)
-        # The rows are OVERWRITTEN, not accumulated: one (layer,step) cell is
-        # written exactly once per forward.
-        #
-        # 40 layers x 1024 steps x 4 B = 160 KB per rank.
-        if os.environ.get('GC_MOE_IR_STEP', '1') == '1':
-            reserve('ir_step', (40 * 1024,), 'int32', 4)
+        # consecutive calls. Epochs are relative to the marked window.
+        # Each slot contributes its own row and M-block counts.
+        if self.ir_steps:
+            steps = self.ir_steps
+            reserve('ir_step', (layers * steps,), 'int32', 4)
+            reserve('ir_step_epoch', (layers * steps,), 'int32', 4)
             reserve('ir_step_mark', (2,), 'int32', 4)
             # [IR-STEP] Two companion tables, same (layer, step) indexing:
             #   ir_step_mb[layer][step] += ceil(owned / block_m)   per unit
@@ -220,8 +249,8 @@ class SM90GCBufferLayout:
             # rank have in this layer of this step", which the token table
             # cannot: tokens per slot are below block_m, so a rank's block count
             # is NOT a function of its token count alone.
-            reserve('ir_step_mb', (40 * 1024,), 'int32', 4)
-            reserve('ir_step_ae', (40 * 1024,), 'int32', 4)
+            reserve('ir_step_mb', (layers * steps,), 'int32', 4)
+            reserve('ir_step_ae', (layers * steps,), 'int32', 4)
 
         # [PULL-TRACE] Pull-phase timing for EVERY arm, including the plain
         # (no replicas, no ECO) path -- the ECO trace above only exists when
@@ -234,7 +263,7 @@ class SM90GCBufferLayout:
         # 256 x 10 x 4 B = 10 KB per rank, and only when the env switch is on.
         # ★ [8]/[9] exist because `eco_trace` (slots 14/15) is only allocated
         # in an ECO layout, so the vanilla arm had NO combine measurement.
-        if os.environ.get('GC_MOE_PULL_TRACE') == '1':
+        if self.pull_trace:
             # [RANK-TS] 14 slots now (was 10). The 4 extra ones hold the
             # per-rank MoE cost stamps the earlier measurement could not
             # provide:
@@ -252,9 +281,9 @@ class SM90GCBufferLayout:
             #         (measured: 33753 us instead of ~a few hundred).
             # plus two atomic counters used to elect "the last CTA to leave"
             # (rows 254 and 255, column 10/11), so no header slot is needed.
-            reserve('pull_tl', (256 * 32,), 'int32', 4)
+            reserve('pull_tl', (256 * max(32, 24 + ranks),), 'int32', 4)
 
-        if os.environ.get('GC_MOE_STEP_PROFILE') == '1':
+        if self.step_profile:
             # Match pull_tl's epoch ring. Every local slot is written once,
             # including empty slots, by its dispatch CTA.
             reserve('profile_slot_counts', (256, local), 'int32', 4)
@@ -269,14 +298,13 @@ class SM90GCBufferLayout:
         # the epoch is stored in every record, so several calls can be captured
         # without any reset (a reset would race resident CTAs).
         # 65536 x 8 x 4 B = 2 MB per rank, only when the switch is on.
-        if os.environ.get('GC_MOE_FINE_TRACE') == '1':
+        if self.fine_records:
             # [ABSTRACE] 10 words per record (was 8): the absolute-time figure
             # needs ntile and the M-block index next to expert/start/valid, so
             # every GEMM slice can be labelled "expert E, ntile T, M-block b".
             # Record: [0] t_us [1] type [2] id [3] a0 [4] a1 [5] a2
             #         [6] a3 [7] a4 [8] epoch [9] (reserved)
-            _at_recs = int(os.environ.get('GC_MOE_FINE_RECS', '262144'))
-            reserve('fine_tl', (_at_recs * 10,), 'int32', 4)
+            reserve('fine_tl', (self.fine_records * 10,), 'int32', 4)
             reserve('fine_ctr', (1,), 'int32', 4)
             # [ECO-FINE] Per-CTA spin state (0 = busy, 1 = already logged a
             # spinstreak). Edge detection needs the PREVIOUS state of a CTA,
@@ -288,7 +316,7 @@ class SM90GCBufferLayout:
             # (stale) nor `eco_tl_step` (names the NEWEST call, not this task).
             # [MB-CLAIM] indexed by ACTIVE TICKET, and tickets are now
             # per-M-block, so this must match `active_expert`'s new size.
-            reserve('fine_lay', (local * 64,), 'int32', 4)
+            reserve('fine_lay', (batches,), 'int32', 4)
             # [ECO-FINE] expert -> layer epoch (what `_consume_tasks` can see,
             # since its task record only carries the expert id).
             reserve('fine_epx', (experts,), 'int32', 4)

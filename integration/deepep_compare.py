@@ -854,7 +854,10 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         tape = getattr(buf, 'fixed_routes', None)
         use_tape = tape is not None and tokens == tape.batch and self._eplb is not None
         if use_tape:
-            topk_ids, topk_weights = tape.select(topk_ids, topk_weights, _LAYER_ROW[id(packed[0][0])])
+            topk_ids, topk_weights = tape.select(topk_ids, topk_weights, _LAYER_ROW[id(packed[0][0])],
+                                                 buf.route_ordinal[:tokens])
+        elif tape is not None:
+            buf.route_ordinal[:tokens].fill_(-1)
         buf.x[:tokens].copy_(xq.view(tokens, -1))
         buf.x_sf[:tokens].copy_(xsf.view(tokens, -1))
         if self._eplb is not None and _eco_enabled():
@@ -1259,7 +1262,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                            slot_table=slots_of.reshape(-1).contiguous(),
                            slot_width=int(slots_of.shape[-1]),
                            slot_experts=int(slots_of.shape[1]),
-                           count=count, stats=stats, layout=list(plan_list))
+                           count=count, stats=stats)
             m._packed = {}
             m._packed_layers = []
             # [T17-PERLAYER] `plan` is [layers, physical] and each layer must
@@ -1576,9 +1579,9 @@ def rearrange_now() -> bool:
     # --- 1. demand per logical expert -------------------------------------
     # Shared with the CPU regression test (integration/eplb_logic.py) so the
     # tested code and the running code cannot drift apart.
-    from eplb_logic import demand_from_stats
-    layout = m._eplb['layout']
+    from eplb_logic import layer_demand_from_stats
     stats = m._eplb['stats']               # [layers, per_rank]
+    origin = m._eplb['plan'][:stats.shape[0]]
 
     # [T17-DUMP] Save the RAW per-(layer, slot) counters so the "per-layer vs
     # merged placement" question can be answered on the CPU without guessing a
@@ -1591,7 +1594,7 @@ def rearrange_now() -> bool:
         dist.all_gather_object(_gathered, _arr, group=dist.group.WORLD)
         if buf.rank_idx == 0:
             _np.savez(_dump, stats=_np.stack(_gathered),
-                      layout=_np.asarray(layout, _np.int64), per_rank=per_rank,
+                      layout=origin.cpu().numpy(), per_rank=per_rank,
                       ranks=ranks, experts=experts)
             print(f'[t17-dump] stats saved {_dump} '
                   f'shape={_np.stack(_gathered).shape}', flush=True)
@@ -1613,19 +1616,11 @@ def rearrange_now() -> bool:
     # i.e. the merged plan left whole layers with their hot experts piled onto
     # one rank -- exactly what a single average cannot avoid.
     per_layer = os.environ.get('GC_MOE_ECOPLB_PER_LAYER', '1') == '1'
-    n_layers = int(stats.shape[0])
-    if per_layer:
-        # [layers, experts], each layer reduced over RANKS only.
-        demand = torch.stack([
-            demand_from_stats(stats[l:l + 1], layout, buf.rank_idx,
-                              per_rank, experts)
-            for l in range(n_layers)])
-        dist.all_reduce(demand, group=dist.group.WORLD)
-        hist = demand.view(1, n_layers, experts)
-    else:
-        demand = demand_from_stats(stats, layout, buf.rank_idx, per_rank, experts)
-        dist.all_reduce(demand, group=dist.group.WORLD)
-        hist = demand.view(1, 1, experts)
+    demand = layer_demand_from_stats(stats, origin, buf.rank_idx, per_rank, experts)
+    if not per_layer:
+        demand = demand.sum(0, keepdim=True)
+    dist.all_reduce(demand, group=dist.group.WORLD)
+    hist = demand.unsqueeze(0)
 
     # --- 2. plan on rank 0, broadcast -------------------------------------
     hist_layers = hist.shape[1]
@@ -1653,7 +1648,6 @@ def rearrange_now() -> bool:
     # [T17-PERLAYER] [layers, physical]; for the merged arm this is the single
     # row broadcast to every layer so the rest of the code is shared.
     target_layers = new_plan.cpu().tolist()
-    target = target_layers[0]
 
     # --- 3. single-copy-first permutation, BEFORE anything consumes target -
     # [ECO-WARP-FIX] The permutation MUST be applied to `target` before
@@ -1669,10 +1663,9 @@ def rearrange_now() -> bool:
         # [T17-PERLAYER] The single-copy-first permutation depends on which
         # experts got copies IN THAT LAYER, so it must be applied per layer.
         for _l in range(len(target_layers)):
-            target_layers[_l], _slot_order = _reorder_scf(
-                list(target_layers[_l]), ranks)
+            reordered, _slot_order = _reorder_scf(target_layers[_l], ranks)
+            target_layers[_l] = reordered.tolist()
         _ECO_SLOT_ORDER['order'] = _slot_order
-        target = target_layers[0]
 
     # --- 4. move weights between GPUs -------------------------------------
     # [T17-PERLAYER] Each layer moves to ITS OWN placement; the shuffler takes
@@ -1681,14 +1674,15 @@ def rearrange_now() -> bool:
     shuffler = m._eplb_shuffler
     n_layers = len(shuffler.components)
     if len(target_layers) == 1:
-        move_targets = [list(target_layers[0]) for _ in range(n_layers)]
-    elif len(target_layers) == n_layers:
-        move_targets = [list(t) for t in target_layers]
-    else:
+        target_layers = target_layers * buf.slot_logical.shape[0]
+    if len(target_layers) != buf.slot_logical.shape[0] or n_layers != len(origin):
         raise RuntimeError(f'{len(target_layers)} placements but '
                            f'{n_layers} layers')
 
-    shuffler.move([list(layout) for _ in range(n_layers)], move_targets)
+    if _eco_enabled():
+        from gc_moe.eco.meta_sm90 import prepare_meta, install_prepared_meta
+        meta = prepare_meta(buf, target_layers, ranks, experts)
+    shuffler.move(origin.cpu().tolist(), target_layers[:n_layers])
 
     # --- 5. repoint routing ----------------------------------------------
     # [T17-PERLAYER] slot_logical / expert_slots also become per-layer.
@@ -1698,30 +1692,7 @@ def rearrange_now() -> bool:
     # does not exist in that layer (slots_of == -1 there, token dropped).
     count = (slots_of >= 0).sum(-1).clamp_min(1)
     if _eco_enabled():
-        from gc_moe.eco.meta_sm90 import (
-            install_into_buffer as _install_eco_meta)
-        _install_eco_meta(buf, target_layers, ranks, experts)
-        with torch.inference_mode():
-            # The warm start must not survive a placement change: the quotas
-            # are indexed by physical slot and would describe a different
-            # expert map. Zeroing `eco_state` makes the next plan call fall
-            # back to the cold path (correct, just slower for one call).
-            buf.eco_state.zero_()
-            # [ECO-SM90] NEVER clear `eco_ready`: the three words are epoch
-            # TOKENS, not flags.
-            #   eco_ready[0] = counts published (dispatch -> plan)
-            #   eco_ready[1] = plan published   (plan -> replica pull)
-            #   eco_ready[2] = counts consumed  (plan -> next dispatch)
-            # Dispatch's very first act is `wait_epoch(eco_ready[2],
-            # epoch - 1)`, i.e. it waits for the PREVIOUS call's plan to
-            # finish reading the broadcast panel. Only that plan can write the
-            # token, and it is woken by `eco_ready[0]` -- which dispatch has
-            # not written yet at that point. Clearing the three words
-            # therefore deadlocks the first call after any rearrangement
-            # (measured: 5 s of decode, then "RPC call to sample_tokens timed
-            # out"). Leaving them alone keeps all three epoch chains intact;
-            # the stale values are one epoch behind and can never be mistaken
-            # for the new epoch.
+        install_prepared_meta(buf, meta)
         if buf.rank_idx == 0:
             print('[eco] meta re-installed after rearrangement', flush=True)
     # [T17-PERLAYER] Republish the WHOLE per-layer table, not layer 0's row:
@@ -1729,18 +1700,16 @@ def rearrange_now() -> bool:
     for mod in live:
         mod._eplb['slot_table'].copy_(slots_of.reshape(-1))
         mod._eplb['count'].copy_(count)
-        mod._eplb['layout'] = list(target)
         mod._eplb.update(plan=new_t, slots=slots_of)
         with torch.inference_mode():
             mod._eplb['stats'].zero_()
     if buf.rank_idx == 0:
         _tg = torch.as_tensor(target_layers)
-        copies = torch.bincount(_tg.reshape(-1), minlength=experts)
-        _per = [(torch.bincount(_tg[l], minlength=experts) > 1).sum()
-                for l in range(len(target_layers))]
+        copies = torch.stack([torch.bincount(row, minlength=experts) for row in _tg])
+        _per = (copies > 1).sum(1).tolist()
         print(f'[eplb] rearranged: slots={buf.physical} per_rank={per_rank} '
               f'layers={len(target_layers)} '
-              f'max_copies(all-layers)={int(copies.max())} '
+              f'max_physical_copies/layer={int(copies.max())} '
               f'max_replicated/layer={int(max(_per))} '
               f'mean_replicated/layer={sum(int(x) for x in _per) / len(_per):.1f}',
               flush=True)
@@ -1981,14 +1950,8 @@ def _slot_count() -> int:
 def irstep_begin() -> None:
     """# [IR-STEP] Mark the start of the measured window.
 
-    The dispatch role records `ir_step[layer][step]` itself; the only thing it
-    needs from the host is WHERE the window starts, because `step` is derived
-    as `(epoch - epoch0) // layers`. Writing `epoch0 = eco_tl_step` here (a
-    plain device store, no sync) hands it that anchor.
-
-    The epoch is already published by the dispatch role for the forward that
-    is in flight, so this must run BETWEEN forwards (it does: the driver calls
-    it right before the measured loop, with the queue drained).
+    After a drained forward, combine has advanced header[0] to the epoch
+    the next dispatch will read. Reset the additive tables for this window.
     """
     import torch
 
@@ -2000,22 +1963,11 @@ def irstep_begin() -> None:
     if mark is None:
         return False
     torch.cuda.synchronize()
-    # `header[0]` is the dispatch epoch, and it is the SAME value the dispatch
-    # role passes to `_ir_step_write` -- unlike `eco_tl_step`, which only the
-    # ECO arm publishes (the vanilla arm would anchor at 0).
     with torch.inference_mode():
-        # [IRSTEP-ANCHOR-FIX] `header[0]` is written by the dispatch KERNEL, so
-        # under CUDA-graph replay the HOST copy read here is stale -- it lags by
-        # however many calls were captured. Measured on ALIGNEDQ: mark[0] landed
-        # on 15001 while `pull_tl` (which reads `eco_tl_step` inside the kernel)
-        # covered 15225..15480, i.e. the two tables were keyed in DIFFERENT epoch
-        # spaces and could not be joined at all.
-        # `eco_tl_step` is republished by dispatch at the TOP OF EVERY CALL, so
-        # it names the call that is about to run. Read it BEFORE writing mark[0].
-        _step = getattr(buf, 'eco_tl_step', None)
-        _epoch_now = (int(_step[0].item()) if _step is not None
-                      else int(buf.header[0].item()))
-        mark[0] = _epoch_now                    # epoch0 (same space as pull_tl)
+        for table in (buf.ir_step, buf.ir_step_mb, buf.ir_step_ae, buf.ir_step_epoch):
+            table.zero_()
+        _epoch_now = int(buf.header[0].item())
+        mark[0] = _epoch_now
         mark[1] = 0
     # [ECO-FINE-FLOOR] Anchor the FINE event log to the measured window too.
     #
@@ -2038,11 +1990,7 @@ def irstep_begin() -> None:
                                     device=floor.device)
             if ctr is not None:
                 ctr[0] = 0
-        # `eco_tl_step` names the call that JUST finished, so the window's first
-        # layer is floor+1. Anchor one layer early and let the kernel's own
-        # [floor, floor+FINE_EPOCHS) window cover it; FINE_EPOCHS must be >= 2.
-        print(f'[fine-floor] anchored at epoch {_epoch_now} '
-              f'(window starts ~{_epoch_now + 1})', flush=True)
+        print(f'[fine-floor] first measured epoch {_epoch_now}', flush=True)
     return True
 
 
@@ -2067,8 +2015,8 @@ def irstep_end() -> dict:
     if tbl is None:
         return {'ok': False, 'reason': 'no ir_step table'}
     torch.cuda.synchronize()
-    layers = int(_os.environ.get('GC_MOE_LAYERS', '40'))
-    steps = int(_os.environ.get('GC_IRSTEP_STEPS', '1024'))
+    layers = buf.layout.n_layers
+    steps = tbl.numel() // layers
     with torch.inference_mode():
         rows = tbl[:layers * steps].view(layers, steps).cpu().tolist()
         rows_mb = (mb_tbl[:layers * steps].view(layers, steps).cpu().tolist()
@@ -2079,7 +2027,8 @@ def irstep_end() -> dict:
         # joining this table with pull_tl.
         rows_ep = (ep_tbl[:layers * steps].view(layers, steps).cpu().tolist()
                    if ep_tbl is not None else None)
-        e0 = int(mark[0].item()) if mark is not None else 0
+        e0 = int(mark[0].item())
+        mark.zero_()
     return {'ok': True, 'rank': int(buf.rank_idx), 'layers': layers,
             'steps': steps, 'epoch0': e0, 'rows': rows,
             'rows_mb': rows_mb, 'rows_ae': rows_ae, 'rows_epoch': rows_ep}
@@ -2272,7 +2221,7 @@ def _install_worker_rpc() -> None:
             # value proves the helper kernel was actually launched.
             try:
                 torch.cuda.synchronize()
-                _h = buf.buffer.view(torch.int32)
+                _h = buf.header
                 out['role6_entries'] = int(_h[32].item())
                 out['role6_l1_ctr_sum'] = int(_h[33].item())
                 out['role6_pub_slots_sum'] = int(_h[34].item())
@@ -2352,9 +2301,9 @@ def _install_worker_rpc() -> None:
         out = dict(rank=int(buf.rank_idx), next_epoch=next_epoch, topk=int(buf.num_topk))
         if first_epoch is not None:
             advanced = next_epoch - first_epoch
-            if not 1 <= advanced <= buf.pull_tl.shape[0] // 32:
+            if not 1 <= advanced <= 256:
                 return dict(out, error=f'epoch advance {advanced} outside the trace ring capacity')
-            stamps = buf.pull_tl.view(256, 32).cpu().tolist()
+            stamps = buf.pull_tl.view(256, -1).cpu().tolist()
             counts = buf.profile_slot_counts.cpu().tolist()
             out['calls'] = []
             for epoch in range(first_epoch, next_epoch):
@@ -2384,12 +2333,22 @@ def _install_worker_rpc() -> None:
         rank = int(buf.rank_idx)
         tape = buf.fixed_routes
         if finish:
-            return dict(tape.audit(rank), native_top1=self._gc_reference_tokens.native_sample(),
+            native = self._gc_reference_tokens
+            return dict(tape.audit(rank), replay_stream=int(buf.replay_stream_mode.item()),
+                        native_history=native.native_history(tape.steps) if rank == 0 else None,
+                        native_top1=native.native_sample(),
                         batch_order=self._gc_reference_tokens.batch_hash.hexdigest())
+        if buf.replay_stream_mode.item() != 0:
+            raise RuntimeError('both workers must complete warmup with baseline scheduling')
         with torch.inference_mode():
             tape.freeze(os.environ['GC_MOE_FIXED_DIR'], rank, reference=recording_reference())
+            self._gc_reference_tokens.mark_replay_start()
+            buf.replay_stream_mode.fill_(int(os.environ['GC_MOE_SM90_STREAM_M_BLOCKS']))
         mod = next(m for m in _EXPERT_REGISTRY if m._eplb is not None)
-        return dict(rank=rank, placement=digest(mod._eplb['plan']), eco_state=digest(buf.eco_state))
+        return dict(rank=rank, placement=digest(mod._eplb['plan']), eco_state=digest(buf.eco_state),
+                    warmup_stream=0,
+                    last_warm_input=digest(buf.x[:tape.batch].view(torch.uint8)),
+                    last_warm_scales=digest(buf.x_sf[:tape.batch]))
 
     Worker._gc_moe_fixed_routes = gc_moe_fixed_routes
 
@@ -2454,7 +2413,7 @@ def _install_worker_rpc() -> None:
                 # It need not be the actual pre-step epoch; resolve_epochs
                 # independently matches the captured forward.
                 epoch = int(buf.eco_tl_step[0].item())
-                row = buf.pull_tl.view(256, 32)[epoch % 256]
+                row = buf.pull_tl.view(256, -1)[epoch % 256]
                 if epoch <= 0 or int(row[0].item()) != epoch or int(row[10].item()) == 0:
                     raise RuntimeError(f'rank {r}: no completed dispatch for a fine-trace origin')
                 with torch.inference_mode():

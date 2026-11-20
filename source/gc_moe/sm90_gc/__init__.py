@@ -55,6 +55,8 @@ class SM90GCSymmBuffer:
             setattr(self, name, self.buffer.narrow(0, spec.offset, spec.nbytes)
                     .view(getattr(torch, spec.dtype)).view(spec.shape))
         self.peer_table.copy_(torch.tensor(self.peer_addresses, dtype=torch.int64, device=self.buffer.device))
+        if self.layout.fixed_route_order:
+            self.route_ordinal.fill_(-1)
         self.header[0] = 1
         # [ECO-FINE-FLOOR] Arm the fine event log BEFORE the first forward.
         #

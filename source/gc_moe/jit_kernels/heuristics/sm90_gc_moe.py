@@ -10,6 +10,7 @@ class SM90RoleConfig:
     threads: tuple[int, int, int] = (256, 256, 256)
     # Dispatch allocates a dynamic shared uint32 counter; the graph must reserve it.
     smem: tuple[int, int, int] = (128, 65792, 0)
+    direct_route_scan: bool = False
 
 
 @lru_cache(maxsize=256)
@@ -59,7 +60,8 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
         compute_smem = stages * stage_bytes + 1024 + tile_m * 1024 + (0 if tile_m == 64 else 256)
     else:
         compute_smem = 53376
-    direct_scan = 0 < config.bound <= 2
+    # The direct scanner consumes physical IDs and has no ECO plan handshake.
+    direct_scan = small_pipelined and not getattr(config, 'eco_logical_experts', 0)
     combine_bound = config.bound or config.capacity
     combine_grid = min(compute_sms * 4, max(1, (combine_bound * config.hidden + 2047) // 2048))
     # [ECO-SM90] The ECO dispatch keeps the same grid as the plain path: its
@@ -67,7 +69,7 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
     # for the plan before pulling its quota. Growing the grid is NOT safe here
     # -- the dispatch role has a whole-grid rendezvous, so every block must be
     # resident, which caps the grid at 4 CTAs per communication SM.
-    dispatch_grid = config.experts // config.ranks if direct_scan else dispatch_sms * 4
+    dispatch_grid = (config.physical or config.experts) // config.ranks if direct_scan else dispatch_sms * 4
     # [ECO-SM90] The plan role (5) must be RESIDENT while the call runs: the
     # dispatch role blocks on it before it can pull a replica's quota. The
     # routed role is persistent and holds every SM of the compute partition for
@@ -112,7 +114,7 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
                            routed_grid, combine_grid),
                           tile_m=tile_m,
                           threads=(128 if direct_scan else 256, 384 if pipelined else 256, 384),
-                          smem=(dispatch_smem, compute_smem, 0))
+                          smem=(dispatch_smem, compute_smem, 0), direct_route_scan=direct_scan)
 
 
 def get_sm90_role_config(config, context):

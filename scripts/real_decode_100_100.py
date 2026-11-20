@@ -715,6 +715,15 @@ def main():
     fixed_dir = os.environ.get('GC_MOE_FIXED_DIR')
     fixed = {}
     if fixed_dir:
+        # Capture controls before the model runner creates per-process IDs.
+        runtime_keys = ('MODEL', 'DATASET', 'WORLD', 'GPU_UTIL', 'MAX_BATCHED', 'MOE_BACKEND',
+                        'ALL2ALL_BACKEND', 'CUDAGRAPH_MODE', 'PYTHONHASHSEED', 'ENFORCE_EAGER',
+                        'CUDA_VISIBLE_DEVICES', 'VLLM_USE_V2_MODEL_RUNNER', 'VLLM_ENABLE_V1_MULTIPROCESSING',
+                        'VLLM_DISABLE_REQUEST_ID_RANDOMIZATION', 'VLLM_MULTI_STREAM_GEMM_TOKEN_THRESHOLD',
+                        'NCCL_IB_HCA', 'NVSHMEM_HCA_LIST', 'NCCL_NET')
+        fixed_controls = {k: v for k, v in os.environ.items()
+                          if (k.startswith(('GC_MOE_', 'GC_MEASURE_')) or k in runtime_keys)
+                          and k != 'GC_MOE_SM90_STREAM_M_BLOCKS'}
         from pathlib import Path
         fixed = json.loads((Path(fixed_dir) / 'tokens.json').read_text())
         prompt_hash = hashlib.sha256(json.dumps(prompts, separators=(',', ':')).encode()).hexdigest()
@@ -736,7 +745,7 @@ def main():
         enable_logging_iteration_details=True,
         compilation_config=_compilation_config(),
         enforce_eager=os.environ.get('ENFORCE_EAGER', '0') == '1',
-        **({'async_scheduling': False, 'pipeline_parallel_size': 1}
+        **({'async_scheduling': False, 'pipeline_parallel_size': 1, 'seed': 0}
            if a.profile_aligned_step else {}))
 
     engine = llm.llm_engine
@@ -1097,6 +1106,7 @@ def main():
     if fixed_dir:
         if got != fixed['tokens']:
             raise ValueError('observed per-request token histories differ from the input reference')
+        result['fixed_controls'] = fixed_controls
         result['fixed_workload'] = dict(initial=frozen_state,
                                         ranks=engine.collective_rpc('_gc_moe_fixed_routes', args=(True,)))
     _pp = (result.get('time_ir') or {}).get('plan_pred')

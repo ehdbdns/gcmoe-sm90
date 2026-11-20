@@ -84,6 +84,12 @@ def main():
             else:
                 raise AssertionError(f'invalid trace accepted: {expected}')
 
+        baseline = fine_fixture(path, report)
+        rows = baseline['ranks'][0]['epochs'][str(report['epoch'])]
+        last = next(r for r in rows if r[1] == 7 and r[3] == 0 and r[7] == 1)
+        last[0] += 30
+        (path / 'fine.json').write_text(json.dumps(baseline))
+        reject('L2 started before all L1 tiles')
         fine = fine_fixture(path, report, stream=True)
         [(_, detail, _)] = analyze(path, path)
         rank0 = detail['ranks'][0]

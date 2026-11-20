@@ -36,6 +36,22 @@ class ReferenceTokens:
         sampled[:, 0].copy_(torch.where(num_sampled.bool(), expected, sampled[:, 0]))
         self.positions.index_add_(0, rows, num_sampled.long())
 
+    def mark_replay_start(self):
+        self.replay_start = self.positions.clone()
+
+    def native_history(self, steps):
+        if not torch.equal(self.positions, self.lengths) or not torch.all(self.positions - self.replay_start == steps):
+            raise ValueError('native samples do not cover the replay interval')
+        # Padding and unaccepted prefill positions are excluded from warmup.
+        pos = torch.arange(self.native.shape[1], device=self.device)
+        warm = self.native.masked_fill(pos >= self.replay_start[:, None], -1)
+        idx = self.replay_start[:, None] + pos[:steps]
+        measured = self.native.gather(1, idx)
+        if (measured < 0).any():
+            raise ValueError('missing native sample in the replay interval')
+        return dict(warm_top1_sha256=hashlib.sha256(warm.cpu().numpy().tobytes()).hexdigest(),
+                    replay_top1=measured.T.cpu().tolist())
+
     def native_sample(self, remaining=103):
         if not torch.equal(self.positions, self.lengths):
             raise ValueError('worker consumed a different number of reference tokens')

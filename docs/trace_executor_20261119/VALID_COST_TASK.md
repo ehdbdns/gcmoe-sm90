@@ -51,7 +51,7 @@ bash scripts/trace_layer/run_multilayer_study.sh "$work/code" "$work/delivery" -
 (cd "$work/delivery" && sha256sum --quiet -c SHA256SUMS)
 ```
 
-输出目录名沿用比较工具。`baseline` 为 stream + 线性价格，`stream` 为 stream + valid 价格。两次各在同一进程采集 step 2 并在关闭 profiler 和 fine 写入后计时 100 步。启动入口先检查已推送的任务一 `fixed_stream_results/comparison.json` 的 `scheduling_gate_passed`。保存所有 rank 的 token、M 块、预测分、实测跨度、占比、误差，以及总览和 absolute Perfetto JSON。程序核验两臂执行 SHA、stream 开关和 cost 模式，并逐 rank 验证候选的设备 plan 分等于按该次实际逐槽 owned 重算的价格之和。
+输出目录名沿用比较工具。`baseline` 为 stream + 线性价格，`stream` 为 stream + valid 价格。两次各在同一进程采集 step 2 并在关闭 profiler 和 fine 写入后计时 100 步。启动入口先检查已推送的任务一 `fixed_stream_results_r4/comparison.json` 的 `scheduling_gate_passed`。保存所有 rank 的 token、M 块、预测分、实测跨度、占比、误差，以及总览和 absolute Perfetto JSON。程序核验两臂执行 SHA、stream 开关和 cost 模式，并逐 rank 验证候选的设备 plan 分等于按该次实际逐槽 owned 重算的价格之和。
 
 ## 回执
 

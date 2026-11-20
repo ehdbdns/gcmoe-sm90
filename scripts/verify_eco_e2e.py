@@ -12,7 +12,7 @@ import torch, torch.distributed as dist
 import gc_ptxas_override  # noqa: F401
 import gc_moe
 from deep_gemm.utils import per_token_cast_to_fp4, per_token_cast_to_fp8
-from gc_moe.eco.meta_sm90 import build_eco_meta
+from gc_moe.eco.meta_sm90 import install_into_buffer
 
 H, I, E, TOPK, CAP, B = 5120, 2304, 384, 6, 64, 32
 R = int(os.environ.get('WORLD_SIZE', '8'))
@@ -85,8 +85,7 @@ def main():
     buf2 = gc_moe.get_symm_buffer_for_gc_moe_sm90(group, E, CAP, TOPK, H, I,
                                                   activation='swiglu',
                                                   physical=P, eco=True, trace=False)
-    buf2.eco_meta.copy_(torch.as_tensor(build_eco_meta(phy, R, E),
-                                        dtype=torch.int32, device=dev))
+    install_into_buffer(buf2, phy, R, E)
     # weights: replicate to every slot holding each expert (host gather)
     from gc_moe.sm90_gc import install_eplb_plan, gather_slot_weights
     plan, slots_of = install_eplb_plan(buf2, phy)
@@ -101,7 +100,6 @@ def main():
     out.zero_()
     # ECO is inferred from the buffer (`eco=True`, `eco_logical`) plus the
     # GC_MOE_ECO_* env vars; there are no eco kwargs on this entry point.
-    os.environ['GC_MOE_ECO_MAX_COPIES'] = str(max_rep)
     gc_moe.sm90_fp8_fp4_gc_moe(out, w1b, w2b, buf2, recipe=(1, 1, 32), activation='swiglu',
                                activation_clamp=10.0, fast_math=True, num_tokens_bound=CAP)
     torch.cuda.synchronize()

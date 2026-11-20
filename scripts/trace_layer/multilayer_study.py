@@ -89,6 +89,10 @@ def collect(raw, dest, mode, step):
                       e2e_ms_per_step=tail['ms_per_step'])
     if 'eco_costfn' in run:
         record.update(eco_costfn=run['eco_costfn'], stream_m_blocks=run['stream_m_blocks'])
+    if 'fixed_controls' in run:
+        record['fixed_controls'] = run['fixed_controls']
+        require(run['eco'] and run['eco_weights'] == dict(wb=26, wa=0, rounds=1, cold_rounds=6),
+                'unexpected ECO weights or auction rounds')
     if mode != 'e2e':
         layers = []
         slot_counts = [[] for _ in range(8)]
@@ -106,6 +110,10 @@ def collect(raw, dest, mode, step):
                     expected = sum(slot_cost(q) for q in rank['slots_owned'])
                     require(rank['plan_cost'] == expected,
                             f"{stem} rank {rank['rank']}: valid score {rank['plan_cost']} != {expected}")
+            if 'fixed_controls' in run:
+                for rank in c['ranks']:
+                    require(rank['block_m'] == 64 and rank['plan_cost'] == 26 * rank['m_blocks'] + rank['routed_rows'],
+                            f"{stem} rank {rank['rank']}: exported plan differs from the M64 linear score")
             write(dest/path.name, c)
             for suffix, output in [('perfetto','perfetto')] + (
                     [('detail.perfetto','absolute.perfetto')] if mode == 'fine' or (mode == 'paired' and c['layer'] in FINE_LAYERS) else []):
@@ -226,7 +234,9 @@ def compare(root):
     require(base['prompt_hash'] == candidate['prompt_hash'], 'unmatched prompts')
     marker = root/'comparison.txt'
     valid_cost = marker.exists() and marker.read_text().strip() == 'valid_cost'
-    fixed_stream = marker.exists() and marker.read_text().strip() == 'fixed_stream'
+    protocol = marker.read_text().strip() if marker.exists() else ''
+    r4 = protocol == 'fixed_stream_r4'
+    fixed_stream = r4 or protocol == 'fixed_stream'
     controls = {}
     flags = [(r['stream_m_blocks'], r['eco_costfn']) for r in (base, candidate)]
     if valid_cost:
@@ -238,10 +248,41 @@ def compare(root):
                 and all(r.get('fixed_workload') for r in (base, candidate)), 'invalid fixed stream arms')
         audits = [read(path/'workload.json') for path in dirs]
         left, right = audits
-        controls['placement_and_initial_state_match'] = left['initial'] == right['initial']
+        controls['placement_and_initial_state_match'] = all(
+            all(b[k] == s[k] for k in ('rank', 'placement', 'eco_state'))
+            for b, s in zip(left['initial'], right['initial'], strict=True))
         keys = ('rank', 'batch_order', 'route_ids', 'route_weights', 'layer_order', 'owned_steps')
         controls['routes_and_all_slot_counts_match'] = all(
             all(b[k] == s[k] for k in keys) for b, s in zip(left['ranks'], right['ranks'], strict=True))
+        if r4:
+            config = base['fixed_controls']
+            required = dict(GC_MOE_ECO='1', GC_MOE_ECO_COSTFN='0', GC_MOE_ECO_WB='26',
+                            GC_MOE_ECO_WA='0', GC_MOE_ECO_NO_AUCTION='0', GC_MOE_ECO_NULL_PLAN='0',
+                            GC_MOE_ECO_NOSPLIT='0', GC_MOE_ECO_TOKENS_ONLY='0', GC_MOE_ECO_BLOCKS_ONLY='0',
+                            GC_MOE_BLOCK_M_FORCE='64', GC_MOE_MB_CLAIM='1', GC_MOE_FIXED_REUSE='1')
+            controls['same_run_controls'] = (config == candidate['fixed_controls']
+                                             and all(config.get(k) == v for k, v in required.items()))
+            controls['same_physical_routes'] = all(
+                b['route_ordinals'] == s['route_ordinals'] for b, s in zip(left['ranks'], right['ranks'], strict=True)
+            ) and controls['routes_and_all_slot_counts_match'] and controls['placement_and_initial_state_match']
+            histories = []
+            for arm, audit in enumerate(audits):
+                require(all(r['warmup_stream'] == 0 for r in audit['initial'])
+                        and all(r['replay_stream'] == arm for r in audit['ranks']),
+                        'stream switch has wrong warmup or measurement state')
+                history = audit['ranks'][0]['native_history']
+                samples = history['replay_top1']
+                require(len(samples) == 105 and all(len(row) == 256 for row in samples)
+                        and samples[2] == audit['ranks'][0]['native_top1'], 'incomplete native sample history')
+                histories.append(history)
+            controls['last_warm_input_match'] = all(
+                all(b[k] == s[k] for k in ('last_warm_input', 'last_warm_scales'))
+                for b, s in zip(left['initial'], right['initial'], strict=True))
+            controls['warm_native_match'] = histories[0]['warm_top1_sha256'] == histories[1]['warm_top1_sha256']
+            mismatch = [sum(b != s for b, s in zip(bs, ss, strict=True))
+                        for bs, ss in zip(*(h['replay_top1'] for h in histories), strict=True)]
+            controls['native_differences_by_step'] = mismatch
+            controls['first_native_difference_step'] = next((i for i, n in enumerate(mismatch) if n), None)
         native = [next(r['native_top1'] for r in audit['ranks'] if r['native_top1'] is not None)
                   for audit in audits]
         controls['native_top1_different_of_256'] = sum(b != s for b, s in zip(*native, strict=True))
@@ -272,12 +313,16 @@ def compare(root):
     controlled_faster = matched and all(faster.values())
     if fixed_stream:
         controlled_faster &= controls['placement_and_initial_state_match'] and controls['routes_and_all_slot_counts_match']
+        if r4:
+            controlled_faster &= controls['same_run_controls'] and controls['same_physical_routes']
         controls['fixed_workload_faster'] = controlled_faster
     write(root/'comparison.json', dict(study='valid_cost' if valid_cost else 'scheduling',
           matched_outputs=matched, lower=faster, faster_layers=sum(row['delta_us'] < 0 for row in layers),
           total_layers=len(layers), **controls,
           scheduling_gate_passed=not valid_cost and controlled_faster
-          and controls.get('native_top1_different_of_256', 0) == 0))
+          and controls.get('native_top1_different_of_256', 0) == 0
+          and (not r4 or (controls['last_warm_input_match'] and controls['warm_native_match']
+                          and not any(controls['native_differences_by_step'])))))
 
 
 if __name__ == '__main__':

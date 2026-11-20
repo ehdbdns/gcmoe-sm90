@@ -71,9 +71,8 @@ def main():
     buf2 = gc_moe.get_symm_buffer_for_gc_moe_sm90(group, E, CAP, TOPK, H, I,
                                                   activation='swiglu', eco=True)
     sm90_gc.install_eplb_plan(buf2, list(range(E)))
-    from gc_moe.eco.meta_sm90 import build_eco_meta
-    meta = build_eco_meta(list(range(E)), R, E)
-    buf2.eco_meta.copy_(torch.as_tensor(meta, dtype=torch.int32, device=dev))
+    from gc_moe.eco.meta_sm90 import install_into_buffer
+    install_into_buffer(buf2, list(range(E)), R, E)
     out.zero_()
     run(out, w1, w2, buf2, xq, xsf, ti, weights)
 

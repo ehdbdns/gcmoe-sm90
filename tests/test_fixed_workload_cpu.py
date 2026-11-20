@@ -13,7 +13,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 from fixed_tokens import install
-from fixed_workload import RouteTape, recording_reference
+from fixed_workload import RouteTape, recording_reference, route_ordinals
 
 
 def test_fixed_driver_startup(folder):
@@ -63,20 +63,22 @@ def test_fixed_driver_startup(folder):
 
 
 def test_routes(folder):
+    ids = torch.tensor([[[1, 3], [3, 1], [1, 3]], [[3, 1], [3, 4], [4, 1]]])
+    assert route_ordinals(ids).tolist() == [[[0,0],[1,1],[2,2]], [[0,0],[1,0],[1,1]]]
     audits = []
     # Seed the shared tape, then run a baseline and a stream using that tape.
     for arm, (flag, reuse) in enumerate([('0', '0'), ('0', '1'), ('1', '1')]):
         tape = RouteTape('cpu', topk=2, slots=2, steps=2, layers=2, batch=3)
-        buf = SimpleNamespace(eco_tl_step=torch.zeros(1, dtype=torch.int32),
+        buf = SimpleNamespace(used_route_ordinal=torch.zeros((3, 2), dtype=torch.int32), eco_tl_step=torch.zeros(1, dtype=torch.int32),
                               profile_slot_counts=torch.zeros(256, 2, dtype=torch.int32))
 
         def call(n, live):
             ids = torch.full((3, 2), live, dtype=torch.int32)
             weights = torch.full((3, 2), live / 10, dtype=torch.float32)
-            ids, weights = tape.select(ids, weights, n % 2)
+            ids, weights = tape.select(ids, weights, n % 2, buf.used_route_ordinal)
             # Simulate the GPU's quota observation (including wrap at epoch 256).
-            buf.eco_tl_step.fill_(250+n)
-            buf.profile_slot_counts[(250+n) % 256] = ids[0].int()
+            buf.eco_tl_step.fill_(251+n)
+            buf.profile_slot_counts[(251+n) % 256] = ids[0].int()
             tape.finish_call(buf)
             return ids, weights
 
@@ -89,6 +91,13 @@ def test_routes(folder):
             assert (ids == 6+n).all()
             assert torch.allclose(weights, torch.full((3, 2), (6+n)/10))
         audits.append(tape.audit(0))
+        tape.used_ordinals[-1, 0, 0] += 1
+        try:
+            tape.audit(0)
+        except ValueError as error:
+            assert 'ordinal' in str(error)
+        else:
+            raise AssertionError('changed source route order passed audit')
     assert audits[0] == audits[1] == audits[2]
 
 
@@ -113,8 +122,10 @@ def test_tokens(folder):
         return output.sampled_token_ids[:, 0].tolist()
     assert feed(['req1','req0'], [11,12], [1,0]) == [6,12]
     assert feed(['req0','req1'], [13,14], [1,1]) == [5,3]
+    reference.mark_replay_start()
     assert feed(['req1','req0'], [15,16], [1,1]) == [8,2]
     assert reference.native_sample(remaining=2) == [13,14]
+    assert reference.native_history(1)['replay_top1'] == [[16,15]]
 
 
 if __name__ == '__main__':

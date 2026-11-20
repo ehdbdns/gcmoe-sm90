@@ -126,9 +126,8 @@ def main():
                                                   activation='swiglu',
                                                   physical=lay.physical, eco=True)
     plan, _ = sm90_gc.install_eplb_plan(buf2, list(lay.phy2log))
-    from gc_moe.eco.meta_sm90 import build_eco_meta
-    buf2.eco_meta.copy_(torch.as_tensor(build_eco_meta(list(lay.phy2log), R, E),
-                                        dtype=torch.int32, device=dev))
+    from gc_moe.eco.meta_sm90 import install_into_buffer
+    install_into_buffer(buf2, list(lay.phy2log), R, E)
     w1b, w2b = sm90_gc.gather_slot_weights((w1, w2), buf2, plan, group)
     call(buf2, w1b, w2b, ti)
     report('eco', buf2, buf2.expert_count[:lay.per_rank].clone(), -1, 240)

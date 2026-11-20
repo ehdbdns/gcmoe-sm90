@@ -57,9 +57,8 @@ def main():
         group, E, CAP, TOPK, H, I, activation='swiglu',
         physical=lay.physical, eco=True)
     plan, slots_of = sm90_gc.install_eplb_plan(buf, list(lay.phy2log))
-    from gc_moe.eco.meta_sm90 import build_eco_meta
-    buf.eco_meta.copy_(torch.as_tensor(
-        build_eco_meta(list(lay.phy2log), R, E), dtype=torch.int32, device=dev))
+    from gc_moe.eco.meta_sm90 import install_into_buffer
+    install_into_buffer(buf, list(lay.phy2log), R, E)
     w1b, w2b = sm90_gc.gather_slot_weights((w1, w2), buf, plan, group)
 
     if rank == 0:
