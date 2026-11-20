@@ -31,7 +31,7 @@
 | step 2 开 profiler 墙钟 ms | 100.627 | 114.297 | +13.670 | +13.58% |
 | 逐层（40 层） | — | — | — | **24 快 / 16 慢** |
 
-**MoE 下降 0.37%，E2E 上升 0.13%** —— 方向相反，且幅度都在噪声量级。
+**MoE 下降 0.37%，E2E 上升 0.13%** —— 两项为本轮单次配对观测。
 
 ## 2. 十个十步的 E2E 分段（关键证据）
 
@@ -41,12 +41,11 @@
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | Δ ms | −1.016 | −0.130 | +0.355 | **+4.706** | **+1.769** | −0.052 | −1.626 | +0.058 | −1.768 | −1.211 |
 
-- 合计 **+1.085 ms**，均值 +0.108 ms/段。
-- **第 4 段单独 +4.706 ms，是整体 +1.085 的 4.3 倍**；剔除该段后其余九段合计 **−3.62 ms**（stream 更快）。
+- 各栏为该 10 步窗口的每步均值差。全 100 步累计相差 **+10.847 ms**，折合 **+0.108 ms/步**。
+- 第 4 段相差 **+4.706 ms/步**。十段中有六段 stream 更快、四段更慢。
 - 段间极差 **6.47 ms**，远大于整体差值 0.108 ms。
 
-**结论：本轮 E2E 的 +0.13% 由单个 10 步窗口的一次抖动决定**，
-而九段合计为负说明 stream 在多数时段更快。
+第 4 段对全窗口均值影响最大。现有计时仅记录十步边界，无法识别该段是哪一步或哪项工作耗时增加。正式判定使用完整 100 步。
 
 ## 3. 严格对照项：全部通过 ← 本轮最大成果
 
@@ -73,11 +72,11 @@
 
 ## 4. 索引顺序的行为（`compressed_index_order.csv`）
 
-608 行 = 2 步（0、1）× 38 压压缩层（2–39）× 8 rank。
+608 行 = 2 步（0、1）× 38 个压缩层（2–39）× 8 rank。
 
 | 字段 | 结果 |
 |---|---|
-| `native_order_match` | **608/608 为 False** —— 两臂的**原生**索引顺序全部不同（符合预期：排序动作本身改变了原生顺序）|
+| `native_order_match` | **608/608 为 False** —— 每组至少有一个请求的排序前序列不同|
 | **`effective_order_match`** | **608/608 为 True** —— 实际送入 FlashMLA 的序列**完全一致** |
 | `lengths_match` | **608/608 为 True** |
 | 重排行数 | baseline **153,920** = stream **153,920**（两臂做了完全相同量的重排）|
@@ -100,8 +99,7 @@ step 0 / layer 2 示例：八个 rank 各 250 行被重排，两臂数字一致�
 | 退化 | 11 | 844.0 | 866.5 | +22.5 |
 | 退化 | 24 | 821.2 | 842.0 | +20.8 |
 
-layer 6 的 −107 µs 与 R3/R4/R5/R6/R7 高度一致，**是逐块发号带来的稳定收益**；
-其余层的 ±25 µs 属单层波动。
+layer 6 的最慢 rank 用时下降 107 µs。R4–R7 在这一层也观察到下降，之前各轮的严格可比条件与 R8 有差异。
 
 ## 6. 版本与环境
 
@@ -130,7 +128,7 @@ layer 6 的 −107 µs 与 R3/R4/R5/R6/R7 高度一致，**是逐块发号带来
 | counts | 80 | **80** |
 | 层总览 Perfetto | 80 | **80** |
 | absolute Perfetto | 22 | **22** |
-| 逐 rank 行 | 640 | **642** |
+| 逐 rank 数据行 | 640 | **640**（每臂 320 行，两份 CSV 各另有一行表头） |
 | checkpoint 清单 | 16（两组各 8）| **16** |
 | `compressed_index_order.csv` | 1 | **1**（608 行）|
 | `SHA256SUMS` | 通过 | **通过** |
@@ -143,9 +141,17 @@ KV 二进制保留在执行机。
 
 1. **严格对照首次全部通过**，说明索引排序规范化成功消除了 R7 的非确定性来源。
 2. **MoE 下降 0.37%**（逐层 24 快 16 慢），方向明确。
-3. **E2E 上升 0.13%**，但**九段合计为 −3.62 ms**，仅第 4 段 +4.706 ms 主导；
-   因此这个 +0.13% 不宜解读为 stream 更慢。
+3. **本次 100 步 E2E 均值上升 0.13%**。每臂一次，差值能否复现仍未知。
 4. **`scheduling_gate_passed` 仍为 false**，因为判据要求两项同时下降。
    按任务书，这是正式结果：**严格可比已达成，性能方向未双双为负。**
 5. 每臂一次，无重复性误差界。本轮新增的排序开销计入两臂 E2E，
    所以绝对值不能直接和 R3–R7 比较。
+
+## 发布者复核与第 20 层 trace
+
+已校验结果包 SHA256SUMS，并从两臂原始审计记录重新生成比较结果。105 步共 26,880 个原生 top‑1 全部相同。step 2 配对的 320 组（层、rank）逐槽负载一致。逐 rank 将 40 层从 graph 起点到 combine 结束的跨度相加，再取八卡最大值，得到 baseline 34.177632 ms（rank 0）和 stream 34.049579 ms（rank 2）。端到端使用完整的 100 步计时。两项联合提速判据未通过，按任务约定保留本轮结论。[两项耗时](../trace_executor_20261119/fixed_stream_results_r8/paired.csv) · [严格对照](../trace_executor_20261119/fixed_stream_results_r8/comparison.json)
+
+| step 2 / layer 20 | torch profiler Perfetto | absolute Perfetto | 各 rank token 与 M 块 |
+|---|---|---|---|
+| baseline | [总览](https://github.com/ehdbdns/gcmoe-sm90/blob/9ca7ec9/docs/trace_executor_20261119/fixed_stream_results_r8/step02/baseline/paired/step002_layer20_epoch14501.perfetto.json) | [CTA 细节](https://github.com/ehdbdns/gcmoe-sm90/blob/9ca7ec9/docs/trace_executor_20261119/fixed_stream_results_r8/step02/baseline/paired/step002_layer20_epoch14501.absolute.perfetto.json) | [counts](https://github.com/ehdbdns/gcmoe-sm90/blob/9ca7ec9/docs/trace_executor_20261119/fixed_stream_results_r8/step02/baseline/paired/step002_layer20_epoch14501.counts.json) |
+| stream | [总览](https://github.com/ehdbdns/gcmoe-sm90/blob/9ca7ec9/docs/trace_executor_20261119/fixed_stream_results_r8/step02/stream/paired/step002_layer20_epoch14501.perfetto.json) | [CTA 细节](https://github.com/ehdbdns/gcmoe-sm90/blob/9ca7ec9/docs/trace_executor_20261119/fixed_stream_results_r8/step02/stream/paired/step002_layer20_epoch14501.absolute.perfetto.json) | [counts](https://github.com/ehdbdns/gcmoe-sm90/blob/9ca7ec9/docs/trace_executor_20261119/fixed_stream_results_r8/step02/stream/paired/step002_layer20_epoch14501.counts.json) |
