@@ -32,8 +32,10 @@ else
   GC_MOE_FIXED_DIR=$(mktemp -d /tmp/gcmoe-route-replay-XXXXXXXX)
   export GC_MOE_FIXED_DIR VLLM_USE_V2_MODEL_RUNNER=1 VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1
   echo "$GC_MOE_FIXED_DIR" > "$bundle/workload-path.txt"
-  old_base="$here/../../docs/trace_executor_20261119/multilayer_ab_results/step02/baseline/paired"
-  "$analysis_python" "$here/multilayer_study.py" reference "$old_base" "$GC_MOE_FIXED_DIR"
+  results="$here/../../docs/trace_executor_20261119"
+  "$analysis_python" "$here/multilayer_study.py" reference \
+    "$results/multilayer_ab_results/step02/baseline/paired" "$GC_MOE_FIXED_DIR" \
+    --prepared "$results/fixed_stream_results_failed/tokens.json"
 fi
 export GC_CAPTURE_TOKENS=1
 for arm in baseline stream; do

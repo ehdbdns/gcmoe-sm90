@@ -723,7 +723,7 @@ def main():
                 != (256, 200, 2, 1, 2, 100)):
             raise ValueError('fixed workload does not match the prompts or decode protocol')
     llm = LLM(
-        **({'logits_processors': ['fixed_tokens:ReferenceTokens']} if fixed_dir else {}),        model=os.environ['MODEL'], tensor_parallel_size=8,
+        model=os.environ['MODEL'], tensor_parallel_size=8,
         enable_expert_parallel=True, enable_prefix_caching=False,
         max_model_len=max_len + decode_budget + margin + 64,
         gpu_memory_utilization=float(os.environ.get('GPU_UTIL', '0.80')),

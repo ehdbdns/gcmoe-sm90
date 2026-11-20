@@ -26,17 +26,21 @@ def write(path, data):
     path.write_text(json.dumps(data, separators=(',', ':'), allow_nan=False) + '\n')
 
 
-def reference(previous, dest):
-    checksum, location = (previous/'result.sha256').read_text().strip().split(maxsplit=1)
-    path = Path(os.environ.get('GC_MOE_REFERENCE_RESULT', location))
-    payload = path.read_bytes()
-    require(hashlib.sha256(payload).hexdigest() == checksum, 'wrong historical baseline result')
-    old = json.loads(payload)
+def reference(previous, dest, prepared=None):
     prior = read(previous/'run.json')
-    output_hash = hashlib.sha256(json.dumps(old['tokens'], sort_keys=True).encode()).hexdigest()
-    require(old['prompt_sha256'] == prior['prompt_hash'] and output_hash == prior['output_hash'],
+    if prepared is not None and not os.environ.get('GC_MOE_REFERENCE_RESULT'):
+        trajectory = read(prepared)
+    else:
+        checksum, location = (previous/'result.sha256').read_text().strip().split(maxsplit=1)
+        path = Path(os.environ.get('GC_MOE_REFERENCE_RESULT') or location)
+        payload = path.read_bytes()
+        require(hashlib.sha256(payload).hexdigest() == checksum, 'wrong historical baseline result')
+        old = json.loads(payload)
+        trajectory = dict(prompt_hash=old['prompt_sha256'], tokens=old['tokens'])
+    output_hash = hashlib.sha256(json.dumps(trajectory['tokens'], sort_keys=True).encode()).hexdigest()
+    require(trajectory['prompt_hash'] == prior['prompt_hash'] and output_hash == prior['output_hash'],
             'historical token reference does not match its receipt')
-    write(dest/'tokens.json', dict(prompt_hash=prior['prompt_hash'], tokens=old['tokens']))
+    write(dest/'tokens.json', trajectory)
 
 
 def csv_table(path, rows):
@@ -287,11 +291,12 @@ if __name__ == '__main__':
     ref = sub.add_parser('reference')
     ref.add_argument('previous', type=Path)
     ref.add_argument('dest', type=Path)
+    ref.add_argument('--prepared', type=Path)
     sub.add_parser('compare').add_argument('root', type=Path)
     args = parser.parse_args()
     if args.action == 'collect':
         collect(args.raw, args.dest, args.mode, args.step)
     elif args.action == 'reference':
-        reference(args.previous, args.dest)
+        reference(args.previous, args.dest, args.prepared)
     else:
         compare(args.root)

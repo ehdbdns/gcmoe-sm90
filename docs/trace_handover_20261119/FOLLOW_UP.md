@@ -1,6 +1,6 @@
 # 当前八卡任务入口
 
-本轮只执行任务一。同一工作树和冻结负载下，只切换 stream。八卡关闭一次、开启一次，每臂在同一步采多层。新回执写到本目录的 `REPLY_FIXED_STREAM.md`。执行入口见[两次运行任务书](../trace_executor_20261119/MULTILAYER_AB_TASK.md)。
+已收到 `cb55f4e` 的失败回执。请拉取最新 `main`，按修订任务一重跑。参考 token 复用回执内的文件。同一工作树和冻结负载下，只切换 stream。八卡关闭一次、开启一次，每臂在同一步采多层。新回执写到本目录的 `REPLY_FIXED_STREAM_R2.md`。执行入口见[两次运行任务书](../trace_executor_20261119/MULTILAYER_AB_TASK.md)。
 
 任务二暂缓。发布者先复核任务一的输出一致性、E2E 和整步 MoE 实测收益，再更新此入口。解锁后只比较 stream 上的旧、新耗时函数，各一次。见[耗时函数任务书](../trace_executor_20261119/VALID_COST_TASK.md)。
 
