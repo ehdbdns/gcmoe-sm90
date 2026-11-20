@@ -8,14 +8,47 @@ from tempfile import TemporaryDirectory
 
 from test_aligned_step_cpu import fixture
 from aligned_step import build
+from first_step import index_order_controls
 from multilayer_study import ARMS, BASELINE_SHA, FINE_LAYERS, STEPS, STREAM_SHA, collect, compare, read, write
 from test_pull_gemm_detail_cpu import fine_fixture
 from pull_gemm_detail import analyze
 
 
+def check_index_order(root):
+    row_hash = 'a' * 64
+    effective = hashlib.sha256(bytes.fromhex(row_hash) * 256).hexdigest()
+    audits = []
+    for arm in (0, 1):
+        initial, ranks = [], []
+        for rank in range(8):
+            states = dict(compressed_decode_layers=[2, 6])
+            for call in ('first_call', 'treatment_call'):
+                layers = {str(layer): dict(rows=256, permuted_rows=arm, lengths=row_hash,
+                                           native=row_hash if arm else effective, consumed=effective)
+                          for layer in (2, 6)}
+                states[call] = dict(first_step=dict(index_order=layers, attention=dict(
+                    hashes=dict(extra_order=[row_hash] * 256))))
+            initial.append(states)
+            ranks.append(dict(ordered_decode_modes={str(layer): [0] + [arm] * 104 for layer in (2, 6)}))
+        audits.append(dict(initial=initial, ranks=ranks))
+    result = index_order_controls(root, audits)
+    assert result['control_match'] and result['treatment_match']
+    audits[1]['initial'][7]['treatment_call']['first_step']['index_order']['6']['consumed'] = 'c' * 64
+    result = index_order_controls(root, audits)
+    assert result['control_match'] and not result['treatment_match']
+    audits[1]['ranks'][7]['ordered_decode_modes']['6'][104] = 0
+    try:
+        index_order_controls(root, audits)
+    except ValueError as exc:
+        assert 'incorrect stream switch' in str(exc)
+    else:
+        raise AssertionError('accepted an incorrect final-step mode')
+
+
 def main():
     with TemporaryDirectory() as tmp:
         root = Path(tmp)
+        check_index_order(root)
         raw = root/'raw'
         raw.mkdir()
         deliver = raw/'deliver'

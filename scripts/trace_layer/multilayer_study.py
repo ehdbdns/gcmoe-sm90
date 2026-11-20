@@ -288,7 +288,8 @@ def compare(root):
     marker = root/'comparison.txt'
     valid_cost = marker.exists() and marker.read_text().strip() == 'valid_cost'
     protocol = marker.read_text().strip() if marker.exists() else ''
-    aa_control = protocol == 'fixed_stream_r7'
+    ordered_decode = protocol == 'fixed_stream_r8'
+    aa_control = ordered_decode or protocol == 'fixed_stream_r7'
     r6 = aa_control or protocol == 'fixed_stream_r6'
     checkpointed = r6 or protocol == 'fixed_stream_r5'
     ordered_replay = checkpointed or protocol == 'fixed_stream_r4'
@@ -356,10 +357,15 @@ def compare(root):
                 controls['treatment_boundary'] = checkpoint_controls(root, audits, step=1)
                 controls['treatment_step'] = first_step_controls(root, audits, step=1)
                 controls['flashmla'] = attention_controls(root, audits)
+                if ordered_decode:
+                    from first_step import index_order_controls
+                    controls['same_run_controls'] &= config.get('GC_MOE_ORDER_EXTRA') == '1'
+                    controls['index_order'] = index_order_controls(root, audits)
                 controls['negative_control_match'] = (all(controls[k] for k in (
                     'checkpoint_match', 'first_step_chain_match', 'first_step_finite', 'shared_weights_match',
                     'shared_branch_active', 'same_hardware', 'same_run_controls'))
                     and controls['flashmla']['control_match']
+                    and (not ordered_decode or controls['index_order']['control_match'])
                     and not controls['treatment_boundary']['control_end_kv_different_ranks'])
             blocks = [r['ten_step_host_ms_per_step'] for r in (base, candidate)]
             for values, run in zip(blocks, (base, candidate), strict=True):
@@ -411,6 +417,7 @@ def compare(root):
             if aa_control:
                 post = controls['treatment_step']
                 equivalence &= (controls['negative_control_match'] and controls['flashmla']['treatment_match']
+                                and (not ordered_decode or controls['index_order']['treatment_match'])
                                 and controls['treatment_boundary']['checkpoint_match']
                                 and all(post[k] for k in ('first_step_chain_match', 'shared_branch_active',
                                                            'shared_weights_match', 'first_step_finite')))

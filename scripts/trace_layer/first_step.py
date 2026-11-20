@@ -137,3 +137,50 @@ def attention_controls(root, audits):
         writer.writeheader()
         writer.writerows(table)
     return result
+
+
+def index_order_controls(root, audits):
+    import hashlib
+
+    table, result = [], {}
+    expected = audits[0]['initial'][0]['compressed_decode_layers']
+    require(expected == sorted(set(expected)) and 2 in expected and all(0 <= l < 40 for l in expected),
+            'invalid model-derived compressed layer list')
+    keys = {str(i) for i in expected}
+    for arm, audit in enumerate(audits):
+        for rank, initial in enumerate(audit['initial']):
+            coverage = audit['ranks'][rank]['ordered_decode_modes']
+            require(initial['compressed_decode_layers'] == expected and set(coverage) == keys
+                    and all(modes == [0] + [arm] * 104 for modes in coverage.values()),
+                    'missing ordered decode or incorrect stream switch')
+    result['compressed_layers'] = expected
+    for step, call, label in ((0, 'first_call', 'control'), (1, 'treatment_call', 'treatment')):
+        match = True
+        for rank in range(8):
+            probes = [a['initial'][rank][call]['first_step'] for a in audits]
+            for probe in probes:
+                require(set(probe['index_order']) == keys, 'missing index snapshots')
+                attn = probe['attention']
+                order = hashlib.sha256(b''.join(bytes.fromhex(h) for h in attn['hashes']['extra_order'])).hexdigest()
+                require(probe['index_order']['2']['consumed'] == order,
+                        'canonical indices disagree with the actual FlashMLA input')
+            for layer in expected:
+                b, s = [probe['index_order'][str(layer)] for probe in probes]
+                for v in (b,s):
+                    require(v['rows'] == 256 and 0 <= v['permuted_rows'] <= v['rows']
+                            and all(len(v[k]) == 64 and len(bytes.fromhex(v[k])) == 32
+                                    for k in ('native', 'consumed', 'lengths')), 'invalid index evidence')
+                    require((v['native'] == v['consumed']) == (v['permuted_rows'] == 0),
+                            'native and consumed summaries disagree with row count')
+                actual = b['consumed'] == s['consumed']
+                lengths = b['lengths'] == s['lengths']
+                match &= actual and lengths
+                table.append(dict(step=step, layer=layer, rank=rank, native_order_match=b['native'] == s['native'],
+                                  effective_order_match=actual, lengths_match=lengths,
+                                  baseline_reordered_rows=b['permuted_rows'], stream_reordered_rows=s['permuted_rows']))
+        result[label+'_match'] = match
+    with (root/'compressed_index_order.csv').open('w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=list(table[0]))
+        writer.writeheader()
+        writer.writerows(table)
+    return result

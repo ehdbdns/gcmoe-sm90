@@ -2167,7 +2167,7 @@ def _install_worker_rpc() -> None:
         install_cache_names()
         if os.getenv('GC_MOE_AA_CONTROL') == '1':
             from attention_probe import install_flash_probe
-            install_flash_probe(lambda: _SHARED_BUFFER.get('buf'))
+            install_flash_probe(lambda: _SHARED_BUFFER.get('buf'), os.getenv('GC_MOE_ORDER_EXTRA') == '1')
 
     def gc_moe_rearrange(self) -> bool:
         return rearrange_now()
@@ -2373,22 +2373,32 @@ def _install_worker_rpc() -> None:
         tape = buf.fixed_routes
         if finish:
             native = self._gc_reference_tokens
-            return dict(tape.audit(rank), replay_stream=int(buf.replay_stream_mode.item()),
+            coverage = {}
+            if os.getenv('GC_MOE_ORDER_EXTRA') == '1':
+                from attention_order import order_coverage
+                coverage['ordered_decode_modes'] = order_coverage(tape)
+            return dict(tape.audit(rank), **coverage, replay_stream=int(buf.replay_stream_mode.item()),
                         native_history=native.native_history(tape.steps) if rank == 0 else None,
                         native_top1=native.native_sample(),
                         batch_order=self._gc_reference_tokens.batch_hash.hexdigest())
         if buf.replay_stream_mode.item() != 0:
             raise RuntimeError('both workers must complete warmup with baseline scheduling')
+        ordering = {}
         with torch.inference_mode():
             if os.getenv('GC_MOE_AA_CONTROL') == '1':
                 from attention_probe import reset_flash_probe
                 reset_flash_probe(tape)
+                if os.getenv('GC_MOE_ORDER_EXTRA') == '1':
+                    from attention_order import reset_order
+                    from vllm.models.deepseek_v41.nvidia.flashmla import DeepseekV4FlashMLAAttention
+                    ordering['compressed_decode_layers'] = reset_order(
+                        tape, self.model_runner.model.modules(), DeepseekV4FlashMLAAttention)
             tape.freeze(os.environ['GC_MOE_FIXED_DIR'], rank, reference=recording_reference())
             self._gc_reference_tokens.mark_replay_start()
             if not os.environ.get('GC_MOE_STRICT_STATE_DIR'):
                 buf.replay_stream_mode.fill_(int(os.environ['GC_MOE_SM90_STREAM_M_BLOCKS']))
         mod = next(m for m in _EXPERT_REGISTRY if m._eplb is not None)
-        audit = dict(rank=rank, placement=digest(mod._eplb['plan']), eco_state=digest(buf.eco_state),
+        audit = dict(**ordering, rank=rank, placement=digest(mod._eplb['plan']), eco_state=digest(buf.eco_state),
                     warmup_stream=0,
                     last_warm_input=digest(buf.x[:tape.batch].view(torch.uint8)),
                     last_warm_scales=digest(buf.x_sf[:tape.batch]))
@@ -2448,6 +2458,9 @@ def _install_worker_rpc() -> None:
             if os.getenv('GC_MOE_AA_CONTROL') == '1':
                 from attention_probe import read_flash_probe
                 audit['attention'] = read_flash_probe(tape, step)
+                if os.getenv('GC_MOE_ORDER_EXTRA') == '1':
+                    from attention_order import read_order
+                    audit['index_order'] = read_order(tape, step, audit['attention'])
                 audit['stream_mode'] = int(profile_buffer().replay_stream_mode.item())
             first = audit['layers'][0]
             return dict(rank=rank, epoch=first['epoch'], first_step=audit,

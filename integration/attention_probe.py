@@ -40,18 +40,20 @@ def snapshot(buf, field, value):
                              2, tape.layers, rows.shape[1], *rows.stride(), 256)
 
 
-def wrap_decode(module, buffer):
+def wrap_decode(module, buffer, canonical=False):
     cls = module.DeepseekV4FlashMLAAttention
     decode, flash = cls._forward_decode, module.flash_mla_with_kvcache
     if hasattr(decode, '_gc_attention_probe'):
+        if decode._gc_attention_probe != canonical:
+            raise ValueError('FlashMLA ordering mode changed within one worker')
         return
-    active = ContextVar('gc_flashmla_layer2', default=None)
+    active = ContextVar('gc_flashmla_decode', default=None)
 
     @wraps(decode)
     def observe_decode(self, *args, **kwargs):
-        if self.layer_id != 2:
+        if self.layer_id != 2 and not canonical:
             return decode(self, *args, **kwargs)
-        token = active.set(self.n_local_heads)
+        token = active.set((self.layer_id, self.n_local_heads))
         try:
             return decode(self, *args, **kwargs)
         finally:
@@ -59,12 +61,19 @@ def wrap_decode(module, buffer):
 
     @wraps(flash)
     def observe_flash(*args, **kwargs):
-        heads = active.get()
-        buf = buffer() if heads is not None else None
-        tape = getattr(buf, 'fixed_routes', None)
-        if tape is None or len(kwargs['q']) != tape.batch:
+        context = active.get()
+        if context is None:
             return flash(*args, **kwargs)
-        # Native tensors go through the original backend in their original order.
+        layer, heads = context
+        buf = buffer()
+        extra = kwargs['extra_indices_in_kvcache']
+        if canonical and extra is not None:
+            from attention_order import order_extra
+            kwargs['extra_indices_in_kvcache'] = order_extra(extra, kwargs['extra_topk_length'], buf, layer)
+        tape = getattr(buf, 'fixed_routes', None)
+        if layer != 2 or tape is None or len(kwargs['q']) != tape.batch:
+            return flash(*args, **kwargs)
+        # Observe the arguments actually passed to the backend.
         # The output projection consumes the real local heads of the padded buffer.
         snapshot(buf, 'query', kwargs['q'][:, 0, :heads])
         for field, name in (('swa_indices', 'indices'), ('swa_lengths', 'topk_length'),
@@ -74,14 +83,14 @@ def wrap_decode(module, buffer):
         snapshot(buf, 'mla_output', result[0][:, 0, :heads])
         return result
 
-    observe_decode._gc_attention_probe = True
+    observe_decode._gc_attention_probe = canonical
     cls._forward_decode = observe_decode
     module.flash_mla_with_kvcache = observe_flash
 
 
-def install_flash_probe(buffer):
+def install_flash_probe(buffer, canonical=False):
     from vllm.models.deepseek_v41.nvidia import flashmla
-    wrap_decode(flashmla, buffer)
+    wrap_decode(flashmla, buffer, canonical)
 
 
 def flash_banks(tape):

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run both arms in the same pinned measurement checkout.
 set -eo pipefail
-if [[ $# != 2 && ! ( $# == 3 && $3 == --valid-cost ) && ! ( $# == 4 && ( $3 == --replay-from || $3 == --same-state-from || $3 == --trace-first-step-from || $3 == --negative-control-from ) ) ]]; then
-  echo "Usage: $0 common-worktree new-output-dir [--valid-cost | --replay-from directory | --same-state-from directory | --trace-first-step-from directory | --negative-control-from directory]" >&2; exit 2
+if [[ $# != 2 && ! ( $# == 3 && $3 == --valid-cost ) && ! ( $# == 4 && ( $3 == --replay-from || $3 == --same-state-from || $3 == --trace-first-step-from || $3 == --negative-control-from || $3 == --ordered-decode-from ) ) ]]; then
+  echo "Usage: $0 common-worktree new-output-dir [--valid-cost | --replay-from directory | --same-state-from directory | --trace-first-step-from directory | --negative-control-from directory | --ordered-decode-from directory]" >&2; exit 2
 fi
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(realpath "$1")
@@ -11,9 +11,14 @@ sha=$(git -C "$here" rev-parse HEAD)
 test "$(git -C "$root" rev-parse HEAD)" = "$sha"
 analysis_python=$(cd "$root" && source scripts/env.sh && printf '%s/bin/python' "$GC_ENV")
 test -x "$analysis_python"
-unset GC_MOE_AA_CONTROL GC_MOE_FIRST_STEP_AUDIT GC_MOE_FIXED_DIR GC_MOE_FIXED_REUSE GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES
-if [[ ${3:-} == --valid-cost ]]; then
-  phase_one="$here/../../docs/trace_executor_20261119/fixed_stream_results_r7/comparison.json"
+unset GC_MOE_ORDER_EXTRA GC_MOE_AA_CONTROL GC_MOE_FIRST_STEP_AUDIT GC_MOE_FIXED_DIR GC_MOE_FIXED_REUSE GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES
+protocol=${3:-}
+if [[ $protocol == --ordered-decode-from ]]; then
+  export GC_MOE_ORDER_EXTRA=1
+  protocol=--negative-control-from
+fi
+if [[ $protocol == --valid-cost ]]; then
+  phase_one="$here/../../docs/trace_executor_20261119/fixed_stream_results_r8/comparison.json"
   "$analysis_python" - "$phase_one" <<'CHECK'
 import json
 import sys
@@ -45,13 +50,13 @@ save_partial_checkpoint() {
 }
 trap save_partial_checkpoint EXIT
 echo "$sha" > "$bundle/measurement.sha"
-if [[ ${3:-} == --valid-cost ]]; then
+if [[ $protocol == --valid-cost ]]; then
   echo valid_cost > "$bundle/comparison.txt"
 else
-  if [[ ${3:-} == --same-state-from || ${3:-} == --trace-first-step-from || ${3:-} == --negative-control-from ]]; then
+  if [[ $protocol == --same-state-from || $protocol == --trace-first-step-from || $protocol == --negative-control-from ]]; then
     GC_MOE_STRICT_STATE_DIR=$(mktemp -d "${GC_MOE_CHECKPOINT_ROOT:-/tmp}/gcmoe-branch-XXXXXXXX")
     export GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES=11811160064
-    if [[ ${3:-} == --negative-control-from ]]; then
+    if [[ $protocol == --negative-control-from ]]; then
       export GC_MOE_AA_CONTROL=1
       mkdir "$GC_MOE_STRICT_STATE_DIR/treatment"
     fi
@@ -65,9 +70,11 @@ if available < needed:
     sys.exit(f'KV checkpoint needs up to {needed} bytes, mount has {available}; set GC_MOE_CHECKPOINT_ROOT')
 CHECK_SPACE
     echo "$GC_MOE_STRICT_STATE_DIR" > "$bundle/checkpoint-path.txt"
-    if [[ ${3:-} == --trace-first-step-from || ${3:-} == --negative-control-from ]]; then
+    if [[ $protocol == --trace-first-step-from || $protocol == --negative-control-from ]]; then
       export GC_MOE_FIRST_STEP_AUDIT=1
-      if [[ ${GC_MOE_AA_CONTROL:-0} == 1 ]]; then
+      if [[ ${GC_MOE_ORDER_EXTRA:-0} == 1 ]]; then
+        echo fixed_stream_r8 > "$bundle/comparison.txt"
+      elif [[ ${GC_MOE_AA_CONTROL:-0} == 1 ]]; then
         echo fixed_stream_r7 > "$bundle/comparison.txt"
       else
         echo fixed_stream_r6 > "$bundle/comparison.txt"
@@ -75,7 +82,7 @@ CHECK_SPACE
     else
       echo fixed_stream_r5 > "$bundle/comparison.txt"
     fi
-  elif [[ ${3:-} == --replay-from ]]; then
+  elif [[ $protocol == --replay-from ]]; then
     echo fixed_stream_r4 > "$bundle/comparison.txt"
   else
     echo fixed_stream > "$bundle/comparison.txt"
@@ -87,7 +94,7 @@ CHECK_SPACE
   "$analysis_python" "$here/multilayer_study.py" reference \
     "$results/multilayer_ab_results/step02/baseline/paired" "$GC_MOE_FIXED_DIR" \
     --prepared "$results/fixed_stream_results_failed/tokens.json"
-  if [[ ${3:-} == --replay-from || ${3:-} == --same-state-from || ${3:-} == --trace-first-step-from || ${3:-} == --negative-control-from ]]; then
+  if [[ $protocol == --replay-from || $protocol == --same-state-from || $protocol == --trace-first-step-from || $protocol == --negative-control-from ]]; then
     replay=$(realpath "$4")
     cmp "$GC_MOE_FIXED_DIR/tokens.json" "$replay/tokens.json"
     cp "$replay"/{placement.json,routes-rank{0..7}.pt} "$GC_MOE_FIXED_DIR/"
@@ -102,7 +109,7 @@ for arm in baseline stream; do
   flag=0
   cost=0
   if [[ $arm == stream ]]; then flag=1; fi
-  if [[ ${3:-} == --valid-cost ]]; then
+  if [[ $protocol == --valid-cost ]]; then
     flag=1
     if [[ $arm == stream ]]; then cost=2; fi
   fi
