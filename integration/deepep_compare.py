@@ -1634,8 +1634,9 @@ def rearrange_now() -> bool:
         if fixed_dir:
             import json
             from pathlib import Path
+            from fixed_workload import recording_reference
             layout_path = Path(fixed_dir) / 'placement.json'
-        if fixed_dir and os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '1':
+        if fixed_dir and not recording_reference():
             new_plan = torch.tensor(json.loads(layout_path.read_text()),
                                     dtype=torch.int32, device=buf.buffer.device)
             if new_plan.shape != (hist_layers, buf.physical):
@@ -2376,7 +2377,7 @@ def _install_worker_rpc() -> None:
     Worker._gc_moe_fixed_tokens = gc_moe_fixed_tokens
 
     def gc_moe_fixed_routes(self, finish=False):
-        from fixed_workload import digest
+        from fixed_workload import digest, recording_reference
 
         torch.cuda.synchronize()
         buf = profile_buffer()
@@ -2386,8 +2387,7 @@ def _install_worker_rpc() -> None:
             return dict(tape.audit(rank), native_top1=self._gc_reference_tokens.native_sample(),
                         batch_order=self._gc_reference_tokens.batch_hash.hexdigest())
         with torch.inference_mode():
-            tape.freeze(os.environ['GC_MOE_FIXED_DIR'], rank,
-                        reference=os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '0')
+            tape.freeze(os.environ['GC_MOE_FIXED_DIR'], rank, reference=recording_reference())
         mod = next(m for m in _EXPERT_REGISTRY if m._eplb is not None)
         return dict(rank=rank, placement=digest(mod._eplb['plan']), eco_state=digest(buf.eco_state))
 

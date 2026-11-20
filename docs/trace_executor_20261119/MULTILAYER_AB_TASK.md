@@ -2,16 +2,18 @@
 
 **现在只执行这份任务书。** 同一台 8×H20，同一代码提交和工作树，先 `GC_MOE_SM90_STREAM_M_BLOCKS=0`，再设为 `1`。每臂启动模型一次。两臂均用线性 plan、WB=26、block M=64。上一份自由生成回执保存在 `REPLY_MULTILAYER_AB_PAIR.md`。
 
-## 收到 `cb55f4e` 失败回执后的重跑
+## R3 · 收到 `16baf33` 后的执行起点
 
-上轮 baseline 在 vLLM 构造时因重复注册 token 回放入口报错，尚未加载权重。stream 未启动，两臂都没有可复用的性能数据。本次从更新后的 `origin/main` 建工作树，复用已回传的参考轨迹，按下面的命令分别测量两臂。启动测试会走真实驱动入口、模拟模型构造和首次请求，并检查 worker 的采样后回填路径。全套 CPU 检查在模型启动前执行。
+R2 的 baseline 完成 100 个计时步，固定负载 E2E 为 86.186 ms/步，step 2 的 40 层 MoE 为 37.525 ms。重排后 step 0 的 39 层共少 54,016 个 routed rows，等于 844 个满 M 块。这 39 层各有专家占用 5–8 个活跃副本。其余 104 步逐层守恒。执行者在首个验收失败处停止，stream 尚未启动。[R2 回执](../trace_handover_20261119/REPLY_FIXED_STREAM_R2.md)
+
+旧 plan 用实际副本数做除法，但冷启动发放配额只遍历前四个副本。用旧代码在 CPU 上复现，单专家 8 个活跃副本、1,024 行时只发出 768 行，修复后发出 1,024 行。R3 的两臂统一使用修复后的 plan，重新计时。R2 时间只作历史记录。请使用 R2 原八卡机器，保留 `/tmp/gcmoe-route-replay-Q6W0KywL` 和两次旧失败目录。按下列入口执行，模型启动上限为 baseline 一次、stream 一次。
 
 ## 如何固定负载
 
 1. 入口读取失败回执附带的 `fixed_stream_results_failed/tokens.json`，将其 prompt 摘要及 256 条完整生成轨迹的 SHA256 与原 baseline 的 `run.json` 逐项核对，通过后供两臂共用。
 2. 两臂使用同一批真实 prompt，自 prefill 起对每个请求强制反馈同一条参考 token 轨迹。vLLM V2 仍做原生 greedy 采样，随后将参考 token 送进下一步。step 2 另报 256 个请求在替换前的原生 top‑1 差异数。
-3. baseline 在原有 200 步预热内，保留最后 105 个完整 decode step 的真实逐层、逐行 top-k 专家 ID 和路由权重，并落盘八份。两臂都在重排之后从头回放这同一组路由，依次覆盖 2 步 flush、1 步 profiler、2 步恢复和 100 步计时。两臂照常执行模型前向、router 和 ECO 计划，并在 dispatch 入口注入相同路由。预热期的真实路由提供可复现的负载分布；表中的 E2E 是**固定负载回放 E2E**，包括两臂相同的回放与核对开销。
-4. baseline 的逐层 EPLB 布局在广播前保存，stream 复用该文件。两臂都执行实际权重搬移，安装同一布局并清空 ECO warm state。回执对比最终布局、初始 ECO 状态、每一步请求排序与 query 长度、八个 rank 的路由和所有 105 × 40 次调用的实际逐物理槽 owned 行数。该行数决定每个槽的 M 块数和尾块 valid。采样步的 owned 还须与同一 epoch 下 Perfetto 对应的 counts 逐 rank 匹配。
+3. 入口复制 R2 已冻结的八份逐层、逐行 top-k 专家 ID、路由权重和一份 EPLB 布局到新目录。CPU 先检查八个 rank 的路由、权重、层序列及最终布局 SHA 与 R2 回执一致，并用真实路由重算旧四副本循环对 step 0 各层预测的缺口。保留并汇报 `cold-replay-check.log` 中预测与实测相符的层数和所有不相符的层。缺文件或摘要不符时在启动模型前回执。
+4. 两臂各预热 200 步，均从已核对的文件安装逐层布局、搬移权重、清空 ECO warm state，并从同一批路由的开头回放 2 步 flush、1 步 profiler、2 步恢复和 100 步计时。前向和 router 照常执行，固定路由在 dispatch 入口注入。检查每步请求顺序、query 长度、路由和全部 105 × 40 次逐槽 owned 行数。每一步每层八卡应合计 12,288 行，包含首个 flush。逐槽行数决定 M 块和尾块 valid。step 2 的每 rank 每槽还须与同一 epoch 的 Perfetto counts 匹配。两臂的 E2E 均为含相同回放和记录开销的**固定负载回放 E2E**。
 
 ## 每臂一次模型运行
 
@@ -43,17 +45,22 @@ git worktree add --detach "$work/tools" "$measurement"
   "$GC_ENV/bin/python" tests/test_pull_gemm_detail_cpu.py
   "$GC_ENV/bin/python" tests/test_multilayer_study_cpu.py
   "$GC_ENV/bin/python" tests/test_fixed_workload_cpu.py
+  "$GC_ENV/bin/python" tests/test_eco_copies_cpu.py
 )
-bash "$work/tools/scripts/trace_layer/run_multilayer_study.sh" \
-  "$work/tools" "$work/delivery" 2>&1 | tee "$work/progress.log"
-(cd "$work/delivery" && sha256sum --quiet -c SHA256SUMS)
+if bash "$work/tools/scripts/trace_layer/run_multilayer_study.sh" \
+  "$work/tools" "$work/delivery" --replay-from /tmp/gcmoe-route-replay-Q6W0KywL \
+  2>&1 | tee "$work/progress.log"; then
+  (cd "$work/delivery" && sha256sum --quiet -c SHA256SUMS)
+else
+  echo "采集已停止，请按失败路径回传已有文件和首条错误。"
+fi
 ```
 
 执行者只可对编译器点名的语法或类型做语义等价的最小修改。若需修复，单独提交补丁并回传首个诊断、受影响的 SHA、完整日志与等价性说明。本轮最多两次模型启动，部分失败时保留已完成的臂和原始目录，直接回执。额外启动、重复整对或更改调度、模型、采样、计数、解析和判据都超出本次任务。
 
 ## 回执与判定
 
-1. 在 `docs/trace_handover_20261119/REPLY_FIXED_STREAM_R2.md` 写新回执。记录测量与内核 SHA、环境、输入及生成摘要、两次 capture ID、原始目录及共享路由文件路径。之前 `11d031e` 的回执继续保留。
+1. 在 `docs/trace_handover_20261119/REPLY_FIXED_STREAM_R3.md` 写新回执。记录测量与内核 SHA、环境、输入及生成摘要、两次 capture ID、原始目录、共享路由文件路径和 R2 首步缺口复算结果。失败时附首条异常、已完成步骤、原始日志与实际启动次数，把现有 delivery 存入新的 `fixed_stream_results_r3_blocked` 目录，并推送回执。
 2. 成功交付两份 `run.json`、80 份层总览、80 份 counts、22 份 absolute JSON 和 640 行逐 rank 数据。附两臂的 `workload.json`、`placement.json`、`workload.sha256`、`paired.csv`、`layer_pairs.csv`、`comparison.json` 及产物的 GitHub 页面链接。两臂分别附上 step 2 layer 20 的 absolute JSON 链接。原始八卡 Kineto、fine 分片及日志留在执行机，交付路径与 SHA256。
 3. 并排列出 E2E、40 层 MoE、预测 MAE 和最大绝对误差，报差值和百分比。列出逐层结果及变快／持平／变慢层数，结合实际负载和 CTA 轨解释变化最大的层。若输入或生成 token 不一致、主指标方向相反或收益接近计时波动，写明限制。每臂只有一次独立运行。
 4. 并列报告 `fixed_workload_faster` 及 `native_top1_different_of_256`。前者要求反馈序列、路由、布局、ECO 状态和实际逐槽工作量一致，且 E2E 与 40 层 MoE 均下降。另要求采样步的原生 top‑1 对齐，才设置 `scheduling_gate_passed`。此核对只覆盖给定回放负载的一个采样步。提交后停在此处，等待发布者复核回执并更新交接入口。其余结果也应原样提交。
@@ -61,10 +68,17 @@ bash "$work/tools/scripts/trace_layer/run_multilayer_study.sh" \
 ```bash
 cd "$repo"
 target=docs/trace_executor_20261119/fixed_stream_results
+if [[ ! -s "$work/delivery/SHA256SUMS" ]]; then
+  target=docs/trace_executor_20261119/fixed_stream_results_r3_blocked
+fi
 test ! -e "$target"
-cp -a "$work/delivery" "$target"
-test -s docs/trace_handover_20261119/REPLY_FIXED_STREAM_R2.md
-git add "$target" docs/trace_handover_20261119/REPLY_FIXED_STREAM_R2.md
+mkdir "$target"
+if [[ -d "$work/delivery" ]]; then cp -a "$work/delivery/." "$target/"; fi
+if [[ -f "$work/progress.log" && ! -s "$target/SHA256SUMS" ]]; then
+  cp "$work/progress.log" "$target/"
+fi
+test -s docs/trace_handover_20261119/REPLY_FIXED_STREAM_R3.md
+git add "$target" docs/trace_handover_20261119/REPLY_FIXED_STREAM_R3.md
 git commit -m 'Report the fixed-workload EP8 stream comparison'
 git push origin HEAD:main
 ```

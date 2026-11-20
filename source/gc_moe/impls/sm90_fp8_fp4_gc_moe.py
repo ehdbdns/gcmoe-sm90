@@ -712,11 +712,11 @@ class SM90GCMoERoleKernel:
             nc = self._eco_ncopies(base, e)
             if nc > Uint32(1) and n > Uint32(0):
                 k = self._eco_s(slab, self.eco_k_off, e)
-                g = cute.make_rmem_tensor((4,), Uint32)
-                xs = cute.make_rmem_tensor((4,), Uint32)
-                order = cute.make_rmem_tensor((4,), Uint32)
+                g = cute.make_rmem_tensor((self.eco_max_copies,), Uint32)
+                xs = cute.make_rmem_tensor((self.eco_max_copies,), Uint32)
+                keys = cute.make_rmem_tensor((self.eco_max_copies,), Int32)
                 total_g = Uint32(0)
-                for j in cutlass.range_constexpr(4):
+                for j in cutlass.range_constexpr(self.eco_max_copies):
                     v = Uint32(0)
                     xv = Uint32(0)
                     if Uint32(j) < nc:
@@ -726,44 +726,38 @@ class SM90GCMoERoleKernel:
                     g[j] = v
                     xs[j] = xv
                     total_g = total_g + v
-                    order[j] = Uint32(j)
+                    keys[j] = Int32(0)
+                    if Uint32(j) < nc:
+                        keys[j] = Int32(self._eco_cold_key(base, slab, e, xs, j))
                 # sum(floor(x/bm)) <= ceil(n/bm) always holds, so left >= 0.
                 left = Uint32(0) if k < total_g else k - total_g
-                # Selection sort on (key, j); positions >= nc keep their order
-                # (unit_ref only sorts the expert's real copies).
-                for i in cutlass.range_constexpr(4):
+                # Give leftover units to the first "left" copies in (key, copy)
+                # order. Keep indices static and compute each slot's key once.
+                for i in cutlass.range_constexpr(self.eco_max_copies):
                     if Uint32(i) < nc:
-                        best = Uint32(i)
-                        best_key = Int32(self._eco_cold_key(base, slab, e, xs, i))
-                        for j in cutlass.range_constexpr(4):
-                            if cutlass.const_expr(j > i):
-                                if Uint32(j) < nc:
-                                    key = Int32(self._eco_cold_key(base, slab, e, xs, j))
-                                    if key < best_key:
-                                        best = Uint32(j)
-                                        best_key = key
-                        swap = order[i]
-                        order[i] = order[best]
-                        order[best] = swap
-                for i in cutlass.range_constexpr(4):
-                    if Uint32(i) < left:
-                        j = order[i]
-                        g[j] = g[j] + Uint32(1)
-                # jp: max (g*bm - x); ties go to the lowest copy index
+                        ahead = Uint32(0)
+                        for j in cutlass.range_constexpr(self.eco_max_copies):
+                            if Uint32(j) < nc:
+                                if cutlass.const_expr(j < i):
+                                    ahead = ahead + Uint32(keys[j] <= keys[i])
+                                elif cutlass.const_expr(j > i):
+                                    ahead = ahead + Uint32(keys[j] < keys[i])
+                        if ahead < left:
+                            g[i] = g[i] + Uint32(1)
                 # jp = argmax (g*bm - x), ties to the lowest copy index. The
                 # difference is SIGNED (it is negative whenever a copy was
                 # rounded down), so it must not be compared as Uint32.
                 jp = Uint32(0)
                 best_val = Int32(0)
                 seen = Uint32(0)
-                for j in cutlass.range_constexpr(4):
+                for j in cutlass.range_constexpr(self.eco_max_copies):
                     if Uint32(j) < nc and g[j] > Uint32(0):
                         val = Int32(g[j] * Uint32(bm)) - Int32(xs[j])
                         if seen == Uint32(0) or val > best_val:
                             best_val = val
                             jp = Uint32(j)
                             seen = Uint32(1)
-                for j in cutlass.range_constexpr(4):
+                for j in cutlass.range_constexpr(self.eco_max_copies):
                     if Uint32(j) < nc:
                         s = self._eco_slot_of(base, e, j)
                         self._eco_set(slab, self.eco_y_off, s,
@@ -819,7 +813,7 @@ class SM90GCMoERoleKernel:
                 remp = Uint32(0)
                 if kp > Uint32(0):
                     remp = npv - (kp - Uint32(1)) * Uint32(bm)
-                    for j in cutlass.range_constexpr(4):
+                    for j in cutlass.range_constexpr(self.eco_max_copies):
                         if Uint32(j) < nc:
                             qs = state[self._eco_slot_of(base, e, j)]
                             # only the partial owner has (quota - remp) % bm == 0
@@ -827,7 +821,7 @@ class SM90GCMoERoleKernel:
                                     and (qs - remp) % Uint32(bm) == Uint32(0)):
                                 own = Uint32(j)
                 if own != Uint32(0xFFFFFFFF):
-                    for j in cutlass.range_constexpr(4):
+                    for j in cutlass.range_constexpr(self.eco_max_copies):
                         if Uint32(j) < nc:
                             s = self._eco_slot_of(base, e, j)
                             qs0 = state[s] - (remp if j == own else Uint32(0))
@@ -854,13 +848,13 @@ class SM90GCMoERoleKernel:
             n = self._eco_s(slab, self.eco_n_off, e)
             nc = self._eco_ncopies(base, e)
             if nc > Uint32(1) and n > Uint32(0):
-                u = cute.make_rmem_tensor((4,), Uint32)
-                add = cute.make_rmem_tensor((4,), Uint32)
-                t0 = cute.make_rmem_tensor((4,), Uint32)
+                u = cute.make_rmem_tensor((self.eco_max_copies,), Uint32)
+                add = cute.make_rmem_tensor((self.eco_max_copies,), Uint32)
+                t0 = cute.make_rmem_tensor((self.eco_max_copies,), Uint32)
                 total_u = Uint32(0)
                 own = Uint32(0xFFFFFFFF)
                 pn = self._eco_s(slab, self.eco_pn_off, e)
-                for j in cutlass.range_constexpr(4):
+                for j in cutlass.range_constexpr(self.eco_max_copies):
                     v = Uint32(0)
                     t = Uint32(0)
                     if Uint32(j) < nc:
@@ -879,7 +873,7 @@ class SM90GCMoERoleKernel:
                     if total_u + Uint32(_step) < k:
                         bj = Uint32(0)
                         bk = Uint32(0xFFFFFFFF)
-                        for j in cutlass.range_constexpr(4):
+                        for j in cutlass.range_constexpr(self.eco_max_copies):
                             if Uint32(j) < nc:
                                 key = t0[j] + add[j] * unit
                                 if key < bk:
@@ -893,7 +887,7 @@ class SM90GCMoERoleKernel:
                         bj = Uint32(0)
                         bk = Uint32(0)
                         found = Uint32(0)
-                        for j in cutlass.range_constexpr(4):
+                        for j in cutlass.range_constexpr(self.eco_max_copies):
                             if Uint32(j) < nc and u[j] > Uint32(0):
                                 key = t0[j] + add[j] * unit
                                 # max (estimate, -j): ties pick the LOWEST index
@@ -910,14 +904,14 @@ class SM90GCMoERoleKernel:
                     bj = Uint32(0)
                     bk = Uint32(0)
                     found = Uint32(0)
-                    for j in cutlass.range_constexpr(4):
+                    for j in cutlass.range_constexpr(self.eco_max_copies):
                         if Uint32(j) < nc and u[j] > Uint32(0):
                             if found == Uint32(0) or t0[j] > bk:
                                 bk = t0[j]
                                 bj = Uint32(j)
                                 found = Uint32(1)
                     own = bj
-                for j in cutlass.range_constexpr(4):
+                for j in cutlass.range_constexpr(self.eco_max_copies):
                     if Uint32(j) < nc:
                         s = self._eco_slot_of(base, e, j)
                         self._eco_set(slab, self.eco_y_off, s,
@@ -980,7 +974,7 @@ class SM90GCMoERoleKernel:
                 bv = Uint32(0)
                 bs = Uint32(0)
                 bi = Uint32(0)
-                for k in cutlass.range_constexpr(4):
+                for k in cutlass.range_constexpr(self.eco_max_copies):
                     if k < nc:
                         s1 = self._eco_slot_of(base, e, k)
                         if s1 != s0:
@@ -1237,7 +1231,7 @@ class SM90GCMoERoleKernel:
                 self._eco_set(slab, self.eco_phy_off, s, phy)
                 nc = self._eco_ncopies(base, phy)
                 act = Uint32(0)
-                for k in cutlass.range_constexpr(4):
+                for k in cutlass.range_constexpr(self.eco_max_copies):
                     if k < nc:
                         if self._eco_slot_of(base, phy, k) == s:
                             act = Uint32(1)
@@ -1292,14 +1286,14 @@ class SM90GCMoERoleKernel:
                 first = Uint32(0xFFFFFFFF)
                 # NOTE: `range_constexpr` unrolls in Python, so it cannot hold
                 # a `continue`; the skip conditions are nested instead.
-                for k in cutlass.range_constexpr(4):
+                for k in cutlass.range_constexpr(self.eco_max_copies):
                     raw = self._eco_copy(base, Uint32(e), k)
                     if raw != Uint32(0x7FFF):
                         sl = raw & Uint32(0x7FFF)
                         if self._eco_s(slab, self.eco_act_off, sl) != Uint32(0):
                             if first == Uint32(0xFFFFFFFF):
                                 first = sl
-                for k in cutlass.range_constexpr(4):
+                for k in cutlass.range_constexpr(self.eco_max_copies):
                     raw = self._eco_copy(base, Uint32(e), k)
                     if raw != Uint32(0x7FFF):
                         sl = raw & Uint32(0x7FFF)

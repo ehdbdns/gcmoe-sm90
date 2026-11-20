@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Run from the measurement checkout with two clean, pinned kernel worktrees.
+# Run both arms in the same pinned measurement checkout.
 set -eo pipefail
-if [[ $# != 2 && ( $# != 3 || $3 != --valid-cost ) ]]; then
-  echo "Usage: $0 common-worktree new-output-dir [--valid-cost]" >&2; exit 2
+if [[ $# != 2 && ! ( $# == 3 && $3 == --valid-cost ) && ! ( $# == 4 && $3 == --replay-from ) ]]; then
+  echo "Usage: $0 common-worktree new-output-dir [--valid-cost | --replay-from directory]" >&2; exit 2
 fi
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(realpath "$1")
@@ -11,7 +11,7 @@ sha=$(git -C "$here" rev-parse HEAD)
 test "$(git -C "$root" rev-parse HEAD)" = "$sha"
 analysis_python=$(cd "$root" && source scripts/env.sh && printf '%s/bin/python' "$GC_ENV")
 test -x "$analysis_python"
-unset GC_MOE_FIXED_DIR
+unset GC_MOE_FIXED_DIR GC_MOE_FIXED_REUSE
 if [[ ${3:-} == --valid-cost ]]; then
   phase_one="$here/../../docs/trace_executor_20261119/fixed_stream_results/comparison.json"
   "$analysis_python" - "$phase_one" <<'CHECK'
@@ -36,6 +36,15 @@ else
   "$analysis_python" "$here/multilayer_study.py" reference \
     "$results/multilayer_ab_results/step02/baseline/paired" "$GC_MOE_FIXED_DIR" \
     --prepared "$results/fixed_stream_results_failed/tokens.json"
+  if [[ ${3:-} == --replay-from ]]; then
+    replay=$(realpath "$4")
+    cmp "$GC_MOE_FIXED_DIR/tokens.json" "$replay/tokens.json"
+    cp "$replay"/{placement.json,routes-rank{0..7}.pt} "$GC_MOE_FIXED_DIR/"
+    export GC_MOE_FIXED_REUSE=1
+    PYTHONPATH="$root/source:$root/integration" "$analysis_python" "$here/check_cold_replay.py" \
+      "$GC_MOE_FIXED_DIR" "$results/fixed_stream_results_r2_blocked/step02/baseline/paired/runner.log" \
+      | tee "$bundle/cold-replay-check.log"
+  fi
 fi
 export GC_CAPTURE_TOKENS=1
 for arm in baseline stream; do

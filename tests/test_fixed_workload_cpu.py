@@ -13,7 +13,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 from fixed_tokens import install
-from fixed_workload import RouteTape
+from fixed_workload import RouteTape, recording_reference
 
 
 def test_fixed_driver_startup(folder):
@@ -64,7 +64,8 @@ def test_fixed_driver_startup(folder):
 
 def test_routes(folder):
     audits = []
-    for arm in range(2):
+    # Seed the shared tape, then run a baseline and a stream using that tape.
+    for arm, (flag, reuse) in enumerate([('0', '0'), ('0', '1'), ('1', '1')]):
         tape = RouteTape('cpu', topk=2, slots=2, steps=2, layers=2, batch=3)
         buf = SimpleNamespace(eco_tl_step=torch.zeros(1, dtype=torch.int32),
                               profile_slot_counts=torch.zeros(256, 2, dtype=torch.int32))
@@ -81,13 +82,14 @@ def test_routes(folder):
 
         for n in range(10):
             call(n, 20 * arm + n)
-        tape.freeze(folder, 0, reference=arm == 0)
+        with patch.dict(os.environ, GC_MOE_SM90_STREAM_M_BLOCKS=flag, GC_MOE_FIXED_REUSE=reuse):
+            tape.freeze(folder, 0, reference=recording_reference())
         for n in range(4):
             ids, weights = call(10 + n, 90+arm)
             assert (ids == 6+n).all()
             assert torch.allclose(weights, torch.full((3, 2), (6+n)/10))
         audits.append(tape.audit(0))
-    assert audits[0] == audits[1]
+    assert audits[0] == audits[1] == audits[2]
 
 
 def test_tokens(folder):

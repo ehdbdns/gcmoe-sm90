@@ -1,8 +1,14 @@
 """Device-resident route replay for the controlled EP8 scheduling study."""
 import hashlib
+import os
 from pathlib import Path
 
 import torch
+
+
+def recording_reference():
+    return (os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '0'
+            and os.environ.get('GC_MOE_FIXED_REUSE') != '1')
 
 
 def digest(tensor):
