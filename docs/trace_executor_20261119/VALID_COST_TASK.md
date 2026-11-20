@@ -1,6 +1,6 @@
 # H20 逐 valid 的 plan 耗时模型与八卡验收
 
-**暂缓执行。** 第一份任务拿到可比的实测收益、且发布者更新交接入口后，再执行本文件的两次运行。两次均用同一提交的逐块 stream。先测原线性耗时函数（`GC_MOE_ECO_COSTFN=0`），再测按 valid 定价的耗时函数（`GC_MOE_ECO_COSTFN=2`）。
+**当前执行。** 在同一台空闲的八卡 H20 上固定逐 M 块 stream，只更换 ECO 耗时函数。总共启动两次模型，线性价格和逐 valid 价格各一次。用户已选定保留 stream。R8 的 MoE 下降 0.37%，100 步 E2E 上升 0.13%，保留该轮原判定。[R8 指标](fixed_stream_results_r8/paired.csv)
 
 ## 模型依据
 
@@ -22,9 +22,21 @@
 
 这些是固定旧 quota 的离线回放。整层占比分母是同一调用八个 rank 从最早根节点到 combine 结束的跨度之和。前两轮采集和本轮在线 A/B 分别保存。
 
+## R8 旧价格基准
+
+step 2 全 40 层共 320 个层与 rank 配对。固定 R8 stream 实际各槽的行数和 graph 起止时间重新打分，线性价格的 MAE 为 0.244221 个百分点，最大绝对偏差为 0.891692 个百分点。逐 valid 价格的两项分别为 0.271562 和 1.017430 个百分点。两者的最大偏差均在 layer 17、rank 1。R8 baseline 调度上的线性价格对应 0.245281 和 0.919729 个百分点。新实验另行测量更换价格后拍卖实际产生的分配与耗时。[R8 逐 rank 原始值](fixed_stream_results_r8/step02/stream/paired/ranks.csv)
+
+## 两臂共同条件
+
+使用 R8 的 256 个请求、teacher-forced token、105 步逻辑路由 ID、路由权重、源 rank 内行号及逐层 EPLB placement。沿用压缩 KV 索引排序。两次均按既有路径预热，在重排后从相同 KV 快照及冷启 ECO 状态开始；回放第 0 到 104 步均使用 stream。重排安装新 placement 时内核缓冲管理器会清零旧 quota。发布快照和首步参照摘要的进程按线性价格识别。两臂用各自的价格执行拍卖，允许每个副本槽的 owned、各 rank 的 token 数与 M 块数随拍卖改变。各层均校验总量守恒。
+
+- 回放步 0 核验第一层输入、整步 40 层的数值指纹、共享权重与 sampler。全部 105 步核验 native top‑1、实际 stream 模式与压缩层执行覆盖。
+- 在回放第 2 步采集 40 层 torch profiler Perfetto 和逐 rank counts、另采 0、4、8、12、16、20、24、28、32、36、39 层 absolute Perfetto JSON。dispatch 包含 count exchange，routed GEMM 自首个有效 CTA 领取开始。实测耗时为各 rank 的 MoE graph 起点至 combine 结束。过渡两步后，同进程关闭 profiler 与 fine trace 写入，计时 100 步 E2E。
+- 两臂分别按实际逐槽行数核验设备导出的 plan 分数。每臂额外在相同的实际配额和时间上用两种价格分别打分，记录到 `fixed_quota_scores.csv`。误差（百分点）为 100 ×（rank 分数 / 本层八卡分数总和 − rank 跨度 / 本层八卡跨度总和）。分别评价预测 MAE、最大误差、40 层 MoE 与 100 步 E2E。
+
 ## 执行步骤
 
-在同一台空闲的八卡 H20 上运行。每个耗时函数各启动一次模型。工作负载、step 2、全 40 层与 11 层细采沿用任务一。环境路径可以指向同一个模型、数据集和已验证的 HCA。
+沿用 R8 的模型、数据和 HCA。快照位置需供八个 worker 共同读写，至少预留 88 GiB 快照空间并留出采样文件空间。以下命令在同一个 bash 会话中执行。第一次模型启动前完成预检。若 R8 回放目录已迁移，`GC_MOE_VALID_REPLAY` 指向相同文件的目录，脚本按历史回执验证内容。
 
 ```bash
 set -eo pipefail
@@ -35,37 +47,62 @@ git fetch origin main
 git merge --ff-only origin/main
 revision=$(git rev-parse HEAD)
 work=$(mktemp -d /tmp/gcmoe-valid-cost-XXXXXXXX)
-echo "$work"
 git worktree add --detach "$work/code" "$revision"
 cd "$work/code"
+r8=docs/trace_executor_20261119/fixed_stream_results_r8
+replay=${GC_MOE_VALID_REPLAY:-$(cat "$r8/workload-path.txt")}
+export GC_MOE_CHECKPOINT_ROOT="${GC_MOE_CHECKPOINT_ROOT:-/tmp}"
 (
   source scripts/env.sh
-  "$GC_ENV/bin/python" tests/test_h20_valid_cost_cpu.py
-  "$GC_ENV/bin/python" tests/test_multilayer_study_cpu.py
-  data=docs/trace_executor_20261119/batch_claim_results/after/stream
-  "$GC_ENV/bin/python" scripts/trace_layer/fit_valid_cost.py \
-    --train "$data"/*layer08*.detail.json --holdout "$data"/*layer20*.detail.json
-)
-bash scripts/trace_layer/run_multilayer_study.sh "$work/code" "$work/delivery" --valid-cost \
+  while read -r digest oldpath; do
+    echo "$digest  $replay/${oldpath##*/}"
+  done < "$r8/workload.sha256" | sha256sum --quiet -c -
+  df -h "$work" "$GC_MOE_CHECKPOINT_ROOT"
+  nvidia-smi --query-gpu=index,uuid,name,memory.used --format=csv
+  for t in tests/test_*_cpu.py; do "$GC_ENV/bin/python" "$t"; done
+  "$GC_ENV/bin/python" tests/test_stream_checkpoint_cpu.py --gpu-preflight
+  "$GC_ENV/bin/python" tests/test_first_step_cpu.py --cuda
+  "$GC_ENV/bin/python" tests/test_attention_order_cpu.py --cuda
+  "$GC_ENV/bin/python" tests/test_attention_probe_cpu.py --cuda
+  for cost in 0 2; do
+    GC_MOE_ECO_COSTFN="$cost" GC_MOE_FIXED_DIR="$replay" GC_MOE_SM90_STREAM_M_BLOCKS=1 \
+    GC_MOE_MB_CLAIM=1 GC_MOE_BLOCK_M_FORCE=64 GC_MOE_ECO_MAX_COPIES=8 GC_MOE_ECO_PER_LAYER=1 \
+    GC_MOE_LAYERS=40 GC_MOE_STEP_PROFILE=1 GC_MOE_PULL_TRACE=1 GC_MOE_FINE_TRACE=1 \
+    GC_MOE_FINE_FLOOR=1 GC_MOE_FINE_RECS=4194304 GC_MOE_SM90_PULL_TMA=1 GC_MOE_IR_STEP=0 \
+    GC_MOE_SM90_DISPATCH_SMS=6 GC_MOE_SM90_SM_REUSE=0 SMOKE_ECO_WB=26 \
+      "$GC_ENV/bin/python" scripts/smoke_compile_eco.py
+  done
+) 2>&1 | tee "$work/preflight.log"
+```
+
+执行者仅可对编译器明确定位的语法、类型或工具链兼容问题作保持语义的最小修复。保留首个原始错误、独立提交补丁；预检修复后用同一新 SHA 开始两臂。模型一经启动即计入总预算，若运行中遇错，保留现场和已完成臂，发布者处理。禁止改路由、价格、采样、输出、验收条件或自行追加运行。
+
+```bash
+bash scripts/trace_layer/run_multilayer_study.sh "$work/code" "$work/delivery" --valid-cost-from "$replay" \
   2>&1 | tee "$work/progress.log"
 (cd "$work/delivery" && sha256sum --quiet -c SHA256SUMS)
 ```
 
-输出目录名沿用比较工具。`baseline` 为 stream + 线性价格，`stream` 为 stream + valid 价格。两次各在同一进程采集 step 2 并在关闭 profiler 和 fine 写入后计时 100 步。启动入口先检查已推送的任务一 `fixed_stream_results_r4/comparison.json` 的 `scheduling_gate_passed`。保存所有 rank 的 token、M 块、预测分、实测跨度、占比、误差，以及总览和 absolute Perfetto JSON。程序核验两臂执行 SHA、stream 开关和 cost 模式，并逐 rank 验证候选的设备 plan 分等于按该次实际逐槽 owned 重算的价格之和。
-
 ## 回执
 
-1. 在 `docs/trace_handover_20261119/REPLY_VALID_COST.md` 列出测量 SHA、两臂的开关、GPU 和软件版本、两次输入及输出摘要、原始目录与校验文件。附 `comparison.json`、`paired.csv`、`layer_pairs.csv`、逐 rank 表和完整 Perfetto 目录。
-2. 并列报告这一对的端到端 ms/step、40 层 MoE 耗时、plan 占比误差及差值。对变化最大的两层列出逐 rank valid 分布、token、M 块、预测和实测比例，列出 plan 自身的 `ECO plan` 段耗时。区分配额变化、调度收益和模型计算开销。
-3. 执行者只可在首个编译器诊断处作语义等价的最小编译修复，独立提交并保存原始日志。回执附补丁及等价性说明。最多两次模型启动，保留已完成的臂。运行、校验、解析或数值异常在首个失败步骤回传证据。不得更改模型系数、调度、测量口径和验收条件。若持平或退化，按实测结果回报。
+1. 将回执写入 `docs/trace_handover_20261119/REPLY_VALID_COST.md`。报告测量 SHA、实际启动数、GPU 与软件版本、两臂 capture ID、原始路径、输入对照 `cost_inputs_match`、含数值一致性的 `strict_pair_comparable`、原生 top‑1 差异、配额是否改变。在旧目录标签中 `baseline` 表示 stream + 线性价格，`stream` 表示 stream + valid 价格。
+2. 并列报告两臂的 E2E、40 层 MoE、逐 rank 预测 MAE/最大误差，以及 `same_quota_scores` 的两组固定配额复算。列出预测偏差变化最大的两层的各 rank 有效行数分布、token、M 块、预测和实测比例，以及 `ECO plan` 段耗时。单项退化或持平照实报告。回执附两臂的 40 层 Perfetto、11 层 absolute Perfetto、40 层逐 rank 表、比较表与校验文件的 GitHub 文件页。每臂一次，报告观察差值。
+3. 首个非编译失败即结束，使用 `valid_cost_results_blocked` 并附首个错误、失败命令、日志和已经产生的证据。预检失败可直接执行以下交付步骤。KV 二进制与 route tape 留在执行机。
 
 ```bash
 cd "$repo"
+git merge --ff-only "$(git -C "$work/code" rev-parse HEAD)"
 target=docs/trace_executor_20261119/valid_cost_results
+if [[ ! -s "$work/delivery/SHA256SUMS" ]]; then target=${target}_blocked; fi
 test ! -e "$target"
-cp -a "$work/delivery" "$target"
-test -s docs/trace_handover_20261119/REPLY_VALID_COST.md
-git add "$target" docs/trace_handover_20261119/REPLY_VALID_COST.md
-git commit -m 'Report paired H20 valid-cost planner measurements'
+mkdir "$target"
+if [[ -d "$work/delivery" ]]; then cp -a "$work/delivery/." "$target/"; fi
+cp "$work/preflight.log" "$target/"
+if [[ -f "$work/progress.log" ]]; then cp "$work/progress.log" "$target/"; fi
+(cd "$target" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+receipt=docs/trace_handover_20261119/REPLY_VALID_COST.md
+test -s "$receipt"
+git add "$target" "$receipt"
+git commit -m 'Report H20 linear and valid cost with streaming enabled'
 git push origin HEAD:main
 ```

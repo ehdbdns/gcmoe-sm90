@@ -13,7 +13,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 from fixed_tokens import install
-from fixed_workload import RouteTape, recording_reference, route_ordinals
+from fixed_workload import RouteTape, publishes_checkpoint, recording_reference, route_ordinals
 
 
 def test_fixed_driver_startup(folder):
@@ -66,6 +66,10 @@ def test_routes(folder):
     ids = torch.tensor([[[1, 3], [3, 1], [1, 3]], [[3, 1], [3, 4], [4, 1]]])
     assert route_ordinals(ids).tolist() == [[[0,0],[1,1],[2,2]], [[0,0],[1,0],[1,1]]]
     audits = []
+    for mode in ('0', '2'):
+        with patch.dict(os.environ, GC_MOE_COST_STUDY='1', GC_MOE_ECO_COSTFN=mode,
+                        GC_MOE_SM90_STREAM_M_BLOCKS='1', GC_MOE_FIXED_REUSE='1'):
+            assert publishes_checkpoint() == (mode == '0') and not recording_reference()
     # Seed the shared tape, then run a baseline and a stream using that tape.
     for arm, (flag, reuse) in enumerate([('0', '0'), ('0', '1'), ('1', '1')]):
         tape = RouteTape('cpu', topk=2, slots=2, steps=2, layers=2, batch=3)

@@ -3,8 +3,11 @@ import csv
 import hashlib
 import struct
 import shutil
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'source'))
 
 from test_aligned_step_cpu import fixture
 from aligned_step import build
@@ -285,6 +288,50 @@ def main():
         assert not verdict['scheduling_gate_passed'] and not verdict['strict_pair_comparable']
         first, = verdict['first_observed_differences']
         assert (first['layer'],first['field'],first['rank']) == (3,'routed_slots',7)
+        # Both arms now stream. ECO can give different physical replicas work.
+        # The same logical routes, checkpoint and native outputs must still agree.
+        (paired/'comparison.txt').write_text('fixed_valid_cost')
+        real_counts = Path(__file__).resolve().parents[1]/'docs/trace_executor_20261119/fixed_stream_results_r8/step02/stream/paired'
+        from gc_moe.eco.h20_valid_cost import slot_cost
+        for arm, directory in enumerate((b_dir, s_dir)):
+            run = read(directory/'run.json')
+            mode = 2 * arm
+            run.update(eco_costfn=mode, stream_m_blocks=1,
+                       plan_mae_pp=(.24422080336094087, .27156201792549994)[arm],
+                       plan_max_error_pp=(.8916918650862748, 1.017429906675342)[arm])
+            run['fixed_controls'].update(GC_MOE_COST_STUDY='1', GC_MOE_ORDER_EXTRA='1',
+                                        GC_MOE_STUDY_COSTFN=str(mode), GC_MOE_ECO_COSTFN=str(mode))
+            write(directory/'run.json', run)
+            audit = read(directory/'workload.json')
+            for row, rank in zip(audit['initial'], audit['ranks']):
+                rank.update(replay_stream=1, ordered_decode_modes={'2': [1]*105})
+                row['compressed_decode_layers'] = [2]
+                probe = row['first_call']['first_step']
+                probe.update(stream_mode=1, attention=dict(mode=1),
+                             index_order={'2': dict(rows=256, consumed='abc', lengths='abc')})
+            if arm:
+                audit['ranks'][0]['owned_steps'][0] = 'different quotas'
+                row = audit['initial'][7]['first_call']['first_step']['layers'][3]
+                row['hashes']['routed_slots'] = row['hashes']['output']
+                row['different_rows']['routed_slots'] = dict(count=0, examples=[])
+            write(directory/'workload.json', audit)
+            for path in real_counts.glob('*.counts.json'):
+                c = read(path)
+                c['capture_id'] = run['capture_id']
+                if mode == 2:
+                    for r in c['ranks']:
+                        r['plan_cost'] = sum(map(slot_cost, r['slots_owned']))
+                write(directory/f"layer{c['layer']:02}.counts.json", c)
+        compare(paired)
+        verdict = read(paired/'comparison.json')
+        assert verdict['strict_pair_comparable'] and not verdict['same_physical_routes']
+        scores = verdict['same_quota_scores']
+        assert scores['linear_policy'] == scores['fine_policy']
+        assert abs(scores['fine_policy']['linear']['mae_pp'] - .24422080336) < 1e-9
+        audit['ranks'][7]['route_ordinals'] = 'unexpected'
+        write(s_dir/'workload.json', audit)
+        compare(paired)
+        assert not read(paired/'comparison.json')['strict_pair_comparable']
         (paired/'comparison.txt').write_text('valid_cost')
         (paired/'measurement.sha').write_text(STREAM_SHA)
         write(b_dir/'run.json', dict(base, stream_m_blocks=1, execution_sha=STREAM_SHA))

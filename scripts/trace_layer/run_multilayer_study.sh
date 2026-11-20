@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run both arms in the same pinned measurement checkout.
 set -eo pipefail
-if [[ $# != 2 && ! ( $# == 3 && $3 == --valid-cost ) && ! ( $# == 4 && ( $3 == --replay-from || $3 == --same-state-from || $3 == --trace-first-step-from || $3 == --negative-control-from || $3 == --ordered-decode-from ) ) ]]; then
-  echo "Usage: $0 common-worktree new-output-dir [--valid-cost | --replay-from directory | --same-state-from directory | --trace-first-step-from directory | --negative-control-from directory | --ordered-decode-from directory]" >&2; exit 2
+if [[ $# != 2 && ! ( $# == 3 && $3 == --valid-cost ) && ! ( $# == 4 && ( $3 == --valid-cost-from || $3 == --replay-from || $3 == --same-state-from || $3 == --trace-first-step-from || $3 == --negative-control-from || $3 == --ordered-decode-from ) ) ]]; then
+  echo "Usage: $0 common-worktree new-output-dir [--valid-cost | --valid-cost-from directory | --replay-from directory | --same-state-from directory | --trace-first-step-from directory | --negative-control-from directory | --ordered-decode-from directory]" >&2; exit 2
 fi
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(realpath "$1")
@@ -11,22 +11,20 @@ sha=$(git -C "$here" rev-parse HEAD)
 test "$(git -C "$root" rev-parse HEAD)" = "$sha"
 analysis_python=$(cd "$root" && source scripts/env.sh && printf '%s/bin/python' "$GC_ENV")
 test -x "$analysis_python"
-unset GC_MOE_ORDER_EXTRA GC_MOE_AA_CONTROL GC_MOE_FIRST_STEP_AUDIT GC_MOE_FIXED_DIR GC_MOE_FIXED_REUSE GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES
+unset GC_MOE_COST_STUDY GC_MOE_ORDER_EXTRA GC_MOE_AA_CONTROL GC_MOE_FIRST_STEP_AUDIT GC_MOE_FIXED_DIR GC_MOE_FIXED_REUSE GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES
 protocol=${3:-}
+replay=${4:-}
 if [[ $protocol == --ordered-decode-from ]]; then
   export GC_MOE_ORDER_EXTRA=1
   protocol=--negative-control-from
 fi
-if [[ $protocol == --valid-cost ]]; then
-  phase_one="$here/../../docs/trace_executor_20261119/fixed_stream_results_r8/comparison.json"
-  "$analysis_python" - "$phase_one" <<'CHECK'
-import json
-import sys
-from pathlib import Path
-path = Path(sys.argv[1])
-if not path.is_file() or json.loads(path.read_text()).get('scheduling_gate_passed') is not True:
-    sys.exit('Valid-cost study is on hold pending a successful scheduling comparison.')
-CHECK
+results="$here/../../docs/trace_executor_20261119"
+if [[ $protocol == --valid-cost || $protocol == --valid-cost-from ]]; then
+  if [[ $protocol == --valid-cost ]]; then
+    replay=$(cat "$results/fixed_stream_results_r8/workload-path.txt")
+  fi
+  export GC_MOE_COST_STUDY=1 GC_MOE_ORDER_EXTRA=1
+  protocol=--trace-first-step-from
 fi
 mkdir "$bundle"
 save_partial_checkpoint() {
@@ -50,17 +48,14 @@ save_partial_checkpoint() {
 }
 trap save_partial_checkpoint EXIT
 echo "$sha" > "$bundle/measurement.sha"
-if [[ $protocol == --valid-cost ]]; then
-  echo valid_cost > "$bundle/comparison.txt"
-else
-  if [[ $protocol == --same-state-from || $protocol == --trace-first-step-from || $protocol == --negative-control-from ]]; then
-    GC_MOE_STRICT_STATE_DIR=$(mktemp -d "${GC_MOE_CHECKPOINT_ROOT:-/tmp}/gcmoe-branch-XXXXXXXX")
-    export GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES=11811160064
-    if [[ $protocol == --negative-control-from ]]; then
-      export GC_MOE_AA_CONTROL=1
-      mkdir "$GC_MOE_STRICT_STATE_DIR/treatment"
-    fi
-    "$analysis_python" - "$GC_MOE_STRICT_STATE_DIR" "$GC_MOE_KV_BYTES" <<'CHECK_SPACE'
+if [[ $protocol == --same-state-from || $protocol == --trace-first-step-from || $protocol == --negative-control-from ]]; then
+  GC_MOE_STRICT_STATE_DIR=$(mktemp -d "${GC_MOE_CHECKPOINT_ROOT:-/tmp}/gcmoe-branch-XXXXXXXX")
+  export GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES=11811160064
+  if [[ $protocol == --negative-control-from ]]; then
+    export GC_MOE_AA_CONTROL=1
+    mkdir "$GC_MOE_STRICT_STATE_DIR/treatment"
+  fi
+  "$analysis_python" - "$GC_MOE_STRICT_STATE_DIR" "$GC_MOE_KV_BYTES" <<'CHECK_SPACE'
 from pathlib import Path
 import shutil
 import sys
@@ -69,47 +64,47 @@ needed = 8 * int(sys.argv[2]) * (2 if Path(sys.argv[1], 'treatment').is_dir() el
 if available < needed:
     sys.exit(f'KV checkpoint needs up to {needed} bytes, mount has {available}; set GC_MOE_CHECKPOINT_ROOT')
 CHECK_SPACE
-    echo "$GC_MOE_STRICT_STATE_DIR" > "$bundle/checkpoint-path.txt"
-    if [[ $protocol == --trace-first-step-from || $protocol == --negative-control-from ]]; then
-      export GC_MOE_FIRST_STEP_AUDIT=1
-      if [[ ${GC_MOE_ORDER_EXTRA:-0} == 1 ]]; then
-        echo fixed_stream_r8 > "$bundle/comparison.txt"
-      elif [[ ${GC_MOE_AA_CONTROL:-0} == 1 ]]; then
-        echo fixed_stream_r7 > "$bundle/comparison.txt"
-      else
-        echo fixed_stream_r6 > "$bundle/comparison.txt"
-      fi
+  echo "$GC_MOE_STRICT_STATE_DIR" > "$bundle/checkpoint-path.txt"
+  if [[ $protocol == --trace-first-step-from || $protocol == --negative-control-from ]]; then
+    export GC_MOE_FIRST_STEP_AUDIT=1
+    if [[ ${GC_MOE_COST_STUDY:-0} == 1 ]]; then
+      echo fixed_valid_cost > "$bundle/comparison.txt"
+    elif [[ ${GC_MOE_ORDER_EXTRA:-0} == 1 ]]; then
+      echo fixed_stream_r8 > "$bundle/comparison.txt"
+    elif [[ ${GC_MOE_AA_CONTROL:-0} == 1 ]]; then
+      echo fixed_stream_r7 > "$bundle/comparison.txt"
     else
-      echo fixed_stream_r5 > "$bundle/comparison.txt"
+      echo fixed_stream_r6 > "$bundle/comparison.txt"
     fi
-  elif [[ $protocol == --replay-from ]]; then
-    echo fixed_stream_r4 > "$bundle/comparison.txt"
   else
-    echo fixed_stream > "$bundle/comparison.txt"
+    echo fixed_stream_r5 > "$bundle/comparison.txt"
   fi
-  GC_MOE_FIXED_DIR=$(mktemp -d /tmp/gcmoe-route-replay-XXXXXXXX)
-  export GC_MOE_FIXED_DIR VLLM_USE_V2_MODEL_RUNNER=1 VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1
-  echo "$GC_MOE_FIXED_DIR" > "$bundle/workload-path.txt"
-  results="$here/../../docs/trace_executor_20261119"
-  "$analysis_python" "$here/multilayer_study.py" reference \
-    "$results/multilayer_ab_results/step02/baseline/paired" "$GC_MOE_FIXED_DIR" \
-    --prepared "$results/fixed_stream_results_failed/tokens.json"
-  if [[ $protocol == --replay-from || $protocol == --same-state-from || $protocol == --trace-first-step-from || $protocol == --negative-control-from ]]; then
-    replay=$(realpath "$4")
-    cmp "$GC_MOE_FIXED_DIR/tokens.json" "$replay/tokens.json"
-    cp "$replay"/{placement.json,routes-rank{0..7}.pt} "$GC_MOE_FIXED_DIR/"
-    export GC_MOE_FIXED_REUSE=1
-    PYTHONPATH="$root/source:$root/integration" "$analysis_python" "$here/check_cold_replay.py" \
-      "$GC_MOE_FIXED_DIR" "$results/fixed_stream_results_r2_blocked/step02/baseline/paired/runner.log" \
-      | tee "$bundle/cold-replay-check.log"
-  fi
+elif [[ $protocol == --replay-from ]]; then
+  echo fixed_stream_r4 > "$bundle/comparison.txt"
+else
+  echo fixed_stream > "$bundle/comparison.txt"
+fi
+GC_MOE_FIXED_DIR=$(mktemp -d /tmp/gcmoe-route-replay-XXXXXXXX)
+export GC_MOE_FIXED_DIR VLLM_USE_V2_MODEL_RUNNER=1 VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1
+echo "$GC_MOE_FIXED_DIR" > "$bundle/workload-path.txt"
+"$analysis_python" "$here/multilayer_study.py" reference \
+  "$results/multilayer_ab_results/step02/baseline/paired" "$GC_MOE_FIXED_DIR" \
+  --prepared "$results/fixed_stream_results_failed/tokens.json"
+if [[ $protocol == --replay-from || $protocol == --same-state-from || $protocol == --trace-first-step-from || $protocol == --negative-control-from ]]; then
+  replay=$(realpath "$replay")
+  cmp "$GC_MOE_FIXED_DIR/tokens.json" "$replay/tokens.json"
+  cp "$replay"/{placement.json,routes-rank{0..7}.pt} "$GC_MOE_FIXED_DIR/"
+  export GC_MOE_FIXED_REUSE=1
+  PYTHONPATH="$root/source:$root/integration" "$analysis_python" "$here/check_cold_replay.py" \
+    "$GC_MOE_FIXED_DIR" "$results/fixed_stream_results_r2_blocked/step02/baseline/paired/runner.log" \
+    | tee "$bundle/cold-replay-check.log"
 fi
 export GC_CAPTURE_TOKENS=1
 for arm in baseline stream; do
   flag=0
   cost=0
   if [[ $arm == stream ]]; then flag=1; fi
-  if [[ $protocol == --valid-cost ]]; then
+  if [[ ${GC_MOE_COST_STUDY:-0} == 1 ]]; then
     flag=1
     if [[ $arm == stream ]]; then cost=2; fi
   fi
@@ -151,5 +146,5 @@ if [[ -n ${GC_MOE_FIXED_DIR:-} ]]; then
   cp "$GC_MOE_FIXED_DIR/placement.json" "$bundle/"
   sha256sum "$GC_MOE_FIXED_DIR"/{placement.json,tokens.json,routes-rank{0..7}.pt} > "$bundle/workload.sha256"
 fi
-"$analysis_python" "$here/multilayer_study.py" compare "$bundle"
+PYTHONPATH="$root/source" "$analysis_python" "$here/multilayer_study.py" compare "$bundle"
 (cd "$bundle" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)

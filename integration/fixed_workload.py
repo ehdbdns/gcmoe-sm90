@@ -6,9 +6,14 @@ from pathlib import Path
 import torch
 
 
+def publishes_checkpoint():
+    if os.environ.get('GC_MOE_COST_STUDY') == '1':
+        return os.environ['GC_MOE_ECO_COSTFN'] == '0'
+    return os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '0'
+
+
 def recording_reference():
-    return (os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '0'
-            and os.environ.get('GC_MOE_FIXED_REUSE') != '1')
+    return publishes_checkpoint() and os.environ.get('GC_MOE_FIXED_REUSE') != '1'
 
 
 def digest(tensor):

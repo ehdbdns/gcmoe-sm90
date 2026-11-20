@@ -2165,7 +2165,7 @@ def _install_worker_rpc() -> None:
     if os.environ.get('GC_MOE_STRICT_STATE_DIR'):
         from stream_checkpoint import install_cache_names
         install_cache_names()
-        if os.getenv('GC_MOE_AA_CONTROL') == '1':
+        if os.getenv('GC_MOE_AA_CONTROL') == '1' or os.getenv('GC_MOE_ORDER_EXTRA') == '1':
             from attention_probe import install_flash_probe
             install_flash_probe(lambda: _SHARED_BUFFER.get('buf'), os.getenv('GC_MOE_ORDER_EXTRA') == '1')
 
@@ -2365,7 +2365,7 @@ def _install_worker_rpc() -> None:
     Worker._gc_moe_fixed_tokens = gc_moe_fixed_tokens
 
     def gc_moe_fixed_routes(self, finish=False):
-        from fixed_workload import digest, recording_reference
+        from fixed_workload import digest, publishes_checkpoint, recording_reference
 
         torch.cuda.synchronize()
         buf = profile_buffer()
@@ -2385,7 +2385,7 @@ def _install_worker_rpc() -> None:
             raise RuntimeError('both workers must complete warmup with baseline scheduling')
         ordering = {}
         with torch.inference_mode():
-            if os.getenv('GC_MOE_AA_CONTROL') == '1':
+            if os.getenv('GC_MOE_AA_CONTROL') == '1' or os.getenv('GC_MOE_ORDER_EXTRA') == '1':
                 from attention_probe import reset_flash_probe
                 reset_flash_probe(tape)
                 if os.getenv('GC_MOE_ORDER_EXTRA') == '1':
@@ -2408,7 +2408,7 @@ def _install_worker_rpc() -> None:
             from stream_checkpoint import prepare_worker
             with torch.inference_mode():
                 audit['checkpoint'] = prepare_worker(self, buf, _EXPERT_REGISTRY, self._gc_reference_tokens,
-                                                     directory, os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '0')
+                                                     directory, publishes_checkpoint())
             self._gc_boundary_verified = True
         return audit
 
@@ -2452,10 +2452,11 @@ def _install_worker_rpc() -> None:
             directory = os.environ['GC_MOE_STRICT_STATE_DIR']
             if step:
                 directory = os.path.join(directory, 'treatment')
-            publish = os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '0'
+            from fixed_workload import publishes_checkpoint
+            publish = publishes_checkpoint()
             audit = tape.first_step_probe.read(tape, directory, rank, publish,
                                                self._gc_reference_tokens.first_sample, step)
-            if os.getenv('GC_MOE_AA_CONTROL') == '1':
+            if os.getenv('GC_MOE_AA_CONTROL') == '1' or os.getenv('GC_MOE_ORDER_EXTRA') == '1':
                 from attention_probe import read_flash_probe
                 audit['attention'] = read_flash_probe(tape, step)
                 if os.getenv('GC_MOE_ORDER_EXTRA') == '1':

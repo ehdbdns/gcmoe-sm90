@@ -70,6 +70,51 @@ def graph_tracks(trace, counts):
     return trace
 
 
+def score_fixed_quotas(directory, dest):
+    """Apply both prices to each observed slot vector and its measured graph time."""
+    from gc_moe.eco.h20_valid_cost import slot_cost
+    run = read(directory/'run.json')
+    mode = run['eco_costfn']
+    require(mode in (0, 2), 'expected linear or valid cost')
+    output = []
+    layers = []
+    for path in sorted(directory.glob('*.counts.json')):
+        c = read(path)
+        rows = c['ranks']
+        require((c['capture_id'], c['step']) == (run['capture_id'], run['step'])
+                and [r['rank'] for r in rows] == list(range(8)), 'unmatched cost sample')
+        layers.append(c['layer'])
+        linear, fine, spans = [], [], []
+        for r in rows:
+            slots = r['slots_owned']
+            require(r['block_m'] == 64 and min(slots) >= 0
+                    and sum(slots) == r['routed_rows']
+                    and sum((q + 63) // 64 for q in slots) == r['m_blocks'], 'invalid slot counts')
+            linear.append(sum(slots) + 26 * r['m_blocks'])
+            fine.append(sum(map(slot_cost, slots)))
+            spans.append(r['combine_end_us'] - r['graph_start_us'])
+        require([r['plan_cost'] for r in rows] == (linear if mode == 0 else fine)
+                and all(t > 0 and math.isfinite(t) for t in spans), 'invalid device score or graph interval')
+        for i, r in enumerate(rows):
+            actual = spans[i] / sum(spans)
+            ls, fs = linear[i] / sum(linear), fine[i] / sum(fine)
+            output.append(dict(step=c['step'], layer=c['layer'], rank=i, graph_us=spans[i],
+                               eco_plan_us=r['segment_us']['ECO plan'], tokens=r['tokens'], m_blocks=r['m_blocks'],
+                               linear_share=ls, fine_share=fs, actual_share=actual,
+                               linear_error_pp=100*(ls-actual), fine_error_pp=100*(fs-actual)))
+    require(layers == list(range(40)), 'fixed-quota scoring requires one capture of all 40 layers')
+    stats = {}
+    for model in ('linear', 'fine'):
+        errors = [abs(row[model+'_error_pp']) for row in output]
+        stats[model] = dict(mae_pp=mean(errors), max_error_pp=max(errors))
+    selected = stats['linear' if mode == 0 else 'fine']
+    require(math.isclose(selected['mae_pp'], run['plan_mae_pp'], abs_tol=1e-9)
+            and math.isclose(selected['max_error_pp'], run['plan_max_error_pp'], abs_tol=1e-9),
+            'fixed-quota recomputation disagrees with the reported online errors')
+    csv_table(dest, output)
+    return stats
+
+
 def collect(raw, dest, mode, step):
     run = read(raw / 'result.json')
     steps = 100 if mode == 'e2e' else 1
@@ -110,16 +155,16 @@ def collect(raw, dest, mode, step):
             require(c['capture_id'] == run['capture_id'] and c['step'] == step, 'mixed capture or step')
             stem = path.name.removesuffix('.counts.json')
             layers.append(c['layer'])
-            if run.get('eco_costfn') == 2:
-                from gc_moe.eco.h20_valid_cost import slot_cost
-                for rank in c['ranks']:
-                    expected = sum(slot_cost(q) for q in rank['slots_owned'])
-                    require(rank['plan_cost'] == expected,
-                            f"{stem} rank {rank['rank']}: valid score {rank['plan_cost']} != {expected}")
-            if 'fixed_controls' in run:
-                for rank in c['ranks']:
-                    require(rank['block_m'] == 64 and rank['plan_cost'] == 26 * rank['m_blocks'] + rank['routed_rows'],
-                            f"{stem} rank {rank['rank']}: exported plan differs from the M64 linear score")
+            if 'fixed_controls' in run or run.get('eco_costfn') == 2:
+                require(all(r['block_m'] == 64 for r in c['ranks']), 'cost study requires M64')
+                if run['eco_costfn'] == 2:
+                    from gc_moe.eco.h20_valid_cost import slot_cost
+                    scores = [sum(map(slot_cost, r['slots_owned'])) for r in c['ranks']]
+                else:
+                    require(run['eco_costfn'] == 0, 'unexpected fixed workload cost mode')
+                    scores = [26 * r['m_blocks'] + r['routed_rows'] for r in c['ranks']]
+                require(scores == [r['plan_cost'] for r in c['ranks']],
+                        f"{stem}: device plan differs from the selected cost model")
             write(dest/path.name, c)
             for suffix, output in [('perfetto','perfetto')] + (
                     [('detail.perfetto','absolute.perfetto')] if mode == 'fine' or (mode == 'paired' and c['layer'] in FINE_LAYERS) else []):
@@ -275,6 +320,25 @@ def checkpoint_controls(root, audits, step=0):
                 first_moe_output_different_ranks=[r for r, ok in enumerate(outputs) if not ok])
 
 
+def cost_order_controls(audits):
+    comparable = True
+    for rank in range(8):
+        observed = []
+        for audit in audits:
+            initial = audit['initial'][rank]
+            layers = {str(i) for i in initial['compressed_decode_layers']}
+            modes = audit['ranks'][rank]['ordered_decode_modes']
+            first = initial['first_call']['first_step']
+            order = first['index_order']
+            require('2' in layers and layers == modes.keys() == order.keys()
+                    and first['attention']['mode'] == first['stream_mode'] == 1
+                    and all(modes[layer] == [1] * 105 and order[layer]['rows'] == 256 for layer in layers),
+                    f'rank {rank} missing ordered stream decode')
+            observed.append({k: (v['consumed'], v['lengths']) for k, v in order.items()})
+        comparable &= observed[0] == observed[1]
+    return comparable
+
+
 def compare(root):
     folder = root/'step02'
     if not (folder/'baseline'/'paired').exists():
@@ -286,21 +350,23 @@ def compare(root):
             and base['capture_id'] != candidate['capture_id'], 'expected two distinct step 2 captures')
     require(base['prompt_hash'] == candidate['prompt_hash'], 'unmatched prompts')
     marker = root/'comparison.txt'
-    valid_cost = marker.exists() and marker.read_text().strip() == 'valid_cost'
     protocol = marker.read_text().strip() if marker.exists() else ''
+    fixed_cost = protocol == 'fixed_valid_cost'
+    valid_cost = fixed_cost or protocol == 'valid_cost'
     ordered_decode = protocol == 'fixed_stream_r8'
     aa_control = ordered_decode or protocol == 'fixed_stream_r7'
-    r6 = aa_control or protocol == 'fixed_stream_r6'
+    r6 = aa_control or fixed_cost or protocol == 'fixed_stream_r6'
     checkpointed = r6 or protocol == 'fixed_stream_r5'
     ordered_replay = checkpointed or protocol == 'fixed_stream_r4'
     fixed_stream = ordered_replay or protocol == 'fixed_stream'
     controls = {}
     flags = [(r['stream_m_blocks'], r['eco_costfn']) for r in (base, candidate)]
-    if valid_cost:
+    if valid_cost and not fixed_cost:
         require(base['execution_sha'] == candidate['execution_sha'] == (root/'measurement.sha').read_text().strip()
                 and flags == [(1, 0), (1, 2)], 'invalid valid-cost arms')
-    elif fixed_stream:
-        require(flags == [(0, 0), (1, 0)] and base['execution_sha'] == candidate['execution_sha']
+    if fixed_stream:
+        expected_flags = [(1, 0), (1, 2)] if fixed_cost else [(0, 0), (1, 0)]
+        require(flags == expected_flags and base['execution_sha'] == candidate['execution_sha']
                 == (root/'measurement.sha').read_text().strip()
                 and all(r.get('fixed_workload') for r in (base, candidate)), 'invalid fixed stream arms')
         audits = [read(path/'workload.json') for path in dirs]
@@ -308,16 +374,28 @@ def compare(root):
         controls['placement_and_initial_state_match'] = all(
             all(b[k] == s[k] for k in ('rank', 'placement', 'eco_state'))
             for b, s in zip(left['initial'], right['initial'], strict=True))
-        keys = ('rank', 'batch_order', 'route_ids', 'route_weights', 'layer_order', 'owned_steps')
+        keys = ('rank', 'batch_order', 'route_ids', 'route_weights', 'layer_order')
         controls['routes_and_all_slot_counts_match'] = all(
-            all(b[k] == s[k] for k in keys) for b, s in zip(left['ranks'], right['ranks'], strict=True))
+            all(b[k] == s[k] for k in (*keys, 'owned_steps')) for b, s in zip(left['ranks'], right['ranks'], strict=True))
         if ordered_replay:
             config = base['fixed_controls']
             required = dict(GC_MOE_ECO='1', GC_MOE_ECO_COSTFN='0', GC_MOE_ECO_WB='26',
                             GC_MOE_ECO_WA='0', GC_MOE_ECO_NO_AUCTION='0', GC_MOE_ECO_NULL_PLAN='0',
                             GC_MOE_ECO_NOSPLIT='0', GC_MOE_ECO_TOKENS_ONLY='0', GC_MOE_ECO_BLOCKS_ONLY='0',
                             GC_MOE_BLOCK_M_FORCE='64', GC_MOE_MB_CLAIM='1', GC_MOE_FIXED_REUSE='1')
-            controls['same_run_controls'] = (config == candidate['fixed_controls']
+            other = candidate['fixed_controls']
+            if fixed_cost:
+                require(all(r['fixed_controls'].get(key) == str(mode)
+                            for r, mode in ((base, 0), (candidate, 2))
+                            for key in ('GC_MOE_ECO_COSTFN', 'GC_MOE_STUDY_COSTFN')),
+                        'cost mode disagrees with captured process environment')
+                other = dict(other, GC_MOE_ECO_COSTFN='0', GC_MOE_STUDY_COSTFN='0')
+                required.update(GC_MOE_COST_STUDY='1', GC_MOE_ORDER_EXTRA='1')
+                controls['same_logical_routes'] = all(
+                    all(b[k] == s[k] for k in (*keys, 'route_ordinals'))
+                    for b, s in zip(left['ranks'], right['ranks'], strict=True))
+                controls['ordered_stream_replay'] = cost_order_controls(audits)
+            controls['same_run_controls'] = (config == other
                                              and all(config.get(k) == v for k, v in required.items()))
             controls['same_physical_routes'] = all(
                 b['route_ordinals'] == s['route_ordinals'] for b, s in zip(left['ranks'], right['ranks'], strict=True)
@@ -325,7 +403,7 @@ def compare(root):
             histories = []
             for arm, audit in enumerate(audits):
                 require(all(r['warmup_stream'] == 0 for r in audit['initial'])
-                        and all(r['replay_stream'] == arm for r in audit['ranks']),
+                        and all(r['replay_stream'] == (1 if fixed_cost else arm) for r in audit['ranks']),
                         'stream switch has wrong warmup or measurement state')
                 history = audit['ranks'][0]['native_history']
                 samples = history['replay_top1']
@@ -375,7 +453,7 @@ def compare(root):
         native = [next(r['native_top1'] for r in audit['ranks'] if r['native_top1'] is not None)
                   for audit in audits]
         controls['native_top1_different_of_256'] = sum(b != s for b, s in zip(*native, strict=True))
-    else:
+    elif not valid_cost:
         require((base['execution_sha'], candidate['execution_sha']) == (BASELINE_SHA, STREAM_SHA)
                 and flags == [(0, 0), (1, 0)], 'invalid scheduling arms')
     matched = base['output_hash'] == candidate['output_hash']
@@ -400,7 +478,7 @@ def compare(root):
     csv_table(root/'layer_pairs.csv', layers)
     faster = {metric: candidate[metric] < base[metric] for metric in ('e2e_ms_per_step', 'moe_max_rank_sum_ms')}
     controlled_faster = matched and all(faster.values())
-    if fixed_stream:
+    if fixed_stream and not fixed_cost:
         controlled_faster &= controls['placement_and_initial_state_match'] and controls['routes_and_all_slot_counts_match']
         if ordered_replay:
             controlled_faster &= controls['same_run_controls'] and controls['same_physical_routes']
@@ -421,10 +499,24 @@ def compare(root):
                                 and controls['treatment_boundary']['checkpoint_match']
                                 and all(post[k] for k in ('first_step_chain_match', 'shared_branch_active',
                                                            'shared_weights_match', 'first_step_finite')))
-            controls['strict_pair_comparable'] = (equivalence and matched and controls['same_run_controls']
-                                                  and controls['same_physical_routes'])
+            inputs_match = controls['same_physical_routes']
+            if fixed_cost:
+                inputs_match = (controls['same_logical_routes'] and controls['ordered_stream_replay']
+                                and controls['placement_and_initial_state_match'])
+            controls['strict_pair_comparable'] = equivalence and matched and controls['same_run_controls'] and inputs_match
         else:
             equivalence &= controls['last_warm_input_match'] and controls['warm_native_match']
+    if fixed_cost:
+        controls['same_quota_scores'] = {
+            policy: score_fixed_quotas(path, path/'fixed_quota_scores.csv')
+            for policy, path in zip(('linear_policy', 'fine_policy'), dirs, strict=True)}
+        controls['cost_inputs_match'] = (matched and all(controls[k] for k in (
+            'same_run_controls', 'same_hardware', 'checkpoint_match', 'placement_and_initial_state_match',
+            'first_moe_input_match', 'same_logical_routes')))
+        comparable = controls['strict_pair_comparable']
+        controls.update(prediction_mae_lower=candidate['plan_mae_pp'] < base['plan_mae_pp'],
+                        prediction_max_error_lower=candidate['plan_max_error_pp'] < base['plan_max_error_pp'],
+                        cost_pair_faster=comparable and all(faster.values()))
     write(root/'comparison.json', dict(study='valid_cost' if valid_cost else 'scheduling',
           matched_outputs=matched, lower=faster, faster_layers=sum(row['delta_us'] < 0 for row in layers),
           total_layers=len(layers), **controls,

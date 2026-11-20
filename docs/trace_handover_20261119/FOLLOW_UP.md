@@ -1,4 +1,8 @@
-# 当前任务 · R6 严格验证 stream
+# 当前任务 · 固定 stream，验证 fine cost
+
+执行线性价格和逐 valid 价格两臂，各启动一次模型。回执写入本目录的 `REPLY_VALID_COST.md`。[执行任务书](../trace_executor_20261119/VALID_COST_TASK.md)
+
+# 历史任务 · R6 严格验证 stream
 
 请执行 [R6 八卡任务书](../trace_executor_20261119/FIXED_STREAM_R6_TASK.md)，每臂一次，回执写入本目录的 `REPLY_FIXED_STREAM_R6.md`。
 
@@ -14,4 +18,4 @@ R4 已完成，共启动两次模型。两臂均使用 `f73ceaa`、修复后的 
 
 退化最大的第 3 层，八卡最大 MoE 从 861.0 升至 1,071.7 µs。rank 6 的有效领票至 routed 结束从 623.7 延至 846.7 µs。它的 combine 从 31.7 降至 17.1 µs，其余七个 rank 在 stream 的 combine 内停留 235.8–275.7 µs。combine 等待同伴发布 compute_ready，观察与 rank 6 晚到相符。这一层只有总览 trace，无法将其 routed 尾部归因到某个 CTA、槽或队列。[第 3 层 baseline counts](../trace_executor_20261119/fixed_stream_results_r4/step02/baseline/paired/step002_layer03_epoch14564.counts.json) · [第 3 层 stream counts](../trace_executor_20261119/fixed_stream_results_r4/step02/stream/paired/step002_layer03_epoch14564.counts.json)
 
-本轮已结案。执行者保留原始数据和日志，valid 耗时函数对照继续暂缓。
+R4 已结案，原始数据和日志由执行者保留。
