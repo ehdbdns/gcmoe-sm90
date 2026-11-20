@@ -93,9 +93,9 @@ class SM90GCBufferLayout:
         reserve('active_mb', (batches,), 'int32', 4)
         if stream_blocks:
             reserve('stream_l1_done', (batches,), 'int32', 4)
-            reserve('stream_l2_batch', (batches,), 'int32', 4)
+            reserve('stream_l1_next', (batches,), 'int32', 4)
+            reserve('stream_l2_next', (batches,), 'int32', 4)
             reserve('stream_l2_ready', (batches,), 'int32', 4)
-            reserve('stream_l2_count', (1,), 'int32', 4)
         reserve('compute_ready', (ranks,), 'int32', 4)
         reserve('combine_block_done', (1024,), 'int32', 4)
         reserve('send_count', (physical,), 'int32', 4)

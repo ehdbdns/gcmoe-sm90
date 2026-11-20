@@ -143,16 +143,6 @@ def atom_add_u32(ptr: cute.Pointer, value: Uint32, *, loc=None, ip=None) -> Uint
 
 
 @dsl_user_op
-def atom_claim_u32(ptr: cute.Pointer, expected: Uint32, *, loc=None, ip=None) -> Uint32:
-    previous = llvm.inline_asm(
-        T.i32(), [ptr.toint(loc=loc, ip=ip).ir_value(), expected.ir_value(loc=loc, ip=ip),
-                  (expected + Uint32(1)).ir_value(loc=loc, ip=ip)],
-        'atom.acquire.gpu.global.cas.b32 $0, [$1], $2, $3;', '=r,l,r,r,~{memory}',
-        has_side_effects=True, asm_dialect=llvm.AsmDialect.AD_ATT)
-    return Uint32(previous)
-
-
-@dsl_user_op
 def atom_add_u64(ptr: cute.Pointer, value: Uint64, *, loc=None, ip=None) -> Uint64:
     previous = llvm.inline_asm(
         T.i64(), [ptr.toint(loc=loc, ip=ip).ir_value(), value.ir_value(loc=loc, ip=ip)],

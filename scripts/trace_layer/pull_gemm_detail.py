@@ -169,10 +169,33 @@ def rank_detail(row, fine, epoch):
     for slot, ready in first_l1_by_slot.items():
         pulls[slot]['first_l1_us'] = ready
         pulls[slot]['pull_end_to_first_l1_us'] = ready - pulls[slot]['end_us']
-    claim_events = [dict(time_us=ts(rec), cta=rec[2],
-                         kind='queue empty' if rec[1] == 4 else 'ticket seen',
-                         ticket=rec[4], **({'active_seen': rec[5]} if rec[1] == 4 else {}))
-                    for rec in rows if rec[1] in (4, 5)]
+    claim_events = []
+    claims = set()
+    batch_blocks = {r['batch']: (r['slot'], r['m_block'])
+                    for r in releases.values() if r['phase'] == 1}
+    for rec in rows:
+        kind, cta = rec[1:3]
+        if kind in (4, 5):
+            claim_events.append(dict(time_us=ts(rec), cta=cta,
+                                     kind='queue empty' if kind == 4 else 'ticket seen',
+                                     ticket=rec[4], **({'active_seen': rec[5]} if kind == 4 else {})))
+        elif kind == 16:
+            claim_events.append(dict(time_us=ts(rec), cta=cta, kind='ready scan empty',
+                                     scanned_batches=rec[3]))
+        elif kind == 17:
+            phase, batch, ntile = rec[3:6]
+            require(batch in batch_blocks and phase in (1, 2), 'invalid ready batch claim')
+            slot, mb = batch_blocks[batch]
+            release = releases[(13 + phase, slot, mb)]
+            key = (cta, slot, mb * block_m, release['valid'], ntile, phase)
+            require(key in tiles and key not in claims, 'unmatched or duplicate ready tile claim')
+            require(release['time_us'] <= ts(rec) <= tiles[key]['start_us'],
+                    'ready tile claim outside release/start interval')
+            claims.add(key)
+            claim_events.append(dict(time_us=ts(rec), cta=cta, kind='ticket seen',
+                                     ticket=batch, batch=batch, ntile=ntile, phase=phase))
+    if claims:
+        require(claims == tiles.keys(), 'missing ready tile claims')
     ordered_slots = sorted(pulls.values(), key=lambda item: (item['end_us'], item['owned']), reverse=True)
     tile_rows = list(tiles.values())
     if tile_rows:
@@ -234,7 +257,7 @@ def overlay(trace, details):
     return dict(trace, traceEvents=events)
 
 
-def analyze(capture_dir, deliver_dir, require_streamed_blocks=False):
+def analyze(capture_dir, deliver_dir, require_streamed_blocks=False, require_batch_claims=False):
     manifest = json.loads((capture_dir / 'capture.json').read_text())
     fine = json.loads((capture_dir / 'fine.json').read_text())
     require(fine.get('id') == manifest['id'], 'fine rows are from another capture')
@@ -265,6 +288,9 @@ def analyze(capture_dir, deliver_dir, require_streamed_blocks=False):
                 detail = rank_detail(row, workers[rank], epoch)
                 require(not require_streamed_blocks or len(detail['block_releases']) == 2 * row['m_blocks'],
                         'missing early M-block release instrumentation')
+                if require_batch_claims:
+                    require(sum('ntile' in claim for claim in detail['claim_events']) == len(detail['tiles']),
+                            'missing per-tile claim instrumentation')
                 details.append(detail)
             except ValueError as exc:
                 raise ValueError(f'epoch {epoch}, rank {rank}: {exc}') from exc
@@ -292,9 +318,11 @@ def main():
     parser.add_argument('capture_dir', type=Path)
     parser.add_argument('deliver_dir', type=Path)
     parser.add_argument('--require-streamed-blocks', action='store_true')
+    parser.add_argument('--require-batch-claims', action='store_true')
     args = parser.parse_args()
     try:
-        outputs = analyze(args.capture_dir, args.deliver_dir, args.require_streamed_blocks)
+        outputs = analyze(args.capture_dir, args.deliver_dir, args.require_streamed_blocks,
+                          args.require_batch_claims)
     except (KeyError, OSError, ValueError) as exc:
         parser.exit(1, f'pull/GEMM trace: {exc}\n')
     for stem, report, trace in outputs:

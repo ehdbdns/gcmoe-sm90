@@ -14,7 +14,7 @@ from ..mma.sm90 import (
     wgmma_rs_issue, wgmma_rs_k128, wgmma_rs_k32_pair, wgmma_rs_wait,
 )
 from ..ptx.ld_st import (
-    atom_acq_rel_add_u32, atom_add_u32, atom_claim_u32, atom_max_u32_global,
+    atom_acq_rel_add_u32, atom_add_u32, atom_max_u32_global,
     atom_min_u32_global,
     st_global_u32,
     atom_release_gpu_add_u32,
@@ -31,7 +31,7 @@ from ..ptx.tma import (
 from ..ptx.utils import (
     fence_gpu, fence_sys, sync_loader, sync_math, sync_tile,
     sync_activation, sync_weight, read_globaltimer, sync_aligned,
-    elect_one_sync,
+    elect_one_sync, warp_first_set_bit,
 )
 from ..scheduler.sm90_gc_moe import claim_sm90_task
 from ..layout.sm90_gc_moe import get_role_shared_layout
@@ -1597,9 +1597,7 @@ class SM90GCMoERoleKernel:
         """
         if cutlass.const_expr(self.fine_trace):
             st = self._field(base, 'fine_spin', Uint32)
-            trace_epoch = epoch
-            if cutlass.const_expr(not self.stream_blocks):
-                trace_epoch = ld_acquire_gpu_u32(self._field(base, 'eco_tl_step', Uint32))
+            trace_epoch = ld_acquire_gpu_u32(self._field(base, 'eco_tl_step', Uint32))
             if waiting != Uint32(0):
                 if st[blk] != Uint32(1):
                     st[blk] = Uint32(1)
@@ -2151,6 +2149,10 @@ class SM90GCMoERoleKernel:
              Uint32)[0] = mblk
         cell(base, Uint64(self.off_stream_l1_done) + Uint64(batch) * 4,
              Uint32)[0] = Uint32(0)
+        l1_next = self._field(base, 'stream_l1_next', Uint32)
+        l2_next = self._field(base, 'stream_l2_next', Uint32)
+        l1_next[batch] = Uint32(0)
+        l2_next[batch] = Uint32(0)
         if cutlass.const_expr(self.fine_trace):
             self._fine(base, epoch, 14, rank * Uint32(self.local) + expert,
                        expert, mblk, valid, batch)
@@ -3219,62 +3221,90 @@ class SM90GCMoERoleKernel:
                                    weights, offsets, secondary, clamp, 64, l1)
 
     @cute.jit
-    def _try_claim_ready_tile(self, cursor: cute.Pointer, count: cute.Pointer,
-                              ready: cute.Pointer, epoch: Uint32, ntiles: Uint32):
-        """Claim one (M block, N tile) only after the batch's release."""
-        ticket = ld_acquire_gpu_u32(cursor)
-        claimed = Uint32(0xFFFFFFFF)
-        if ticket < ld_acquire_gpu_u32(count) * ntiles:
-            if ld_acquire_gpu_u32(ready + ticket // ntiles) == epoch:
-                if atom_claim_u32(cursor, ticket) == ticket:
-                    claimed = ticket
-        return claimed
-
-    @cute.jit
     def _claim_stream_command(self, base: Uint64, command: cute.Tensor,
-                               epoch: Uint32, first_claim: Boolean):
+                               epoch: Uint32, task_iter: Uint32):
         tid, _, _ = cute.arch.thread_idx()
-        if tid == 0:
-            head = self._field(base, 'header', Uint32)
-            l2_count = self._field(base, 'stream_l2_count', Uint32)
-            active_ready = self._field(base, 'active_ready', Uint32)
-            l2_ready = self._field(base, 'stream_l2_ready', Uint32)
-            n1, n2 = Uint32(self.l1_tiles), Uint32(self.l2_tiles)
+        if tid < 32:
+            lane = Uint32(tid)
             cta = Uint32(cute.arch.block_idx()[0])
+            head = self._field(base, 'header', Uint32)
+            l1_ready = self._field(base, 'active_ready', Uint32)
+            l2_ready = self._field(base, 'stream_l2_ready', Uint32)
+            l1_next = self._field(base, 'stream_l1_next', Uint32)
+            l2_next = self._field(base, 'stream_l2_next', Uint32)
+            n1, n2 = Uint32(self.l1_tiles), Uint32(self.l2_tiles)
             phase, batch, ntile = Uint32(0), Uint32(0), Uint32(0)
-            drained = False
-            while phase == Uint32(0) and not drained:
-                ticket = self._try_claim_ready_tile(head + 3, head + 7, active_ready, epoch, n1)
-                if ticket != Uint32(0xFFFFFFFF):
-                    phase, batch, ntile = Uint32(1), ticket // n1, ticket % n1
-                else:
-                    ticket = self._try_claim_ready_tile(head + 10, l2_count, l2_ready, epoch, n2)
-                    if ticket != Uint32(0xFFFFFFFF):
-                        phase, ntile = Uint32(2), ticket % n2
-                        batch = Uint32(self._field(base, 'stream_l2_batch', Uint32)[ticket // n2])
-                    elif ld_acquire_gpu_u32(head + 9) == epoch:
-                        # Drain only after all pulled blocks have finished L1
-                        # and every L2 tile has been claimed. Already claimed
-                        # tiles retire in their CTA before combine can launch.
-                        total = ld_acquire_gpu_u32(head + 7)
-                        if ld_acquire_gpu_u32(l2_count) == total:
-                            drained = ld_acquire_gpu_u32(head + 10) >= total * n2
+            drained = Uint32(0)
+            logged_empty = False
+            while phase == Uint32(0) and drained == Uint32(0):
+                count = Uint32(0)
+                if lane == 0:
+                    # Acquire closure before taking the final batch count.
+                    closed = ld_acquire_gpu_u32(head + 9) == epoch
+                    count = ld_acquire_gpu_u32(head + 7)
+                    if closed and ld_acquire_gpu_u32(head + 10) == count:
+                        drained = Uint32(1)
+                count = cute.arch.shuffle_sync(count, 0)
+                drained = cute.arch.shuffle_sync(drained, 0)
+                first = (cta + task_iter) % cute.math.max(count, Uint32(1))
+                scanned = Uint32(0)
+                saw_work = False
+                while scanned < count and phase == Uint32(0) and drained == Uint32(0):
+                    offset = scanned + lane
+                    candidate = first + offset
+                    if candidate >= count:
+                        candidate -= count
+                    kind = Uint32(0)
+                    if offset < count:
+                        if ld_acquire_gpu_u32(l1_ready + candidate) == epoch:
+                            if ld_acquire_gpu_u32(l1_next + candidate) < n1:
+                                kind = Uint32(1)
+                            elif ld_acquire_gpu_u32(l2_ready + candidate) == epoch:
+                                if ld_acquire_gpu_u32(l2_next + candidate) < n2:
+                                    kind = Uint32(2)
+                    mask = Uint32(cute.arch.vote_ballot_sync(kind != Uint32(0)))
+                    if mask != Uint32(0):
+                        saw_work = True
+                    while mask != Uint32(0) and phase == Uint32(0):
+                        owner = warp_first_set_bit(mask)
+                        selected = cute.arch.shuffle_sync(kind, owner)
+                        slot = cute.arch.shuffle_sync(candidate, owner)
+                        ticket = Uint32(0)
+                        if lane == owner:
+                            if kind == Uint32(1):
+                                ticket = atom_add_u32(l1_next + candidate, Uint32(1))
+                            else:
+                                ticket = atom_add_u32(l2_next + candidate, Uint32(1))
+                        ticket = cute.arch.shuffle_sync(ticket, owner)
+                        limit = n1 if selected == Uint32(1) else n2
+                        if ticket < limit:
+                            phase, batch, ntile = selected, slot, ticket
+                        # A racing CTA can exhaust this batch. Try the other
+                        # candidates from this ballot before scanning again.
+                        mask = mask & (mask - Uint32(1))
+                    scanned += Uint32(32)
                 if cutlass.const_expr(self.fine_trace):
-                    if phase == Uint32(0) and not drained:
-                        self._fine_spin(base, epoch, cta, Uint32(1),
-                                        ld_acquire_gpu_u32(head + 3) // n1,
-                                        ld_acquire_gpu_u32(head + 7))
-            command[0] = phase
-            if phase != Uint32(0):
-                command[1] = self._field(base, 'active_expert', Uint32)[batch]
-                command[2] = ntile
-                command[3] = self._field(base, 'active_mb', Uint32)[batch]
-                command[4] = batch
-                if cutlass.const_expr(self.fine_trace):
-                    self._fine_spin(base, epoch, cta, Uint32(0), batch, Uint32(0))
-                if cutlass.const_expr(self.step_profile):
-                    if phase == Uint32(1) and first_claim:
-                        self._pull_tl_min(base, epoch, 15)
+                    if lane == 0 and not logged_empty and not saw_work and drained == Uint32(0):
+                        self._fine_emit(base, epoch, 16, cta, count, Uint32(0), Uint32(0))
+                        logged_empty = True
+            # Transfer the scanning lanes' readiness acquires to the command
+            # writer. The loader group synchronizes again before using it.
+            cute.arch.sync_warp()
+            if lane == 0:
+                command[0] = phase
+                if phase != Uint32(0):
+                    if cutlass.const_expr(self.step_profile):
+                        if phase == Uint32(1) and task_iter == Uint32(0):
+                            self._pull_tl_min(base, epoch, 15)
+                    command[1] = self._field(base, 'active_expert', Uint32)[batch]
+                    command[2] = ntile
+                    command[3] = self._field(base, 'active_mb', Uint32)[batch]
+                    command[4] = batch
+                    if phase == Uint32(2) and ntile == n2 - Uint32(1):
+                        # Each batch reaches its last valid L2 ticket once.
+                        atom_acq_rel_add_u32(head + 10, Uint32(1))
+                    if cutlass.const_expr(self.fine_trace):
+                        self._fine_emit(base, epoch, 17, cta, phase, batch, ntile)
 
     @cute.jit
     def _release_stream_l2(self, base: Uint64, epoch: Uint32, batch: Uint32,
@@ -3284,14 +3314,10 @@ class SM90GCMoERoleKernel:
         done = self._field(base, 'stream_l1_done', Uint32)
         arrived = atom_acq_rel_add_u32(done + batch, Uint32(1))
         if arrived == Uint32(self.l1_tiles - 1):
-            l2_index = atom_add_u32(self._field(base, 'stream_l2_count', Uint32), Uint32(1))
-            batch_out = cell(base, Uint64(self.off_stream_l2_batch) + Uint64(l2_index) * 4,
-                             Uint32)
-            batch_out[0] = batch
             if cutlass.const_expr(self.fine_trace):
                 self._fine(base, epoch, 15, expert, expert,
                            start // Uint32(self.max_m), valid, batch)
-            st_release_u32(self._field(base, 'stream_l2_ready', Uint32) + l2_index, epoch, False)
+            st_release_u32(self._field(base, 'stream_l2_ready', Uint32) + batch, epoch, False)
 
     @cute.jit
     def _claim_command(self, base: Uint64, command: cute.Tensor,
@@ -3535,7 +3561,7 @@ class SM90GCMoERoleKernel:
         task_iter, data_iter = Uint32(0), Uint32(0)
         while running:
             if cutlass.const_expr(self.stream_blocks):
-                self._claim_stream_command(base, command, epoch, task_iter == Uint32(0))
+                self._claim_stream_command(base, command, epoch, task_iter)
             else:
                 self._claim_command(base, command, epoch, is_l1, task_iter == Uint32(0), late)
             sync_loader()
@@ -4387,9 +4413,6 @@ class SM90GCMoERoleKernel:
                 for c in cutlass.range_constexpr(8 if self.shared_experts > 0 else 6):
                     counter_out = cell(base, Uint64((3, 7, 8, 10, 11, 13, 20, 21)[c] * 4), Uint32)
                     counter_out[0] = Uint32(0)
-                if cutlass.const_expr(self.stream_blocks):
-                    stream_l2_count = self._field(base, 'stream_l2_count', Uint32)
-                    stream_l2_count[0] = Uint32(0)
                 if cutlass.const_expr(self.eco):
                     # [ECO-SM90] Clear both plan handshake words for the next
                     # call. The plan waits on eco_ready[0] == epoch + 1 and the

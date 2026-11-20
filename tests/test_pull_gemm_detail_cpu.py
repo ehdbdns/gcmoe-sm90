@@ -5,10 +5,11 @@ from tempfile import TemporaryDirectory
 
 from test_aligned_step_cpu import fixture
 from aligned_step import build
+from batch_claim_report import measured_backlog, rank_metrics
 from pull_gemm_detail import MASK, analyze, signed_delta
 
 
-def fine_fixture(path, report, stream=False):
+def fine_fixture(path, report, stream=False, batch_claims=False):
     epoch = report['epoch']
     workers = []
     for rank in report['ranks']:
@@ -20,6 +21,8 @@ def fine_fixture(path, report, stream=False):
             padded = args + (0,) * (5 - len(args))
             rows.append([(dispatch + ts - origin) & MASK, kind, ident, *padded, epoch, 0])
 
+        if batch_claims:
+            emit(12, 16, 0, 0)
         batch = 0
         for slot, count in enumerate(rank['slots_owned']):
             begin, end = ((12, 70 if stream else 22), (14, 62), (18, 98))[slot]
@@ -34,8 +37,11 @@ def fine_fixture(path, report, stream=False):
                         base = 55
                     emit(base - 1, 14, global_slot, slot, index, valid, batch)
                     emit(base + 6, 15, slot, slot, index, valid, batch)
-                batch += 1
                 cta = slot * 2 + index
+                if batch_claims:
+                    emit(base, 17, cta, 1, batch, 0)
+                    emit(base + 19, 17, cta, 2, batch, 0)
+                batch += 1
                 emit(base, 6, cta, slot, start, valid, 0, 1)
                 emit(base + 5, 7, cta, slot, start, valid, 0, 1)
                 emit(base + 20, 6, cta, slot, start, valid, 0, 2)
@@ -70,9 +76,9 @@ def main():
             assert rank['first_claim_us'] == 52
         assert sum(event['ph'] == 'X' for event in overlay['traceEvents']) == 56 + 8 * (3 + 6 + 3)
 
-        def reject(expected):
+        def reject(expected, **kwargs):
             try:
-                analyze(path, path)
+                analyze(path, path, **kwargs)
             except ValueError as exc:
                 assert expected in str(exc), exc
             else:
@@ -88,6 +94,27 @@ def main():
         early[0] -= 3
         (path / 'fine.json').write_text(json.dumps(fine))
         reject('L2 released before its L1 tile completed')
+
+        fine_fixture(path, report, stream=True)
+        reject('missing per-tile claim instrumentation', require_batch_claims=True)
+        fine = fine_fixture(path, report, stream=True, batch_claims=True)
+        [(_, detail, _)] = analyze(path, path, require_streamed_blocks=True, require_batch_claims=True)
+        claims = detail['ranks'][0]['claim_events']
+        assert sum('ntile' in event for event in claims) == 6
+        assert any(event.get('scanned_batches') == 0 for event in claims)
+        claim_times, ready_time = measured_backlog(detail['ranks'][0])
+        assert len(claim_times) == 6 and ready_time(55) - ready_time(54) == 1
+        metrics = rank_metrics(detail['ranks'][0], report['ranks'][0], exact=True)
+        assert metrics['max_backlog_in_gap_us'] > 0 and metrics['working_ctas'] == 3
+        rows = fine['ranks'][0]['epochs'][str(report['epoch'])]
+        idx = next(i for i, row in enumerate(rows) if row[1] == 17)
+        saved = rows.pop(idx)
+        (path / 'fine.json').write_text(json.dumps(fine))
+        reject('missing ready tile claims')
+        rows.extend([saved, saved])
+        fine['ranks'][0]['count'] = len(rows)
+        (path / 'fine.json').write_text(json.dumps(fine))
+        reject('unmatched or duplicate ready tile claim')
 
         fine = fine_fixture(path, report)
         fine['ranks'][0]['count'] = 2000

@@ -108,7 +108,7 @@ if [ "${#fine_args[@]}" -gt 0 ]; then
   test -s "$out/raw/fine.json"
   detail_args=()
   if [ "$GC_MOE_SM90_STREAM_M_BLOCKS" = 1 ]; then
-    detail_args+=(--require-streamed-blocks)
+    detail_args+=(--require-streamed-blocks --require-batch-claims)
   fi
   "$GC_ENV/bin/python" scripts/trace_layer/pull_gemm_detail.py "$out/raw" "$out/deliver" \
     "${detail_args[@]}" 2>&1 | tee "$out/detail.log"

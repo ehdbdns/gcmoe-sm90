@@ -30,7 +30,10 @@ def main():
         assert base != stream
         capacity = stream.views['active_ready'].shape[0]
         assert capacity >= conf.ranks * conf.capacity * conf.topk // 16 + 56
-        assert stream.views['stream_l2_ready'].shape == (capacity,)
+        fields = ['stream_l1_next', 'stream_l2_next', 'stream_l1_done', 'stream_l2_ready']
+        assert all(stream.views[name].shape == (capacity,) for name in fields)
+        assert len({stream.views[name].offset for name in fields}) == len(fields)
+        assert all(name not in base.views for name in fields)
         schedule = get_sm90_role_config(conf, context)
         specs = _role_specs(conf, stream, schedule, True)
         assert [spec[0] for _, spec in specs] == [1, 4, 2, 5, 3]

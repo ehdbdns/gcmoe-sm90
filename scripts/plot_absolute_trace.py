@@ -2,14 +2,13 @@
 shared time axis, with every slice labelled.
 
 Rows (top to bottom)
-  pull CTA 0..D-1        one row per dispatch CTA (role 1)
+  compute CTA 0..C-1     one row per routed CTA (role 2)
   ── separator ──
-  compute CTA 0..C-1     one row per routed CTA (role 2), CTA index as given
-                         by `block_idx()`
+  pull CTA 0..D-1        one row per dispatch CTA (role 1)
 
 Colours
   pull      light blue   span of one slot: type 1 (slot_begin) -> type 2 (slot_end)
-                         label: `E<logical expert> s<global slot>`
+                         label: `E<local slot> s<global slot>`
   GEMM      orange       type 6 (task_begin) -> type 7 (task_end)
                          label: `E<e> T<ntile> M<mblock>`
   combine   green        type 8 (push begin) -> type 9 (push end)
@@ -19,9 +18,13 @@ Everything is in microseconds relative to the FIRST slot_begin of the chosen
 call. The figure is deliberately large and uses a tiny font only for slice
 labels, so the numbers stay readable when the PNG is opened at 100%.
 
-usage: plot_absolute_trace.py <run.json> [rank] [out.png]
+An aligned *.detail.json uses the same-stem counts and the measured dispatch
+entry as t=0. It produces the full figure and a CSV for the requested rank.
+
+usage: plot_absolute_trace.py <run.json | *.detail.json> [rank] [out.png]
 """
 import json, os, sys
+from pathlib import Path
 from collections import defaultdict
 
 import matplotlib
@@ -136,37 +139,77 @@ def intervals(E, k_begin, k_end, t0, field_cta=lambda x: x[2]):
     return out, unpaired
 
 
+def aligned_spans(path, rank):
+    detail = json.loads(path.read_text())
+    counts_path = path.with_name(path.name.removesuffix('.detail.json') + '.counts.json')
+    counts = json.loads(counts_path.read_text())
+    for key in ('capture_id', 'step', 'layer', 'epoch'):
+        if detail[key] != counts[key]:
+            raise ValueError(f'{path}: {key} differs from {counts_path}')
+    data, totals = ({row['rank']: row for row in doc['ranks']}[rank]
+                    for doc in (detail, counts))
+    for key in ('tokens', 'routed_rows', 'm_blocks'):
+        if data[key] != totals[key]:
+            raise ValueError(f'rank {rank}: {key} differs from aligned counts')
+
+    def spans(items, kind):
+        result = []
+        for row in items:
+            begin, end, cta = row['start_us'], row['end_us'], row['cta']
+            if kind == 1:
+                label = (begin, kind, row['global_slot'], row['slot'], cta, row['copies'])
+            else:
+                label = (begin, kind, cta, row['slot'], row['row_start'], row['valid'],
+                         row['ntile'], row['phase'])
+            result.append((begin, end, cta, label))
+        return result
+
+    return (detail['epoch'], totals['block_m'], spans(data['pull_slots'], 1),
+            spans(data['tiles'], 6), spans(data['l2_pushes'], 8),
+            range(data['dispatch_ctas']), range(data['routed_ctas']))
+
+
 def main():
     if len(sys.argv) < 2:
         raise SystemExit(__doc__)
     path = sys.argv[1]
     rank = int(sys.argv[2]) if len(sys.argv) > 2 else 0
     out = sys.argv[3] if len(sys.argv) > 3 else None
-    d, rows = load(path, rank)
-    # [ABSTRACE] normalise the 32-bit microsecond stamps into non-negative
-    # values relative to the earliest record we actually have. The kernel
-    # stores `now_us - t0` with a t0 latched on the very first record, which can
-    # sit in prefill and be filtered out by the epoch floor, so the surviving
-    # rows are negative offsets from THAT origin. Rebasing here keeps the plot
-    # independent of where the floor landed.
-    tmin = min(x[0] for x in rows)
-    if tmin != 0:
-        for x in rows:
-            x[0] = x[0] - tmin
-    ep, E = pick_call(rows)
+    aligned = path.endswith('.detail.json')
+    if aligned:
+        ep, bm, pull, gemm, push, pull_ctas, comp_ctas = aligned_spans(Path(path), rank)
+        pull_unpaired = gemm_unpaired = push_unpaired = 0
+    else:
+        d, rows = load(path, rank)
+        # [ABSTRACE] normalise the 32-bit microsecond stamps into non-negative
+        # values relative to the earliest record we actually have. The kernel
+        # stores `now_us - t0` with a t0 latched on the very first record, which can
+        # sit in prefill and be filtered out by the epoch floor, so the surviving
+        # rows are negative offsets from THAT origin. Rebasing here keeps the plot
+        # independent of where the floor landed.
+        tmin = min(x[0] for x in rows)
+        if tmin != 0:
+            for x in rows:
+                x[0] = x[0] - tmin
+        ep, E = pick_call(rows)
 
-    # ---- time origin: first slot_begin of this call ----
-    t0 = min(x[0] for x in E if x[1] == 1)
+        # ---- time origin: first slot_begin of this call ----
+        t0 = min(x[0] for x in E if x[1] == 1)
 
-    # pull: type 1 -> 2, keyed by global slot (x[2])
-    pull, pull_unpaired = intervals(E, 1, 2, t0)
-    # GEMM: type 6 -> 7, keyed by CTA (x[2])
-    gemm, gemm_unpaired = intervals(E, 6, 7, t0)
-    # combine push: type 8 -> 9, keyed by CTA
-    push, push_unpaired = intervals(E, 8, 9, t0)
+        # pull: type 1 -> 2, keyed by global slot (x[2])
+        paired, pull_unpaired = intervals(E, 1, 2, t0)
+        pull = [(b, e, rec[4], rec) for b, e, _, rec in paired]
+        # GEMM: type 6 -> 7, keyed by CTA (x[2])
+        gemm, gemm_unpaired = intervals(E, 6, 7, t0)
+        # combine push: type 8 -> 9, keyed by CTA
+        push, push_unpaired = intervals(E, 8, 9, t0)
 
-    pull_ctas = sorted({c for _, _, c, _ in pull})
-    comp_ctas = sorted({c for _, _, c, _ in gemm})
+        pull_ctas = sorted({c for _, _, c, _ in pull})
+        comp_ctas = sorted({c for _, _, c, _ in gemm})
+        try:
+            bm = int((d.get('load_detail') or {}).get('block_m') or 0) or None
+        except (TypeError, ValueError):
+            bm = None
     n_pull, n_comp = len(pull_ctas), len(comp_ctas)
     # [ABSTRACE] compute rows on TOP (that is what the reader follows first:
     # GEMM is where the time goes), pull rows at the BOTTOM, separated by one
@@ -224,12 +267,6 @@ def main():
             fontsize=20, va='center', ha='left', color='#333333', zorder=9,
             bbox=dict(facecolor='white', edgecolor='none', alpha=0.85, pad=1.5))
 
-    bm = None
-    try:
-        bm = int((d.get('load_detail') or {}).get('block_m') or 0) or None
-    except Exception:
-        bm = None
-
     # ---- GEMM spans (orange) + combine push (green) ----
     push_by_cta = defaultdict(list)
     for b, e, cta, rec in push:
@@ -240,7 +277,7 @@ def main():
     # a green bar must take over; a type-7 (L1) span has no push at all.
     push_start = {}
     for pb, pe, pcta, prec in push:
-        push_start[(pcta, prec[4], prec[6], prec[7])] = pb
+        push_start[(pcta, prec[3], prec[4], prec[6], prec[7])] = pb
 
     # [ABSTRACE] The green bar must end exactly where its GEMM span ends.
     # `globaltimer//1000` is truncated to whole microseconds, so a push that
@@ -252,11 +289,13 @@ def main():
     # push", which is wrong. Snap the green to the containing GEMM's end.
     _gemm_by_key = defaultdict(list)
     for _b, _e, _c, _r in gemm:
-        _gemm_by_key[(_c, _r[4], _r[6], _r[7])].append((_b, _e))
+        _gemm_by_key[(_c, _r[3], _r[4], _r[6], _r[7])].append((_b, _e))
 
     def push_end_snap(cta, begin, end, rec):
         """End of the green bar: the enclosing GEMM span's end."""
-        for _b, _e in _gemm_by_key.get((cta, rec[4], rec[6], rec[7]), ()):
+        if aligned:
+            return end  # Display the measured push end on the aligned time axis.
+        for _b, _e in _gemm_by_key.get((cta, rec[3], rec[4], rec[6], rec[7]), ()):
             if _b <= begin <= _e:
                 return max(end, _e)      # only ever extends, never shrinks
         return end
@@ -264,7 +303,7 @@ def main():
     for b, e, cta, rec in gemm:
         y = comp_row[cta]
         expert, start, valid, ntile, phase = rec[3], rec[4], rec[5], rec[6], rec[7]
-        _ps = push_start.get((cta, start, ntile, phase))
+        _ps = push_start.get((cta, expert, start, ntile, phase))
         _c_end = min(e, _ps) if (_ps is not None and b <= _ps <= e) else e
         ax.add_patch(Rectangle((b, y - bar_h / 2), max(_c_end - b, 0.05), bar_h,
                                facecolor='#f6a94a', edgecolor='#b06a10',
@@ -302,8 +341,8 @@ def main():
     # original figure was role ordering, not time ordering). With inverted
     # limits, index 0 renders at the top edge.
     ax.set_ylim(rows_total - 0.2, -0.8)
-    ax.set_xlabel('absolute time within one measured layer (us, t=0 at first '
-                  'slot_begin)', fontsize=26)
+    origin = 'dispatch entry' if aligned else 'first slot_begin'
+    ax.set_xlabel(f'absolute time within one measured layer (us, t=0 at {origin})', fontsize=26)
     ax.set_ylabel('CTA row', fontsize=26)
     pull_done = max(e for _, e, _, _ in pull) if pull else 0.0
     ax.axvline(pull_done, color='#1f5fbf', linestyle=':', linewidth=1.4,
@@ -320,7 +359,8 @@ def main():
     ax.set_yticklabels(yl, fontsize=max(7.0, min(13.0, 460.0 / rows_total)))
     ax.grid(axis='x', color='#dddddd', linewidth=0.4, zorder=0)
 
-    title = (f'{os.path.basename(path)}  rank {rank}  epoch {ep}  '
+    source = '/'.join(Path(path).parts[-3:]) if aligned else os.path.basename(path)
+    title = (f'{source}  rank {rank}  epoch {ep}  '
              f'block_m={bm}  '
              f'pull={len(pull)} spans, gemm={len(gemm)} spans, '
              f'push={len(push)} spans')
@@ -329,13 +369,12 @@ def main():
     # legend (proxy artists)
     from matplotlib.patches import Patch
     ax.legend(handles=[Patch(facecolor='#9ec9ef', edgecolor='#4a7fb5',
-                             label='pull a slot (E=logical expert, s=global slot)'),
+                             label='pull a slot (E=local slot, s=global slot)'),
                        Patch(facecolor='#f6a94a', edgecolor='#b06a10',
-                             label='GEMM of one M block: E=expert T=ntile '
+                             label='GEMM of one M block: E=local slot T=ntile '
                                    'M=mblock v=valid rows'),
                        Patch(facecolor='#5fbf6a', edgecolor='#2c7a34',
-                             label='combine push (separate phase; green ends '
-                                   'where its GEMM ends, no label by design)')],
+                             label='L2 combine push')],
               loc='lower center', bbox_to_anchor=(0.5, -0.055),
               ncol=3, fontsize=22, framealpha=0.95)
 
@@ -343,7 +382,8 @@ def main():
     # figure can only label the wide ones ----
     csv_path = (os.path.splitext(out or path)[0] + f'.abstrace_rank{rank}.csv')
     with open(csv_path, 'w') as fh:
-        fh.write('kind,cta,begin_us,end_us,dur_us,expert,ntile,mblock,'
+        slot_column = 'local_slot' if aligned else 'expert'
+        fh.write(f'kind,cta,begin_us,end_us,dur_us,{slot_column},ntile,mblock,'
                  'start_row,valid,phase,global_slot\n')
         for b, e, cta, rec in sorted(pull, key=lambda z: z[3][0]):
             fh.write(f'pull,{cta},{b:.1f},{e:.1f},{e - b:.1f},'
@@ -359,7 +399,8 @@ def main():
 
     fig.tight_layout()
     out = out or (os.path.splitext(path)[0] + f'.abstrace_rank{rank}.png')
-    fig.savefig(out, dpi=150, bbox_inches='tight')
+    fig.savefig(out, dpi=80 if aligned else 150, bbox_inches='tight')
+    plt.close(fig)
     print(f'wrote {csv_path}')
     print(f'wrote {out}')
     print(f'unpaired: pull={pull_unpaired} gemm={gemm_unpaired} '
@@ -367,6 +408,9 @@ def main():
     print(f'spans: pull={len(pull)} ({n_pull} CTAs)  gemm={len(gemm)} '
           f'({n_comp} CTAs)  push={len(push)}')
     print(f'timeline: pull_done={pull_done:.1f}us  end={t_end:.1f}us')
+
+    if aligned:
+        return
 
     # ---- zoomed panels ----
     # The full-call figure necessarily packs ~1900 GEMM slices onto one axis;
@@ -432,7 +476,7 @@ def main():
             # [ABSTRACE] Same rule as the full figure: the orange bar stops
             # where this M block's combine push begins, and the push owns the
             # remainder as its own phase.
-            _ps = push_start.get((cta, rec[4], rec[6], rec[7]))
+            _ps = push_start.get((cta, rec[3], rec[4], rec[6], rec[7]))
             _ce = min(e, _ps) if (_ps is not None and b <= _ps <= e) else e
             _lo, _hi = max(b, zoom_lo), min(_ce, zoom_hi)
             if _hi <= _lo:
