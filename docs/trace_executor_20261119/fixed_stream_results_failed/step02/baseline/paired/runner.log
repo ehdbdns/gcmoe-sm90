@@ -1,0 +1,53 @@
+Capture workspace: /tmp/gcmoe-aligned-AJybv0Ak
+index, name, driver_version, memory.used [MiB], memory.total [MiB]
+0, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+1, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+2, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+3, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+4, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+5, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+6, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+7, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+2.13.0+cu130 13.0 0.31.0
+[warm] 48 shards queued for page cache
+[warm] 48 shards read into page cache
+[ROLE4] vLLM shared GEMM neutralised (zero stub); gc_moe role 4 owns it
+[data] picked 256 prompts, len 257/670/2042 (min/med/max), KV need 220096
+[data] 256 prompts (32/rank x 8), len 257..2042
+[budget] decode_budget=586 (1+200warm+1measure+280slack) prefill_tokens=220096 chunk=2048 kv_margin=256
+(MainProcess pid=222235) INFO 11-20 18:01:54 [api_utils.py:286] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 2948, 'tensor_parallel_size': 8, 'enable_expert_parallel': True, 'moe_backend': 'gc_moe', 'enable_prefix_caching': False, 'gpu_memory_utilization': 0.72, 'max_num_batched_tokens': 2048, 'max_num_seqs': 256, 'enable_logging_iteration_details': True, 'compilation_config': {'mode': None, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': [], 'ir_enable_torch_wrap': None, 'splitting_ops': None, 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': None, 'compile_ranges_endpoints': None, 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_DECODE_ONLY: (2, 0)>, 'cudagraph_num_of_warmups': 0, 'cudagraph_capture_sizes': None, 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': None, 'pass_config': {}, 'max_cudagraph_capture_size': None, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': None, 'static_all_moe_layers': []}, 'logits_processors': ['fixed_tokens:ReferenceTokens'], 'async_scheduling': False, 'model': '/home/admin/local_models/DeepSeek-V4.1-Flash'}
+(MainProcess pid=222235) WARNING 11-20 18:01:54 [arg_utils.py:1910] The global random seed is set to 0. Since VLLM_ENABLE_V1_MULTIPROCESSING is set to False, this may affect the random state of the Python process that launched vLLM.
+(MainProcess pid=222235) INFO 11-20 18:01:54 [config.py:941] Detected quantization_config.scale_fmt=ue8m0; enabling UE8M0 for DeepGEMM.
+(MainProcess pid=222235) INFO 11-20 18:01:54 [model.py:699] Resolved architecture: DeepseekV41ForCausalLM
+(MainProcess pid=222235) INFO 11-20 18:01:54 [model.py:722] Defaulting to tokenizer_mode='deepseek_v41' for DeepseekV41ForCausalLM
+(MainProcess pid=222235) INFO 11-20 18:01:54 [model.py:2109] Using max model len 2948
+(MainProcess pid=222235) WARNING 11-20 18:01:54 [model.py:1069] Model does not support mm_device_do_normalize, forcing mm_device_do_normalize = False.
+(MainProcess pid=222235) INFO 11-20 18:01:56 [scheduler.py:308] Chunked prefill is enabled with max_num_batched_tokens=2048.
+(MainProcess pid=222235) INFO 11-20 18:01:56 [vllm.py:1403] Resolved Engram configuration: EngramConfig(cpu_offload=True, embedding_across_dp=False, dp_shared_memory=False, use_thp=False)
+(MainProcess pid=222235) INFO 11-20 18:01:56 [vllm.py:843] Auto-enabling VLLM_USE_BREAKABLE_CUDAGRAPH=1. Set VLLM_USE_BREAKABLE_CUDAGRAPH=0 to opt out.
+(MainProcess pid=222235) INFO 11-20 18:01:56 [kernel.py:408] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(MainProcess pid=222235) INFO 11-20 18:01:59 [compilation.py:331] Enabled custom fusions: norm_quant, act_quant, allreduce_rms
+Traceback (most recent call last):
+  File "/tmp/gcmoe-two-arm-ktrh9fqe/tools/scripts/trace_layer/../real_decode_100_100.py", line 1123, in <module>
+    main()
+  File "/tmp/gcmoe-two-arm-ktrh9fqe/tools/scripts/trace_layer/../real_decode_100_100.py", line 725, in main
+    llm = LLM(
+  File "/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/lib/python3.10/site-packages/vllm/entrypoints/llm.py", line 344, in __init__
+    self.llm_engine = LLMEngine.from_engine_args(
+  File "/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/lib/python3.10/site-packages/vllm/v1/engine/llm_engine.py", line 185, in from_engine_args
+    return cls(
+  File "/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/lib/python3.10/site-packages/vllm/v1/engine/llm_engine.py", line 96, in __init__
+    self.input_processor = InputProcessor(self.vllm_config, renderer)
+  File "/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/lib/python3.10/site-packages/vllm/v1/engine/input_processor.py", line 61, in __init__
+    self._build_logits_processors_params_validator()
+  File "/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/lib/python3.10/site-packages/vllm/v1/engine/input_processor.py", line 107, in _build_logits_processors_params_validator
+    return build_custom_logits_processors_params_validator(custom_logitsprocs)
+  File "/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/lib/python3.10/site-packages/vllm/v1/worker/gpu/sample/logits_processor/loader.py", line 199, in build_custom_logits_processors_params_validator
+    classes = _cached_load_v2_logitsprocs(tuple(custom_logitsprocs or ()))
+  File "/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/lib/python3.10/site-packages/vllm/v1/worker/gpu/sample/logits_processor/loader.py", line 153, in _cached_load_v2_logitsprocs
+    return _load_v2_logitsprocs(list(custom_logitsprocs))
+  File "/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/lib/python3.10/site-packages/vllm/v1/worker/gpu/sample/logits_processor/loader.py", line 144, in _load_v2_logitsprocs
+    return _load_v2_logitsprocs_plugins() + _load_v2_logitsprocs_by_fqcns(
+  File "/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/lib/python3.10/site-packages/vllm/v1/worker/gpu/sample/logits_processor/loader.py", line 127, in _load_v2_logitsprocs_by_fqcns
+    raise ValueError(
+ValueError: ReferenceTokens is not a subclass of vllm.v1.worker.gpu.sample.logits_processor.LogitsProcessor
