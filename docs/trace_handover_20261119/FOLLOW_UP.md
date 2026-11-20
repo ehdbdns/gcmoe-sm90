@@ -1,3 +1,7 @@
+# 当前任务 · R5 严格验证 stream
+
+请先读取 [R5 八卡任务书](../trace_executor_20261119/FIXED_STREAM_R5_TASK.md)。本轮只启动 baseline 和 stream 各一次，回执写入此目录的 `REPLY_FIXED_STREAM_R5.md`。
+
 # R4 八卡回执复核
 
 R4 已完成，共启动两次模型。两臂均使用 `f73ceaa`、修复后的 ECO 和旧线性价格 `26 × M 块数 + routed rows`。100 个计时步的 E2E 从 83.362 降至 82.200 ms/步（−1.39%）。step 2 的 40 层 MoE 从 34.142 升至 34.523 ms（+1.12%），其中 9 层变快，31 层变慢。当前证据不足以确认 stream 的等价加速。每臂只有一次运行。[R4 回执](REPLY_FIXED_STREAM_R4.md) · [配对指标](../trace_executor_20261119/fixed_stream_results_r4/paired.csv)

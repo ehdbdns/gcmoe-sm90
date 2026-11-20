@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run both arms in the same pinned measurement checkout.
 set -eo pipefail
-if [[ $# != 2 && ! ( $# == 3 && $3 == --valid-cost ) && ! ( $# == 4 && $3 == --replay-from ) ]]; then
-  echo "Usage: $0 common-worktree new-output-dir [--valid-cost | --replay-from directory]" >&2; exit 2
+if [[ $# != 2 && ! ( $# == 3 && $3 == --valid-cost ) && ! ( $# == 4 && ( $3 == --replay-from || $3 == --same-state-from ) ) ]]; then
+  echo "Usage: $0 common-worktree new-output-dir [--valid-cost | --replay-from directory | --same-state-from directory]" >&2; exit 2
 fi
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(realpath "$1")
@@ -11,9 +11,9 @@ sha=$(git -C "$here" rev-parse HEAD)
 test "$(git -C "$root" rev-parse HEAD)" = "$sha"
 analysis_python=$(cd "$root" && source scripts/env.sh && printf '%s/bin/python' "$GC_ENV")
 test -x "$analysis_python"
-unset GC_MOE_FIXED_DIR GC_MOE_FIXED_REUSE
+unset GC_MOE_FIXED_DIR GC_MOE_FIXED_REUSE GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES
 if [[ ${3:-} == --valid-cost ]]; then
-  phase_one="$here/../../docs/trace_executor_20261119/fixed_stream_results_r4/comparison.json"
+  phase_one="$here/../../docs/trace_executor_20261119/fixed_stream_results_r5/comparison.json"
   "$analysis_python" - "$phase_one" <<'CHECK'
 import json
 import sys
@@ -24,11 +24,35 @@ if not path.is_file() or json.loads(path.read_text()).get('scheduling_gate_passe
 CHECK
 fi
 mkdir "$bundle"
+save_partial_checkpoint() {
+  local status=$?
+  if (( status != 0 )) && [[ -n ${GC_MOE_STRICT_STATE_DIR:-} ]]; then
+    mkdir -p "$bundle/checkpoint"
+    for manifest in "$GC_MOE_STRICT_STATE_DIR"/rank*.json; do
+      if [[ -f "$manifest" ]]; then cp "$manifest" "$bundle/checkpoint/"; fi
+    done
+  fi
+  return "$status"
+}
+trap save_partial_checkpoint EXIT
 echo "$sha" > "$bundle/measurement.sha"
 if [[ ${3:-} == --valid-cost ]]; then
   echo valid_cost > "$bundle/comparison.txt"
 else
-  if [[ ${3:-} == --replay-from ]]; then
+  if [[ ${3:-} == --same-state-from ]]; then
+    GC_MOE_STRICT_STATE_DIR=$(mktemp -d "${GC_MOE_CHECKPOINT_ROOT:-/tmp}/gcmoe-branch-XXXXXXXX")
+    export GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES=11811160064
+    "$analysis_python" - "$GC_MOE_STRICT_STATE_DIR" "$GC_MOE_KV_BYTES" <<'CHECK_SPACE'
+import shutil
+import sys
+available = shutil.disk_usage(sys.argv[1]).free
+needed = 8 * int(sys.argv[2])
+if available < needed:
+    sys.exit(f'KV checkpoint needs up to {needed} bytes, mount has {available}; set GC_MOE_CHECKPOINT_ROOT')
+CHECK_SPACE
+    echo "$GC_MOE_STRICT_STATE_DIR" > "$bundle/checkpoint-path.txt"
+    echo fixed_stream_r5 > "$bundle/comparison.txt"
+  elif [[ ${3:-} == --replay-from ]]; then
     echo fixed_stream_r4 > "$bundle/comparison.txt"
   else
     echo fixed_stream > "$bundle/comparison.txt"
@@ -40,7 +64,7 @@ else
   "$analysis_python" "$here/multilayer_study.py" reference \
     "$results/multilayer_ab_results/step02/baseline/paired" "$GC_MOE_FIXED_DIR" \
     --prepared "$results/fixed_stream_results_failed/tokens.json"
-  if [[ ${3:-} == --replay-from ]]; then
+  if [[ ${3:-} == --replay-from || ${3:-} == --same-state-from ]]; then
     replay=$(realpath "$4")
     cmp "$GC_MOE_FIXED_DIR/tokens.json" "$replay/tokens.json"
     cp "$replay"/{placement.json,routes-rank{0..7}.pt} "$GC_MOE_FIXED_DIR/"
@@ -61,6 +85,17 @@ for arm in baseline stream; do
   fi
   out="$bundle/step02/$arm/paired"
   mkdir -p "$out"
+  if [[ -n ${GC_MOE_STRICT_STATE_DIR:-} ]]; then
+    nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name --format=csv,noheader > "$out/preexisting-processes.csv"
+    if [[ -s "$out/preexisting-processes.csv" ]]; then
+      echo "GPUs already in use; see $out/preexisting-processes.csv" >&2
+      exit 1
+    fi
+    nvidia-smi --query-gpu=index,pstate,temperature.gpu,clocks.current.sm,clocks.current.memory,power.draw \
+      --format=csv,noheader > "$out/gpu-before.csv"
+    nvidia-smi --query-gpu=index,uuid,name,pci.bus_id,driver_version,power.limit,clocks.max.sm,clocks.max.memory \
+      --format=csv,noheader > "$out/hardware.csv"
+  fi
   echo "step02 $arm paired"
   GC_MOE_STUDY_COSTFN="$cost" GC_MOE_EXEC_ROOT="$root" GC_MOE_STUDY_STEP=2 GC_MOE_SM90_STREAM_M_BLOCKS="$flag" \
     bash "$here/run_aligned_ep8.sh" "$sha" --study-paired > "$out/runner.log" 2>&1
@@ -70,9 +105,14 @@ for arm in baseline stream; do
   PYTHONPATH="$root/source" "$analysis_python" "$here/multilayer_study.py" collect "$raw" "$out" paired 2
   mv "$out/runner.log" "$raw/study-runner.log"
   cp "$raw"/{execution.sha,status.txt,gpu.log,runtime.log} "$out/"
+  if [[ -n ${GC_MOE_STRICT_STATE_DIR:-} ]]; then cp "$raw/gpu-after.csv" "$out/"; fi
   sha256sum "$raw/result.json" > "$out/result.sha256"
   cp "$raw/sha256.txt" "$out/raw-sha256.txt"
 done
+if [[ -n ${GC_MOE_STRICT_STATE_DIR:-} ]]; then
+  mkdir "$bundle/checkpoint"
+  cp "$GC_MOE_STRICT_STATE_DIR"/rank{0..7}.json "$bundle/checkpoint/"
+fi
 if [[ -n ${GC_MOE_FIXED_DIR:-} ]]; then
   cp "$GC_MOE_FIXED_DIR/placement.json" "$bundle/"
   sha256sum "$GC_MOE_FIXED_DIR"/{placement.json,tokens.json,routes-rank{0..7}.pt} > "$bundle/workload.sha256"

@@ -924,7 +924,17 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             buf.topk_idx[:tokens].copy_(topk_ids.to(torch.int64).view(tokens, -1))
         buf.topk_weights[:tokens].copy_(topk_weights.to(torch.float32).view(tokens, -1))
 
+        probe = (tape.boundary_probe if use_tape and hasattr(tape, 'boundary_probe')
+                 and _LAYER_ROW[id(packed[0][0])] == 0 else None)
+        if probe is not None:
+            probe['quantized'].copy_(buf.x[:tokens].view(torch.uint8))
+            probe['scales'].copy_(buf.x_sf[:tokens])
         self._launch(packed, buf, output, tokens)
+        if probe is not None:
+            if output.dtype != probe['output'].dtype:
+                raise ValueError('layer-zero output probe requires BF16')
+            probe['output'].copy_(output.view_as(probe['output']))
+            probe['epoch'].copy_(buf.eco_tl_step)
         if use_tape:
             tape.finish_call(buf)
         # [METRIC-FIX] Snapshot the per-call occupancy of the call that just
@@ -1395,6 +1405,13 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                 from fixed_workload import RouteTape
                 buf = self._buffer
                 buf.fixed_routes = RouteTape(buf.buffer.device, buf.num_topk, buf.profile_slot_counts.shape[1])
+                if os.environ.get('GC_MOE_STRICT_STATE_DIR'):
+                    tape = buf.fixed_routes
+                    x = buf.x[:tape.batch]
+                    tape.boundary_probe = dict(quantized=torch.empty_like(x, dtype=torch.uint8),
+                                               scales=torch.empty_like(buf.x_sf[:tape.batch]),
+                                               output=torch.empty_like(x, dtype=torch.bfloat16),
+                                               epoch=torch.zeros_like(buf.eco_tl_step))
             _SHARED_BUFFER['buf'] = self._buffer
             _SHARED_BUFFER['key'] = key
         return self._buffer
@@ -2130,6 +2147,10 @@ def _install_worker_rpc() -> None:
     if getattr(Worker, '_gc_moe_rearrange', None) is not None:
         return
 
+    if os.environ.get('GC_MOE_STRICT_STATE_DIR'):
+        from stream_checkpoint import install_cache_names
+        install_cache_names()
+
     def gc_moe_rearrange(self) -> bool:
         return rearrange_now()
 
@@ -2343,14 +2364,48 @@ def _install_worker_rpc() -> None:
         with torch.inference_mode():
             tape.freeze(os.environ['GC_MOE_FIXED_DIR'], rank, reference=recording_reference())
             self._gc_reference_tokens.mark_replay_start()
-            buf.replay_stream_mode.fill_(int(os.environ['GC_MOE_SM90_STREAM_M_BLOCKS']))
+            if not os.environ.get('GC_MOE_STRICT_STATE_DIR'):
+                buf.replay_stream_mode.fill_(int(os.environ['GC_MOE_SM90_STREAM_M_BLOCKS']))
         mod = next(m for m in _EXPERT_REGISTRY if m._eplb is not None)
-        return dict(rank=rank, placement=digest(mod._eplb['plan']), eco_state=digest(buf.eco_state),
+        audit = dict(rank=rank, placement=digest(mod._eplb['plan']), eco_state=digest(buf.eco_state),
                     warmup_stream=0,
                     last_warm_input=digest(buf.x[:tape.batch].view(torch.uint8)),
                     last_warm_scales=digest(buf.x_sf[:tape.batch]))
 
+        directory = os.environ.get('GC_MOE_STRICT_STATE_DIR')
+        if directory:
+            from stream_checkpoint import prepare_worker
+            with torch.inference_mode():
+                audit['checkpoint'] = prepare_worker(self, buf, _EXPERT_REGISTRY, self._gc_reference_tokens,
+                                                     directory, os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '0')
+            self._gc_boundary_verified = True
+        return audit
+
     Worker._gc_moe_fixed_routes = gc_moe_fixed_routes
+
+    def gc_moe_activate_stream(self):
+        buf = profile_buffer()
+        if not getattr(self, '_gc_boundary_verified', False) or buf.replay_stream_mode.item() != 0:
+            raise RuntimeError('stream activation requires a verified pre-switch checkpoint')
+        with torch.inference_mode():
+            buf.replay_stream_mode.fill_(int(os.environ['GC_MOE_SM90_STREAM_M_BLOCKS']))
+        return int(buf.replay_stream_mode.item())
+
+    Worker._gc_moe_activate_stream = gc_moe_activate_stream
+
+    def gc_moe_first_replay_call(self):
+        from stream_checkpoint import tensor_hash
+        tape = profile_buffer().fixed_routes
+        probe = tape.boundary_probe
+        torch.cuda.synchronize()
+        epoch = int(probe['epoch'].item())
+        if (int(tape.position.item()) != tape.layers or int(tape.layer_ids[0].item()) != 0
+                or epoch <= 0 or epoch != int(tape.epochs[0].item())):
+            raise ValueError('probe did not observe the first post-restore layer')
+        return dict(rank=int(profile_buffer().rank_idx), epoch=epoch,
+                    **{key: tensor_hash(probe[key]) for key in ('quantized', 'scales', 'output')})
+
+    Worker._gc_moe_first_replay_call = gc_moe_first_replay_call
 
 
     def gc_moe_profile_fine_dump(self, epochs):

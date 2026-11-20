@@ -3,6 +3,7 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import os
 import struct
 from pathlib import Path
@@ -87,6 +88,11 @@ def collect(raw, dest, mode, step):
         require(len(run['tokens']) == run['seqs'] and all(run['tokens'].values()), 'missing output tokens')
         record.update(profiled_step_ms=record['e2e_ms_per_step'], timed_steps=tail['steps'],
                       e2e_ms_per_step=tail['ms_per_step'])
+        if 'ten_step_host_ms_per_step' in tail:
+            blocks = tail['ten_step_host_ms_per_step']
+            require(len(blocks) == 10 and all(math.isfinite(v) and v > 0 for v in blocks)
+                    and math.isclose(mean(blocks), tail['ms_per_step']), 'invalid 100-step timing breakdown')
+            record['ten_step_host_ms_per_step'] = blocks
     if 'eco_costfn' in run:
         record.update(eco_costfn=run['eco_costfn'], stream_m_blocks=run['stream_m_blocks'])
     if 'fixed_controls' in run:
@@ -222,6 +228,41 @@ def compare_matrix(root):
     csv_table(root/'summary.csv', summary)
 
 
+def json_hash(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def checkpoint_controls(root, audits):
+    checkpoints, inputs, outputs = [], [], []
+    for rank in range(8):
+        manifest = read(root/'checkpoint'/f'rank{rank}.json')
+        initial = [audit['initial'][rank] for audit in audits]
+        first = [row['first_call'] for row in initial]
+        expected = manifest['sha256']
+        required = {'requests', 'physical_blocks', 'cache_groups', 'next_epoch', 'eco_step',
+                    'placement', 'meta', 'eco_state', 'packed_weights'}
+        require(manifest['rank'] == rank and manifest['version'] == 1
+                and set(manifest['controls']) == required and len(expected) == 64
+                and len(bytes.fromhex(expected)) == 32, f'invalid rank {rank} manifest')
+        for audit, row, call in zip(audits, initial, first, strict=True):
+            require(row['rank'] == call['rank'] == rank
+                    and audit['ranks'][rank]['first_epoch'] == call['epoch'] == manifest['controls']['next_epoch'],
+                    f'rank {rank} probe is outside the branch boundary')
+            for key in ('quantized', 'scales', 'output'):
+                require(len(call[key]) == 64 and len(bytes.fromhex(call[key])) == 32, f'invalid {key} probe')
+        checkpoints.append(all(row['checkpoint'] == dict(
+            source_sha256=expected, readback_sha256=expected, controls_sha256=json_hash(manifest['controls']),
+            layout_sha256=json_hash(manifest['layout']), kv_bytes=sum(manifest['layout']['sizes']),
+            kv_views=len(manifest['layout']['views'])) for row in initial)
+            and min(manifest['layout']['sizes']) > 0 and bool(manifest['layout']['views']))
+        inputs.append(all(first[0][k] == first[1][k] for k in ('quantized', 'scales')))
+        outputs.append(first[0]['output'] == first[1]['output'])
+    return dict(checkpoint_match=all(checkpoints), first_moe_input_match=all(inputs),
+                first_moe_output_match=all(outputs),
+                first_moe_input_different_ranks=[r for r, ok in enumerate(inputs) if not ok],
+                first_moe_output_different_ranks=[r for r, ok in enumerate(outputs) if not ok])
+
+
 def compare(root):
     folder = root/'step02'
     if not (folder/'baseline'/'paired').exists():
@@ -235,8 +276,9 @@ def compare(root):
     marker = root/'comparison.txt'
     valid_cost = marker.exists() and marker.read_text().strip() == 'valid_cost'
     protocol = marker.read_text().strip() if marker.exists() else ''
-    r4 = protocol == 'fixed_stream_r4'
-    fixed_stream = r4 or protocol == 'fixed_stream'
+    r5 = protocol == 'fixed_stream_r5'
+    ordered_replay = r5 or protocol == 'fixed_stream_r4'
+    fixed_stream = ordered_replay or protocol == 'fixed_stream'
     controls = {}
     flags = [(r['stream_m_blocks'], r['eco_costfn']) for r in (base, candidate)]
     if valid_cost:
@@ -254,7 +296,7 @@ def compare(root):
         keys = ('rank', 'batch_order', 'route_ids', 'route_weights', 'layer_order', 'owned_steps')
         controls['routes_and_all_slot_counts_match'] = all(
             all(b[k] == s[k] for k in keys) for b, s in zip(left['ranks'], right['ranks'], strict=True))
-        if r4:
+        if ordered_replay:
             config = base['fixed_controls']
             required = dict(GC_MOE_ECO='1', GC_MOE_ECO_COSTFN='0', GC_MOE_ECO_WB='26',
                             GC_MOE_ECO_WA='0', GC_MOE_ECO_NO_AUCTION='0', GC_MOE_ECO_NULL_PLAN='0',
@@ -283,6 +325,18 @@ def compare(root):
                         for bs, ss in zip(*(h['replay_top1'] for h in histories), strict=True)]
             controls['native_differences_by_step'] = mismatch
             controls['first_native_difference_step'] = next((i for i, n in enumerate(mismatch) if n), None)
+        if r5:
+            controls.update(checkpoint_controls(root, audits))
+            controls['same_hardware'] = ((dirs[0]/'hardware.csv').read_text() == (dirs[1]/'hardware.csv').read_text()
+                                          and len((dirs[0]/'hardware.csv').read_text().splitlines()) == 8
+                                          and (dirs[0]/'runtime.log').read_bytes() == (dirs[1]/'runtime.log').read_bytes())
+            controls['same_run_controls'] &= (config.get('GC_MOE_KV_BYTES') == str(11 * 1024**3)
+                                              and bool(config.get('GC_MOE_STRICT_STATE_DIR')))
+            blocks = [r['ten_step_host_ms_per_step'] for r in (base, candidate)]
+            for values, run in zip(blocks, (base, candidate), strict=True):
+                require(len(values) == 10 and all(math.isfinite(v) and v > 0 for v in values)
+                        and math.isclose(mean(values), run['e2e_ms_per_step']), 'invalid ten-step measurements')
+            controls['ten_step_e2e_delta_ms'] = [s-b for b, s in zip(*blocks, strict=True)]
         native = [next(r['native_top1'] for r in audit['ranks'] if r['native_top1'] is not None)
                   for audit in audits]
         controls['native_top1_different_of_256'] = sum(b != s for b, s in zip(*native, strict=True))
@@ -313,16 +367,25 @@ def compare(root):
     controlled_faster = matched and all(faster.values())
     if fixed_stream:
         controlled_faster &= controls['placement_and_initial_state_match'] and controls['routes_and_all_slot_counts_match']
-        if r4:
+        if ordered_replay:
             controlled_faster &= controls['same_run_controls'] and controls['same_physical_routes']
         controls['fixed_workload_faster'] = controlled_faster
+    equivalence = True
+    if ordered_replay:
+        equivalence = not any(controls['native_differences_by_step'])
+        if r5:
+            equivalence &= all(controls[k] for k in ('checkpoint_match', 'same_hardware', 'first_moe_input_match',
+                                                       'first_moe_output_match'))
+            controls['strict_pair_comparable'] = (equivalence and matched and controls['same_run_controls']
+                                                  and controls['same_physical_routes'])
+        else:
+            equivalence &= controls['last_warm_input_match'] and controls['warm_native_match']
     write(root/'comparison.json', dict(study='valid_cost' if valid_cost else 'scheduling',
           matched_outputs=matched, lower=faster, faster_layers=sum(row['delta_us'] < 0 for row in layers),
           total_layers=len(layers), **controls,
           scheduling_gate_passed=not valid_cost and controlled_faster
           and controls.get('native_top1_different_of_256', 0) == 0
-          and (not r4 or (controls['last_warm_input_match'] and controls['warm_native_match']
-                          and not any(controls['native_differences_by_step'])))))
+          and equivalence))
 
 
 if __name__ == '__main__':

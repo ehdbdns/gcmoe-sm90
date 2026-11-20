@@ -133,6 +133,10 @@ fi
   --seqs-per-rank 32 --prefill-lo 256 --prefill-hi 2048 \
   --warm-steps 200 --measure-steps 1 --profile-aligned-step \
   --profile-out "$out/raw" "${fine_args[@]}" 2>&1 | tee "$out/run.log"
+if [[ -n ${GC_MOE_STRICT_STATE_DIR:-} ]]; then
+  nvidia-smi --query-gpu=index,pstate,temperature.gpu,clocks.current.sm,clocks.current.memory,power.draw \
+    --format=csv,noheader > "$out/gpu-after.csv"
+fi
 test -s "$out/raw/capture.json"
 for rank in {0..7}; do
   test -s "$out/raw/rank$rank.json"

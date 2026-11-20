@@ -712,6 +712,7 @@ def main():
           f'(1+{a.warm_steps}warm+{a.measure_steps}measure+{slack}slack) '
           f'prefill_tokens={total_tokens} chunk={chunk} kv_margin={margin}',
           flush=True)
+    strict_state = os.environ.get('GC_MOE_STRICT_STATE_DIR')
     fixed_dir = os.environ.get('GC_MOE_FIXED_DIR')
     fixed = {}
     if fixed_dir:
@@ -736,6 +737,7 @@ def main():
         enable_expert_parallel=True, enable_prefix_caching=False,
         max_model_len=max_len + decode_budget + margin + 64,
         gpu_memory_utilization=float(os.environ.get('GPU_UTIL', '0.80')),
+        **({'kv_cache_memory_bytes': int(os.environ['GC_MOE_KV_BYTES'])} if strict_state else {}),
         max_num_seqs=nseq,
         moe_backend=os.environ.get('MOE_BACKEND', 'gc_moe'),
         all2all_backend=os.environ.get('ALL2ALL_BACKEND',
@@ -795,13 +797,21 @@ def main():
             if o.outputs and o.outputs[0].token_ids:
                 got.setdefault(o.request_id, []).extend(o.outputs[0].token_ids)
 
-    def time_window(n):
+    def time_window(n, blocks=None):
         _sync()                       # drain batches queued before the window
         t0 = time.perf_counter()
-        for _ in range(n):
+        last = t0
+        for i in range(1, n + 1):
             _collect(engine.step())
+            if blocks is not None and i < n and i % 10 == 0:
+                now = time.perf_counter()
+                blocks.append((now - last) * 100)
+                last = now
         _sync()
-        return (time.perf_counter() - t0) / n * 1000.0
+        end = time.perf_counter()
+        if blocks is not None:
+            blocks.append((end - last) * 100)
+        return (end - t0) / n * 1000.0
 
     # Per-step scheduler truth (running requests / scheduled tokens). Read from
     # the EngineCore output before LLMEngine consumes it.
@@ -887,13 +897,25 @@ def main():
     frozen_state = []
     if fixed_dir:
         frozen_state = engine.collective_rpc('_gc_moe_fixed_routes')
+        if strict_state:
+            if (sorted(row['rank'] for row in frozen_state) != list(range(ranks))
+                    or any(row['checkpoint']['source_sha256'] != row['checkpoint']['readback_sha256']
+                           for row in frozen_state)):
+                raise ValueError('eight verified checkpoint readbacks required before stream activation')
+            flag = int(os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'])
+            if engine.collective_rpc('_gc_moe_activate_stream') != [flag] * ranks:
+                raise ValueError('workers did not activate the requested scheduling mode')
     # ---- 3. measured decode ---------------------------------------------
     # A few throw-away steps: the first forwards after the EPLB weight rewrite
     # (or after any host-side stall) are not representative, and one 400 ms
     # outlier in a 100-step average is worth 4 ms/step -- larger than the
     # effect we are trying to measure.
-    for _ in range(flush):
+    for flush_step in range(flush):
         _collect(engine.step())
+        if strict_state and flush_step == 0:
+            probes = {row['rank']: row for row in engine.collective_rpc('_gc_moe_first_replay_call')}
+            for row in frozen_state:
+                row['first_call'] = probes[row['rank']]
     _sync()
     # [SME-IR] Record per-slot loads during the measured window so we can
     # report IR = max_rank(tokens)/mean_rank(tokens) for the same steps.
@@ -1040,7 +1062,8 @@ def main():
         for key in ('running', 'gen_tokens', 'ctx_tokens'):
             rec[key].clear()
         rec['on'] = True
-        tail_ms = time_window(a.timing_tail_steps)
+        blocks = [] if strict_state else None
+        tail_ms = time_window(a.timing_tail_steps, blocks)
         rec['on'] = False
         if (rec['gen_tokens'] != [nseq] * a.timing_tail_steps
                 or rec['ctx_tokens'] != [0] * a.timing_tail_steps):
@@ -1049,6 +1072,8 @@ def main():
             raise RuntimeError('fine records advanced during the timing tail')
         timing_tail = dict(steps=a.timing_tail_steps, ms_per_step=tail_ms,
                            engine_core='inproc', profiler_active=False, fine_writes=False)
+        if blocks is not None:
+            timing_tail['ten_step_host_ms_per_step'] = blocks
     ms = window_s / a.measure_steps * 1000.0
     print(f'[measure] {ms:.2f} ms/step (device-synced window, '
           f'{a.measure_steps} steps, submit={t_submit_s / a.measure_steps * 1000:.2f} ms/step) '

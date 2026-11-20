@@ -173,6 +173,54 @@ def main():
         write(s_dir/'workload.json', state)
         compare(paired)
         assert not read(paired/'comparison.json')['fixed_workload_faster']
+        # R5 forks after warmup. Validate the original warm logs are retained
+        # and the actual checkpoint, first real call and native outputs gate speed.
+        from multilayer_study import json_hash
+        (paired/'comparison.txt').write_text('fixed_stream_r5')
+        (paired/'checkpoint').mkdir()
+        hardware = ''.join(f'{r},gpu-{r}\n' for r in range(8))
+        for arm, directory in enumerate((b_dir, s_dir)):
+            run = read(directory/'run.json')
+            run['fixed_controls'].update(GC_MOE_KV_BYTES=str(11 * 1024**3), GC_MOE_STRICT_STATE_DIR='/common')
+            run['ten_step_host_ms_per_step'] = [run['e2e_ms_per_step']]*10
+            write(directory/'run.json', run)
+            (directory/'hardware.csv').write_text(hardware)
+            (directory/'runtime.log').write_text('same runtime')
+            state = read(b_dir/'workload.json')
+            state['ranks'][0]['native_history']['warm_top1_sha256'] = f'warm{arm}'
+            for row, rank_audit in zip(state['initial'], state['ranks']):
+                rank = row['rank']
+                epoch = rank_audit['first_epoch']
+                rank_audit['replay_stream'] = arm
+                row['last_warm_input'] = f'x{arm}'
+                boundary = dict(requests='r', physical_blocks='b', cache_groups='g', next_epoch=epoch,
+                                eco_step=epoch-1, placement='p', meta='m', eco_state='e', packed_weights='w')
+                layout = dict(views={'kv0': [0, 'torch.float32', [2], [1], 0]}, sizes=[8])
+                h = hashlib.sha256(bytes([rank])).hexdigest()
+                write(paired/'checkpoint'/f'rank{rank}.json',
+                      dict(version=1, rank=rank, controls=boundary, layout=layout, sha256=h))
+                row['checkpoint'] = dict(source_sha256=h, readback_sha256=h, controls_sha256=json_hash(boundary),
+                                         layout_sha256=json_hash(layout), kv_bytes=8, kv_views=1)
+                row['first_call'] = dict(rank=rank, epoch=epoch, quantized=h, scales=h, output=h)
+            write(directory/'workload.json', state)
+        compare(paired)
+        result = read(paired/'comparison.json')
+        assert result['strict_pair_comparable'] and result['scheduling_gate_passed']
+        assert not result['last_warm_input_match'] and not result['warm_native_match']
+        for group, key in [('checkpoint', 'readback_sha256'), ('first_call', 'quantized'), ('first_call', 'output')]:
+            state = read(s_dir/'workload.json')
+            old = state['initial'][7][group][key]
+            state['initial'][7][group][key] = 'f'*64
+            write(s_dir/'workload.json', state)
+            compare(paired)
+            result = read(paired/'comparison.json')
+            assert not result['strict_pair_comparable'] and not result['scheduling_gate_passed']
+            state['initial'][7][group][key] = old
+            write(s_dir/'workload.json', state)
+        state['ranks'][0]['native_history']['replay_top1'][104][5] = 3
+        write(s_dir/'workload.json', state)
+        compare(paired)
+        assert not read(paired/'comparison.json')['scheduling_gate_passed']
         (paired/'comparison.txt').write_text('valid_cost')
         (paired/'measurement.sha').write_text(STREAM_SHA)
         write(b_dir/'run.json', dict(base, stream_m_blocks=1, execution_sha=STREAM_SHA))
