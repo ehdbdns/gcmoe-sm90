@@ -2363,6 +2363,16 @@ def _install_worker_rpc() -> None:
 
     Worker._gc_moe_profile_fine_dump = gc_moe_profile_fine_dump
 
+    def gc_moe_profile_park_fine(self):
+        """Point the one-epoch write window at an already completed dispatch."""
+        buf = profile_buffer()
+        with torch.inference_mode():
+            buf.fine_floor[0].copy_(buf.eco_tl_step[0])
+        torch.cuda.synchronize()
+        return int(buf.fine_ctr[0].item())
+
+    Worker._gc_moe_profile_park_fine = gc_moe_profile_park_fine
+
     if getattr(Worker, '_gc_moe_prof_start', None) is None:
 
         def gc_moe_prof_start(self, out_dir: str, capture_id=None, fine=False) -> bool:

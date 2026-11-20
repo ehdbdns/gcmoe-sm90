@@ -1,6 +1,6 @@
 # H20 逐 valid 的 plan 耗时模型与八卡验收
 
-接在 `MULTILAYER_AB_TASK.md` 的双臂实验后执行，之前的任务使用其已固定的代码和交付目录。本轮两臂均启用逐块 stream，使用同一个提交。唯一的策略变量为 `GC_MOE_ECO_COSTFN`，对照取 0，候选取 2。模式 1 保留供复现旧六档表。默认仍为 0。
+**暂缓执行。** 第一份任务拿到可比的实测收益、且发布者更新交接入口后，再执行本文件的两次运行。两次均用同一提交的逐块 stream。先测原线性耗时函数（`GC_MOE_ECO_COSTFN=0`），再测按 valid 定价的耗时函数（`GC_MOE_ECO_COSTFN=2`）。
 
 ## 模型依据
 
@@ -24,7 +24,7 @@
 
 ## 执行步骤
 
-在同一台空闲的八卡 H20 上运行。顺序、工作负载和导出范围沿用多层任务。环境路径可以指向同一个模型、数据集和已验证的 HCA。
+在同一台空闲的八卡 H20 上运行。每个耗时函数各启动一次模型。工作负载、step 2、全 40 层与 11 层细采沿用任务一。环境路径可以指向同一个模型、数据集和已验证的 HCA。
 
 ```bash
 set -eo pipefail
@@ -33,7 +33,7 @@ cd "$repo"
 test -z "$(git status --porcelain)"
 git fetch origin main
 git merge --ff-only origin/main
-revision=$(git log -1 --format=%H --diff-filter=A -- docs/trace_executor_20261119/VALID_COST_TASK.md)
+revision=$(git rev-parse HEAD)
 work=$(mktemp -d /tmp/gcmoe-valid-cost-XXXXXXXX)
 echo "$work"
 git worktree add --detach "$work/code" "$revision"
@@ -51,13 +51,13 @@ bash scripts/trace_layer/run_multilayer_study.sh "$work/code" "$work/code" "$wor
 (cd "$work/delivery" && sha256sum --quiet -c SHA256SUMS)
 ```
 
-输出目录名沿用比较工具。`baseline` 为 stream + 线性价格，`stream` 为 stream + valid 价格。4 个独立配对按 AB、BA、BA、AB 排序；每臂每对各取一个 100 步直接计时窗口、一个全 40 层 coarse step、一个 11 层 fine step，采集 step 依次为 2、5、8、11。保存所有 rank 的 token、M 块、预测分、实测跨度、占比、误差，以及总览和 absolute Perfetto JSON。程序核验两臂执行 SHA、stream 开关和 cost 模式，并逐 rank 验证候选的设备 plan 分等于按该次实际逐槽 owned 重算的价格之和。
+输出目录名沿用比较工具。`baseline` 为 stream + 线性价格，`stream` 为 stream + valid 价格。两次各在同一进程采集 step 2 并在关闭 profiler 和 fine 写入后计时 100 步。启动入口先检查已推送的任务一 `comparison.json` 的 `scheduling_gate_passed`。保存所有 rank 的 token、M 块、预测分、实测跨度、占比、误差，以及总览和 absolute Perfetto JSON。程序核验两臂执行 SHA、stream 开关和 cost 模式，并逐 rank 验证候选的设备 plan 分等于按该次实际逐槽 owned 重算的价格之和。
 
 ## 回执
 
-1. 在 `docs/trace_handover_20261119/REPLY_VALID_COST.md` 列出测量 SHA、两臂的开关、GPU 和软件版本、各对输入及输出摘要、原始目录与校验文件。附 `summary.csv`、`paired.csv`、`layer_pairs.csv`、逐 rank 表和完整 Perfetto 目录。
-2. 分别报告四对端到端 ms/step、40 层 MoE 耗时、plan 占比误差及差值。对变化最大的两层列出逐 rank valid 分布、token、M 块、预测和实测比例，列出 plan 自身的 `ECO plan` 段耗时。区分配额变化、调度收益和模型计算开销。
-3. 执行者只可在首个编译器诊断处作语义等价的最小编译修复，独立提交并保存原始日志。修后两臂使用同一修后工作树重跑。运行、校验、解析或数值异常在首个失败步骤回传证据。不得更改模型系数、调度、测量口径和验收条件。若持平或退化，按实测结果回报。
+1. 在 `docs/trace_handover_20261119/REPLY_VALID_COST.md` 列出测量 SHA、两臂的开关、GPU 和软件版本、两次输入及输出摘要、原始目录与校验文件。附 `comparison.json`、`paired.csv`、`layer_pairs.csv`、逐 rank 表和完整 Perfetto 目录。
+2. 并列报告这一对的端到端 ms/step、40 层 MoE 耗时、plan 占比误差及差值。对变化最大的两层列出逐 rank valid 分布、token、M 块、预测和实测比例，列出 plan 自身的 `ECO plan` 段耗时。区分配额变化、调度收益和模型计算开销。
+3. 执行者只可在首个编译器诊断处作语义等价的最小编译修复，独立提交并保存原始日志。回执附补丁及等价性说明。最多两次模型启动，保留已完成的臂。运行、校验、解析或数值异常在首个失败步骤回传证据。不得更改模型系数、调度、测量口径和验收条件。若持平或退化，按实测结果回报。
 
 ```bash
 cd "$repo"

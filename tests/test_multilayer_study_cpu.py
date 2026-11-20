@@ -1,11 +1,12 @@
 """Check graph boundaries, share normalization, and paired study packaging on CPU."""
 import csv
+import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from test_aligned_step_cpu import fixture
 from aligned_step import build
-from multilayer_study import ARMS, FINE_LAYERS, STEPS, collect, compare, read, write
+from multilayer_study import ARMS, BASELINE_SHA, FINE_LAYERS, STEPS, STREAM_SHA, collect, compare, read, write
 from test_pull_gemm_detail_cpu import fine_fixture
 from pull_gemm_detail import analyze
 
@@ -79,6 +80,47 @@ def main():
                             writer.writerows(r for r in records if mode=='coarse' or int(r['layer']) in FINE_LAYERS)
         compare(root)
         assert len((root/'layer_pairs.csv').read_text().splitlines()) == 205
+
+        for counts, _ in reports:
+            if counts['layer'] in FINE_LAYERS:
+                shard = fine_fixture(raw, counts)
+                write(raw/f'fine-epoch-{counts["epoch"]}.json', shard)
+        write(raw/'fine.json', dict(id='test', epochs=[reports[i][0]['epoch'] for i in FINE_LAYERS],
+                                    per_epoch_files=True))
+        for stem, _, absolute in analyze(raw, deliver):
+            write(deliver/f'{stem}.detail.perfetto.json', absolute)
+        result.update(timing_tail=dict(engine_core='inproc', steps=100, ms_per_step=45,
+                                       profiler_active=False, fine_writes=False),
+                      eco_costfn=0, stream_m_blocks=0,
+                      tokens={f'req{i}':[1, 2] for i in range(256)})
+        write(raw/'result.json', result)
+        (raw/'execution.sha').write_text(BASELINE_SHA)
+        paired = root/'two-runs'
+        b_dir, s_dir = (paired/'step02'/arm/'paired' for arm in ARMS)
+        b_dir.mkdir(parents=True)
+        collect(raw, b_dir, 'paired', 2)
+        assert len(list(b_dir.glob('*.absolute.perfetto.json'))) == len(FINE_LAYERS)
+        assert len(list(b_dir.glob('*.counts.json'))) == 40
+        assert len((b_dir/'ranks.csv').read_text().splitlines()) == 321
+        base = read(b_dir/'run.json')
+        assert base['e2e_ms_per_step'] == 45 and base['profiled_step_ms'] == 50
+        s_dir.mkdir(parents=True)
+        shutil.copyfile(b_dir/'layers.csv', s_dir/'layers.csv')
+        candidate = dict(base, execution_sha=STREAM_SHA, stream_m_blocks=1, capture_id='other',
+                         e2e_ms_per_step=43, moe_max_rank_sum_ms=5.9)
+        for changes, gate in [({}, True), ({'output_hash':'different'}, False),
+                              ({'moe_max_rank_sum_ms':6}, False), ({'e2e_ms_per_step':46}, False)]:
+            write(s_dir/'run.json', dict(candidate, **changes))
+            compare(paired)
+            assert read(paired/'comparison.json')['scheduling_gate_passed'] == gate
+        assert len((paired/'paired.csv').read_text().splitlines()) == 6
+        assert len((paired/'layer_pairs.csv').read_text().splitlines()) == 41
+        (paired/'comparison.txt').write_text('valid_cost')
+        (paired/'measurement.sha').write_text(STREAM_SHA)
+        write(b_dir/'run.json', dict(base, stream_m_blocks=1, execution_sha=STREAM_SHA))
+        write(s_dir/'run.json', dict(candidate, eco_costfn=2))
+        compare(paired)
+        assert read(paired/'comparison.json')['study'] == 'valid_cost'
     print('MULTILAYER_STUDY_CPU PASS')
 
 

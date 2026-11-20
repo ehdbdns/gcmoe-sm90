@@ -10,7 +10,9 @@ from aligned_step import require
 
 
 FINE_LAYERS = [*range(0, 40, 4), 39]
-STEPS = (2, 5, 8, 11)
+BASELINE_SHA = '98b6194a56e7468653bb6230bf0b3887c9466dce'
+STREAM_SHA = '6617ee976fa86eb77eb3a34b8b6df3e60059a586'
+STEPS = (2, 5, 8, 11)  # Archived multi-process matrices.
 ARMS = ('baseline', 'stream')
 
 
@@ -58,6 +60,14 @@ def collect(raw, dest, mode, step):
                   raw_path=str(raw), capture_id=run['capture_id'], prompt_hash=run['prompt_sha256'],
                   output_hash=hashlib.sha256(json.dumps(run['tokens'], sort_keys=True).encode()).hexdigest(),
                   measured_steps=steps, e2e_ms_per_step=1000*run['window_s']/steps)
+    if mode == 'paired':
+        tail = run['timing_tail']
+        require(tail['engine_core'] == 'inproc' and tail['steps'] == 100
+                and tail['profiler_active'] is False and tail['fine_writes'] is False
+                and tail['ms_per_step'] > 0, 'missing unprofiled 100-step timing')
+        require(len(run['tokens']) == run['seqs'] and all(run['tokens'].values()), 'missing output tokens')
+        record.update(profiled_step_ms=record['e2e_ms_per_step'], timed_steps=tail['steps'],
+                      e2e_ms_per_step=tail['ms_per_step'])
     if 'eco_costfn' in run:
         record.update(eco_costfn=run['eco_costfn'], stream_m_blocks=run['stream_m_blocks'])
     if mode != 'e2e':
@@ -78,7 +88,7 @@ def collect(raw, dest, mode, step):
                             f"{stem} rank {rank['rank']}: valid score {rank['plan_cost']} != {expected}")
             write(dest/path.name, c)
             for suffix, output in [('perfetto','perfetto')] + (
-                    [('detail.perfetto','absolute.perfetto')] if mode == 'fine' else []):
+                    [('detail.perfetto','absolute.perfetto')] if mode == 'fine' or (mode == 'paired' and c['layer'] in FINE_LAYERS) else []):
                 trace = read(path.with_name(f'{stem}.{suffix}.json'))
                 write(dest/f'{stem}.{output}.json', graph_tracks(trace, c))
             slowest = max(c['ranks'], key=lambda r: r['moe_us'])
@@ -101,13 +111,13 @@ def collect(raw, dest, mode, step):
         csv_table(dest/'layers.csv', layer_rows)
         errors = [abs(r['share_error_pp']) for r in rank_rows]
         record.update(plan_mae_pp=mean(errors), plan_max_error_pp=max(errors))
-        if mode == 'coarse':
+        if mode in ('coarse', 'paired'):
             record.update(moe_sum_ms_by_rank=[v/1000 for v in per_rank],
                           moe_max_rank_sum_ms=max(per_rank)/1000)
     write(dest/'run.json', record)
 
 
-def compare(root):
+def compare_matrix(root):
     pairs = []
     captures = set()
     paired_layers = []
@@ -160,14 +170,59 @@ def compare(root):
     csv_table(root/'summary.csv', summary)
 
 
+def compare(root):
+    folder = root/'step02'
+    if not (folder/'baseline'/'paired').exists():
+        return compare_matrix(root)
+    dirs = [folder/arm/'paired' for arm in ARMS]
+    base, candidate = (read(path/'run.json') for path in dirs)
+    require(all(run['step'] == 2 and run['mode'] == 'paired' and run['timed_steps'] == 100
+                and run['measured_steps'] == 1 and run['capture_id'] for run in (base, candidate))
+            and base['capture_id'] != candidate['capture_id'], 'expected two distinct step 2 captures')
+    require(base['prompt_hash'] == candidate['prompt_hash'], 'unmatched prompts')
+    marker = root/'comparison.txt'
+    valid_cost = marker.exists() and marker.read_text().strip() == 'valid_cost'
+    flags = [(r['stream_m_blocks'], r['eco_costfn']) for r in (base, candidate)]
+    if valid_cost:
+        require(base['execution_sha'] == candidate['execution_sha'] == (root/'measurement.sha').read_text().strip()
+                and flags == [(1, 0), (1, 2)], 'invalid valid-cost arms')
+    else:
+        require((base['execution_sha'], candidate['execution_sha']) == (BASELINE_SHA, STREAM_SHA)
+                and flags == [(0, 0), (1, 0)], 'invalid scheduling arms')
+    matched = base['output_hash'] == candidate['output_hash']
+    pairs = []
+    for metric in ('e2e_ms_per_step', 'moe_max_rank_sum_ms', 'profiled_step_ms', 'plan_mae_pp', 'plan_max_error_pp'):
+        b, s = base[metric], candidate[metric]
+        pairs.append(dict(step=2, metric=metric, baseline=b, stream=s, delta=s-b,
+                          delta_pct=100*(s-b)/b if b else None, matched_outputs=matched))
+    csv_table(root/'paired.csv', pairs)
+    tables = []
+    for path in dirs:
+        with (path/'layers.csv').open() as f:
+            table = list(csv.DictReader(f))
+        require([int(row['layer']) for row in table] == list(range(40)), 'incomplete paired layers')
+        tables.append(table)
+    layers = []
+    for b, s in zip(*tables):
+        layers.append(dict(step=2, layer=b['layer'], baseline_max_rank_us=b['max_rank_moe_us'],
+                           stream_max_rank_us=s['max_rank_moe_us'],
+                           delta_us=float(s['max_rank_moe_us'])-float(b['max_rank_moe_us']),
+                           baseline_plan_mae_pp=b['mae_pp'], stream_plan_mae_pp=s['mae_pp']))
+    csv_table(root/'layer_pairs.csv', layers)
+    faster = {metric: candidate[metric] < base[metric] for metric in ('e2e_ms_per_step', 'moe_max_rank_sum_ms')}
+    write(root/'comparison.json', dict(study='valid_cost' if valid_cost else 'scheduling',
+          matched_outputs=matched, lower=faster, faster_layers=sum(row['delta_us'] < 0 for row in layers),
+          total_layers=len(layers), scheduling_gate_passed=not valid_cost and matched and all(faster.values())))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='action', required=True)
     package = sub.add_parser('collect')
     package.add_argument('raw', type=Path)
     package.add_argument('dest', type=Path)
-    package.add_argument('mode', choices=['coarse','e2e','fine'])
-    package.add_argument('step', type=int, choices=STEPS)
+    package.add_argument('mode', choices=['coarse','e2e','fine','paired'])
+    package.add_argument('step', type=int)
     sub.add_parser('compare').add_argument('root', type=Path)
     args = parser.parse_args()
     if args.action == 'collect':

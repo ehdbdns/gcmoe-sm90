@@ -5,10 +5,17 @@ analysis_dir=$(cd "$(dirname "$0")" && pwd)
 variant=${2:-}
 study=0
 layers=(8 20)
+fine_layers=("${layers[@]}")
 case "$variant" in
+  --study-paired)
+    study=1
+    layers=({0..39})
+    fine_layers=(0 4 8 12 16 20 24 28 32 36 39)
+    ;;
   --study-fine|--study-coarse|--study-e2e)
     study=1
     layers=(0 4 8 12 16 20 24 28 32 36 39)
+    fine_layers=("${layers[@]}")
     if [[ $variant == --study-coarse ]]; then layers=({0..39}); fi
     ;;
   ''|--fine-trace) ;;
@@ -37,6 +44,12 @@ source scripts/env.sh
 test -x "$GC_ENV/bin/python"
 export GC_MOE_SRC="$PWD/source"
 export PYTHONPATH="$PWD/source:$PWD/patches:$PWD/integration"
+if [[ $variant == --study-paired ]]; then
+  # The in-process EngineCore advances only when the driver calls step().
+  # The separate TP/EP worker processes still own the eight GPUs.
+  export VLLM_ENABLE_V1_MULTIPROCESSING=0
+  export PYTHONPATH="$PWD/source:$analysis_dir/../../patches:$analysis_dir/../../integration"
+fi
 export WORLD=8 GPU_UTIL=0.72 GC_MOE_NO_PREFETCH=1
 export GC_MOE_EPLB=1 GC_MOE_EPLB_NO_REARRANGE=0 GC_MOE_SLOT_PLACEMENT=identity
 export GC_MOE_ECOPLB_PER_LAYER=1 GC_MOE_ECO_PER_LAYER=1 GC_MOE_EPLB_EXTRA_PER_RANK=8
@@ -50,10 +63,11 @@ export GC_MOE_CAPACITY=2048 GC_MOE_BOUND=2048 GC_MOE_BLOCK_M_FORCE=64 MAX_BATCHE
 export GC_MOE_PULL_TRACE=1 GC_MOE_ECO_TRACE=1 GC_MOE_FINE_TRACE=0
 export GC_MOE_IR_STEP=0 GC_MEASURE_IR_STEP=0 GC_MEASURE_IR=0 GC_MEASURE_LOAD=0
 fine_args=()
-if [[ $variant == --fine-trace || $variant == --study-fine ]]; then
+if [[ $variant == --fine-trace || $variant == --study-fine || $variant == --study-paired ]]; then
   export GC_MOE_FINE_TRACE=1 GC_MOE_FINE_FLOOR=1 GC_MOE_FINE_EPOCHS=1
   export GC_MOE_FINE_RECS=4194304 GC_MOE_FINE_MIN_EPOCH=0
-  fine_args=(--fine-layers "${layers[@]}")
+  fine_args=(--fine-layers "${fine_layers[@]}")
+  if [[ $variant == --study-paired ]]; then fine_args+=(--timing-tail-steps 100); fi
 fi
 export GC_MOE_LAYERS=40 GC_MEASURE_FLUSH="${GC_MOE_STUDY_STEP:-2}" ENFORCE_EAGER=0 CUDAGRAPH_MODE=FULL_DECODE_ONLY
 "$GC_ENV/bin/python" -c 'import torch, vllm; print(torch.__version__, torch.version.cuda, vllm.__version__); assert torch.cuda.device_count() == 8; assert all(torch.cuda.get_device_capability(i)[0] == 9 for i in range(8))' \
@@ -137,10 +151,10 @@ if [ "${#fine_args[@]}" -gt 0 ]; then
   fi
   "$GC_ENV/bin/python" "$analysis_dir/pull_gemm_detail.py" "$out/raw" "$out/deliver" \
     "${detail_args[@]}" 2>&1 | tee "$out/detail.log"
-  test "$(find "$out/deliver" -maxdepth 1 -name '*.detail.perfetto.json' | wc -l)" -eq "${#layers[@]}"
-  test "$(find "$out/deliver" -maxdepth 1 -name '*.detail.json' | wc -l)" -eq "${#layers[@]}"
+  test "$(find "$out/deliver" -maxdepth 1 -name '*.detail.perfetto.json' | wc -l)" -eq "${#fine_layers[@]}"
+  test "$(find "$out/deliver" -maxdepth 1 -name '*.detail.json' | wc -l)" -eq "${#fine_layers[@]}"
   raw_capture+=("$out/raw/fine.json")
-  if [[ $variant == --study-fine ]]; then raw_capture+=("$out"/raw/fine-epoch-*.json); fi
+  if [[ $variant == --study-fine || $variant == --study-paired ]]; then raw_capture+=("$out"/raw/fine-epoch-*.json); fi
 fi
 sha256sum "${raw_capture[@]}" "$out/raw"/rank*.json "$out/deliver"/*.json \
   | tee "$out/sha256.txt"

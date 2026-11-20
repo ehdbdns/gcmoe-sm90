@@ -614,7 +614,12 @@ def main():
                     help='capture exactly one post-rearrangement decode step and device rows')
     ap.add_argument('--fine-layers', type=int, nargs='+', default=[],
                     help='export fine rows for these zero-based layers of the aligned step')
+    ap.add_argument('--timing-tail-steps', type=int, default=0,
+                    help='time additional decode steps in the same process after the aligned trace')
     a = ap.parse_args()
+    if a.timing_tail_steps < 0 or (a.timing_tail_steps and
+            (not a.fine_layers or os.environ.get('VLLM_ENABLE_V1_MULTIPROCESSING') != '0')):
+        ap.error('the timing tail requires a fine aligned capture with an in-process EngineCore')
 
     ranks = int(os.environ.get('WORLD', '8'))
     aligned_layers = int(os.environ.get('GC_MOE_LAYERS', '40'))
@@ -651,10 +656,13 @@ def main():
     # budget, then re-pick with that budget as the per-stream overhead.
     kv_pool = int(os.environ.get('GC_KV_BUDGET', '1150000'))
     prompts = load_prompts(nseq, a.prefill_lo, a.prefill_hi)
+    flush = int(os.environ.get('GC_MEASURE_FLUSH', '5'))
+    tail_warmup = 2 if a.timing_tail_steps else 0
+    extra_steps = flush + tail_warmup + a.timing_tail_steps if a.timing_tail_steps else 0
     for _ in range(3):
         tot = sum(len(p) for p in prompts)
         slack = 2 * (-(-tot // chunk)) + 64
-        budget = 1 + a.warm_steps + a.measure_steps + slack
+        budget = 1 + a.warm_steps + a.measure_steps + slack + extra_steps
         overhead = budget + 512 + 64
         os.environ['GC_KV_OVERHEAD'] = str(overhead)
         if sum(len(p) + overhead for p in prompts) <= kv_pool:
@@ -699,7 +707,7 @@ def main():
     slack = 2 * (-(-total_tokens // chunk)) + 64
     if os.environ.get('GC_PREFILL_SLACK'):
         slack = int(os.environ['GC_PREFILL_SLACK'])   # manual override
-    decode_budget = 1 + a.warm_steps + a.measure_steps + slack
+    decode_budget = 1 + a.warm_steps + a.measure_steps + slack + extra_steps
     print(f'[budget] decode_budget={decode_budget} '
           f'(1+{a.warm_steps}warm+{a.measure_steps}measure+{slack}slack) '
           f'prefill_tokens={total_tokens} chunk={chunk} kv_margin={margin}',
@@ -722,6 +730,11 @@ def main():
            if a.profile_aligned_step else {}))
 
     engine = llm.llm_engine
+    if a.timing_tail_steps:
+        from vllm.v1.engine.core_client import InprocClient
+
+        if not isinstance(engine.engine_core, InprocClient):
+            raise RuntimeError('aligned capture requires driver-stepped EngineCore')
     # [TOKEN-BUDGET] `max_tokens` must cover EVERY decode step any stream will
     # ever be asked to produce, and chunked prefill makes that more than
     # warm+measure:
@@ -812,6 +825,8 @@ def main():
     prefill_steps = 0
     while len(stepped) < nseq:
         outs = engine.step()
+        if a.timing_tail_steps:
+            _collect(outs)
         prefill_steps += 1
         for o in outs:
             if o.outputs and o.outputs[0].token_ids:
@@ -850,7 +865,6 @@ def main():
     # (or after any host-side stall) are not representative, and one 400 ms
     # outlier in a 100-step average is worth 4 ms/step -- larger than the
     # effect we are trying to measure.
-    flush = int(os.environ.get('GC_MEASURE_FLUSH', '5'))
     for _ in range(flush):
         _collect(engine.step())
     _sync()
@@ -987,6 +1001,27 @@ def main():
     run_lo, run_hi, _ = _stat(running)
     gen_lo, gen_hi, gen_med = _stat(rec['gen_tokens'])
     ctx_lo, ctx_hi, _ = _stat(rec['ctx_tokens'])
+    timing_tail = {}
+    if a.timing_tail_steps:
+        # The capture and its counters have already been exported. Park fine
+        # writes before the timing window, keeping the same captured kernels.
+        counters = engine.collective_rpc('_gc_moe_profile_park_fine')
+        if len(counters) != ranks or not all(n > 0 for n in counters):
+            raise RuntimeError(f'invalid per-worker fine counters: {counters}')
+        for _ in range(tail_warmup):
+            _collect(engine.step())
+        for key in ('running', 'gen_tokens', 'ctx_tokens'):
+            rec[key].clear()
+        rec['on'] = True
+        tail_ms = time_window(a.timing_tail_steps)
+        rec['on'] = False
+        if (rec['gen_tokens'] != [nseq] * a.timing_tail_steps
+                or rec['ctx_tokens'] != [0] * a.timing_tail_steps):
+            raise RuntimeError('timing tail did not sustain the requested pure-decode batch')
+        if engine.collective_rpc('_gc_moe_profile_park_fine') != counters:
+            raise RuntimeError('fine records advanced during the timing tail')
+        timing_tail = dict(steps=a.timing_tail_steps, ms_per_step=tail_ms,
+                           engine_core='inproc', profiler_active=False, fine_writes=False)
     ms = window_s / a.measure_steps * 1000.0
     print(f'[measure] {ms:.2f} ms/step (device-synced window, '
           f'{a.measure_steps} steps, submit={t_submit_s / a.measure_steps * 1000:.2f} ms/step) '
@@ -1012,7 +1047,7 @@ def main():
                   warm_steps=a.warm_steps, measure_steps=a.measure_steps,
                   prompt_sha256=hashlib.sha256(json.dumps(prompts, separators=(',', ':')).encode()).hexdigest(),
                   capture_id=capture_id, prefill_s=prefill_s, warm_ms_per_step=warn_s,
-                  timing='device_synced_window',
+                  timing='device_synced_window', timing_tail=timing_tail,
                   submit_ms_per_step=t_submit_s / a.measure_steps * 1000,
                   ms_per_step_median=ms, ms_per_step_min=ms,
                   ms_per_step_max=ms, window_s=window_s,
