@@ -5,7 +5,7 @@ import triton.language as tl
 
 
 @triton.jit
-def _quantize_shared(X, Q, SF, RAW, ENABLED, POS, PROBE: tl.constexpr, LAYERS: tl.constexpr, BATCH: tl.constexpr, H: tl.constexpr, ROW_STRIDE: tl.constexpr,
+def _quantize_shared(X, Q, SF, RAW, ENABLED, POS, PROBE: tl.constexpr, STEPS: tl.constexpr, LAYERS: tl.constexpr, BATCH: tl.constexpr, H: tl.constexpr, ROW_STRIDE: tl.constexpr,
                      COL_STRIDE: tl.constexpr, GROUPS: tl.constexpr):
     row = tl.program_id(0)
     group = tl.program_id(1) * GROUPS + tl.arange(0, GROUPS)
@@ -13,8 +13,8 @@ def _quantize_shared(X, Q, SF, RAW, ENABLED, POS, PROBE: tl.constexpr, LAYERS: t
     source = tl.load(X + row * ROW_STRIDE + col * COL_STRIDE, mask=col < H, other=0)
     if PROBE:
         pos = tl.load(POS)
-        if tl.load(ENABLED) & (pos < LAYERS):
-            tl.store(RAW + (pos * BATCH + row) * H + col, source, mask=col < H)
+        if tl.load(ENABLED) & (pos < LAYERS * STEPS):
+            tl.store(RAW + ((pos % LAYERS) * BATCH + row) * H + col, source, mask=col < H)
     x = source.to(tl.float32)
     scale = tl.div_rn(tl.maximum(tl.max(tl.abs(x), 1), 1.e-4), 448.)
     bits = scale.to(tl.uint32, bitcast=True)
@@ -39,5 +39,6 @@ def stage_shared_input(x, buf):
     if rows:
         _quantize_shared[(rows, triton.cdiv(hidden // 32, 16))](
             x, buf.shared_l1_acts.view(torch.uint8), buf.shared_l1_acts_sf,
-            raw, enabled, position, probe is not None, tape.layers if probe is not None else 0, rows if probe is not None else 0,
+            raw, enabled, position, probe is not None, probe.steps if probe is not None else 1,
+            tape.layers if probe is not None else 0, rows if probe is not None else 0,
             hidden, x.stride(0), x.stride(1), 16)

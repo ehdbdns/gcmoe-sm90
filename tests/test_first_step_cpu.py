@@ -112,6 +112,28 @@ def run(device, directory, publish):
         torch.cuda.synchronize()
         assert probe.marks.tolist() == [111,24]
 
+    # R7 reuses the slab for step one, then holds it across the entire timing tail.
+    probe.steps = 2
+    treatment = Path(directory)/'treatment'
+    treatment.mkdir(exist_ok=True)
+    for layer in range(layers):
+        pos = layers + layer
+        t.position.fill_(pos)
+        t.layer_ids[pos] = layer
+        t.epochs[pos] = 100 + layer
+        b.eco_tl_step.fill_(100 + layer)
+        stage_shared_input(x, b)
+        out.fill_(11 + layer)
+        probe.record(b, out)
+    saved = probe.data.clone()
+    t.position.fill_(2 * layers)
+    probe.record(b, out.zero_())
+    stage_shared_input(torch.zeros_like(x), b)
+    assert torch.equal(saved, probe.data) and torch.equal(probe.raw_input[-1], x)
+    t.position.fill_(len(t.ids))
+    rows = probe.read(t, treatment, 0, publish, sampler, step=1)['layers']
+    assert [r['epoch'] for r in rows] == [100, 101]
+
 
 if __name__ == '__main__':
     with TemporaryDirectory() as d:

@@ -894,6 +894,7 @@ def main():
     print(f'[eplb] rearrangement {"done" if rearranged else "not applicable"}',
           flush=True)
 
+    aa_control = os.getenv('GC_MOE_AA_CONTROL') == '1'
     frozen_state = []
     if fixed_dir:
         frozen_state = engine.collective_rpc('_gc_moe_fixed_routes')
@@ -903,7 +904,7 @@ def main():
                            for row in frozen_state)):
                 raise ValueError('eight verified checkpoint readbacks required before stream activation')
             flag = int(os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'])
-            if engine.collective_rpc('_gc_moe_activate_stream') != [flag] * ranks:
+            if not aa_control and engine.collective_rpc('_gc_moe_activate_stream') != [flag] * ranks:
                 raise ValueError('workers did not activate the requested scheduling mode')
     # ---- 3. measured decode ---------------------------------------------
     # A few throw-away steps: the first forwards after the EPLB weight rewrite
@@ -913,9 +914,20 @@ def main():
     for flush_step in range(flush):
         _collect(engine.step())
         if strict_state and flush_step == 0:
-            probes = {row['rank']: row for row in engine.collective_rpc('_gc_moe_first_replay_call')}
+            probes = {row['rank']: row for row in engine.collective_rpc('_gc_moe_first_replay_call', args=(flush_step,))}
             for row in frozen_state:
                 row['first_call'] = probes[row['rank']]
+            if aa_control:
+                with (Path(strict_state)/f'control-step-mode{flag}.json').open('x') as f:
+                    json.dump(frozen_state, f, separators=(',', ':'))
+                checkpoints = {r['rank']: r['checkpoint'] for r in engine.collective_rpc('_gc_moe_treatment_boundary')}
+                if set(checkpoints) != set(range(ranks)) or any(
+                        c['source_sha256'] != c['readback_sha256'] for c in checkpoints.values()):
+                    raise ValueError('missing treatment checkpoint readback')
+                for row in frozen_state:
+                    row['treatment_checkpoint'] = checkpoints[row['rank']]
+                if engine.collective_rpc('_gc_moe_activate_stream') != [flag] * ranks:
+                    raise ValueError('workers did not switch modes after the control step')
     _sync()
     # [SME-IR] Record per-slot loads during the measured window so we can
     # report IR = max_rank(tokens)/mean_rank(tokens) for the same steps.
@@ -1132,6 +1144,10 @@ def main():
         if got != fixed['tokens']:
             raise ValueError('observed per-request token histories differ from the input reference')
         result['fixed_controls'] = fixed_controls
+        if aa_control:
+            probes = {row['rank']: row for row in engine.collective_rpc('_gc_moe_first_replay_call', args=(1,))}
+            for row in frozen_state:
+                row['treatment_call'] = probes[row['rank']]
         result['fixed_workload'] = dict(initial=frozen_state,
                                         ranks=engine.collective_rpc('_gc_moe_fixed_routes', args=(True,)))
     _pp = (result.get('time_ir') or {}).get('plan_pred')

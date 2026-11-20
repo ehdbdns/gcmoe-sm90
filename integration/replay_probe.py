@@ -14,13 +14,14 @@ FIELDS = ('quantized', 'scales', 'shared_input', 'shared_scales', 'routed_slots'
 @triton.jit
 def _audit_call(USED, BANK, POSITION, ENABLED, SOURCES, DEST, MARKS, EPOCH,
                 N: tl.constexpr, CALLS: tl.constexpr, LAYERS: tl.constexpr,
-                SIZES: tl.constexpr, WIDTH: tl.constexpr, BLOCK: tl.constexpr):
+                STEPS: tl.constexpr, SIZES: tl.constexpr, WIDTH: tl.constexpr, BLOCK: tl.constexpr):
     pos = tl.load(POSITION)
     i = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
     # This is the ordinal copy already required by RouteTape on every call.
     tl.store(BANK + (pos % CALLS) * N + i, tl.load(USED + i, i < N, 0), i < N)
-    if tl.load(ENABLED) & (pos < LAYERS):
-        dest = DEST + pos * WIDTH
+    if tl.load(ENABLED) & (pos < STEPS * LAYERS):
+        layer = pos % LAYERS
+        dest = DEST + layer * WIDTH
         for field in tl.static_range(len(SIZES)):
             for off in range(tl.program_id(0) * BLOCK, SIZES[field], tl.num_programs(0) * BLOCK):
                 idx = off + tl.arange(0, BLOCK)
@@ -28,7 +29,7 @@ def _audit_call(USED, BANK, POSITION, ENABLED, SOURCES, DEST, MARKS, EPOCH,
                 tl.store(dest + idx, value, idx < SIZES[field])
             dest += SIZES[field]
         if tl.program_id(0) == 0:
-            tl.store(MARKS + pos, tl.load(EPOCH))
+            tl.store(MARKS + layer, tl.load(EPOCH))
 
 
 def byte_rows(tensor):
@@ -40,7 +41,8 @@ def row_hashes(rows):
 
 
 class ReplayProbe:
-    def __init__(self, buf, tape):
+    def __init__(self, buf, tape, steps=1):
+        self.steps = steps
         self.batch = tape.batch
         self.topk = buf.num_topk
         self.shared_pairs = {}
@@ -61,15 +63,19 @@ class ReplayProbe:
         used = buf.used_route_ordinal[:self.batch]
         _audit_call[(triton.cdiv(used.numel(), 256),)](
             used, tape.used_ordinals, tape.position, tape.replaying, sources, self.data, self.marks,
-            buf.eco_tl_step, used.numel(), len(tape.ids), tape.layers, self.sizes, sum(self.sizes), 256)
+            buf.eco_tl_step, used.numel(), len(tape.ids), tape.layers, self.steps, self.sizes, sum(self.sizes), 256)
 
-    def read(self, tape, directory, rank, publish, sampler):
+    def read(self, tape, directory, rank, publish, sampler, step=0):
         from stream_checkpoint import tensor_hash
         if set(self.shared_pairs) != set(range(tape.layers)):
             raise ValueError('missing live packed role-4 weight pair for a replay layer')
         epochs = self.marks.tolist()
-        if (tape.position.item() != tape.layers or epochs != tape.epochs[:tape.layers].tolist()
-                or tape.layer_ids[:tape.layers].tolist() != list(range(tape.layers))
+        window = slice(step * tape.layers, (step + 1) * tape.layers)
+        # Step zero is consumed before the banks are reused. The treatment banks
+        # freeze after step one and are read only after the timing tail.
+        expected_position = len(tape.ids) if step else window.stop
+        if (step >= self.steps or tape.position.item() != expected_position or epochs != tape.epochs[window].tolist()
+                or tape.layer_ids[window].tolist() != list(range(tape.layers))
                 or epochs[0] < 1 or epochs != list(range(epochs[0], epochs[0] + tape.layers))):
             raise ValueError(f'rank {rank} did not capture each layer of the first replay step')
         ids = sampler['row_requests']

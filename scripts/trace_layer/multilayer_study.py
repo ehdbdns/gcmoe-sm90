@@ -232,12 +232,16 @@ def json_hash(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def checkpoint_controls(root, audits):
+def checkpoint_controls(root, audits, step=0):
+    directory = root/'checkpoint'
+    if step:
+        directory = directory/'treatment'
     checkpoints, inputs, outputs = [], [], []
+    prior_differences = []
     for rank in range(8):
-        manifest = read(root/'checkpoint'/f'rank{rank}.json')
+        manifest = read(directory/f'rank{rank}.json')
         initial = [audit['initial'][rank] for audit in audits]
-        first = [row['first_call'] for row in initial]
+        first = [row['treatment_call' if step else 'first_call'] for row in initial]
         expected = manifest['sha256']
         required = {'requests', 'physical_blocks', 'cache_groups', 'next_epoch', 'eco_step',
                     'placement', 'meta', 'eco_state', 'packed_weights'}
@@ -246,18 +250,26 @@ def checkpoint_controls(root, audits):
                 and len(bytes.fromhex(expected)) == 32, f'invalid rank {rank} manifest')
         for audit, row, call in zip(audits, initial, first, strict=True):
             require(row['rank'] == call['rank'] == rank
-                    and audit['ranks'][rank]['first_epoch'] == call['epoch'] == manifest['controls']['next_epoch'],
+                    and audit['ranks'][rank]['first_epoch'] + step * 40 == call['epoch'] == manifest['controls']['next_epoch'],
                     f'rank {rank} probe is outside the branch boundary')
             for key in ('quantized', 'scales', 'output'):
                 require(len(call[key]) == 64 and len(bytes.fromhex(call[key])) == 32, f'invalid {key} probe')
-        checkpoints.append(all(row['checkpoint'] == dict(
+        snapshots = [dict(row['treatment_checkpoint' if step else 'checkpoint']) for row in initial]
+        if step:
+            prior = [c.pop('before_restore_sha256') for c in snapshots]
+            require(prior[0] == expected and all(len(h) == 64 and len(bytes.fromhex(h)) == 32 for h in prior),
+                    'invalid end-of-control KV fingerprints')
+            if prior[0] != prior[1]:
+                prior_differences.append(rank)
+        checkpoints.append(all(snapshot == dict(
             source_sha256=expected, readback_sha256=expected, controls_sha256=json_hash(manifest['controls']),
             layout_sha256=json_hash(manifest['layout']), kv_bytes=sum(manifest['layout']['sizes']),
-            kv_views=len(manifest['layout']['views'])) for row in initial)
+            kv_views=len(manifest['layout']['views'])) for snapshot in snapshots)
             and min(manifest['layout']['sizes']) > 0 and bool(manifest['layout']['views']))
         inputs.append(all(first[0][k] == first[1][k] for k in ('quantized', 'scales')))
         outputs.append(first[0]['output'] == first[1]['output'])
-    return dict(checkpoint_match=all(checkpoints), first_moe_input_match=all(inputs),
+    prior_info = {'control_end_kv_different_ranks': prior_differences} if step else {}
+    return dict(**prior_info, checkpoint_match=all(checkpoints), first_moe_input_match=all(inputs),
                 first_moe_output_match=all(outputs),
                 first_moe_input_different_ranks=[r for r, ok in enumerate(inputs) if not ok],
                 first_moe_output_different_ranks=[r for r, ok in enumerate(outputs) if not ok])
@@ -276,7 +288,8 @@ def compare(root):
     marker = root/'comparison.txt'
     valid_cost = marker.exists() and marker.read_text().strip() == 'valid_cost'
     protocol = marker.read_text().strip() if marker.exists() else ''
-    r6 = protocol == 'fixed_stream_r6'
+    aa_control = protocol == 'fixed_stream_r7'
+    r6 = aa_control or protocol == 'fixed_stream_r6'
     checkpointed = r6 or protocol == 'fixed_stream_r5'
     ordered_replay = checkpointed or protocol == 'fixed_stream_r4'
     fixed_stream = ordered_replay or protocol == 'fixed_stream'
@@ -337,6 +350,17 @@ def compare(root):
                 from first_step import first_step_controls
                 controls.update(first_step_controls(root, audits))
                 controls['same_run_controls'] &= config.get('GC_MOE_FIRST_STEP_AUDIT') == '1'
+            if aa_control:
+                from first_step import attention_controls
+                controls['same_run_controls'] &= config.get('GC_MOE_AA_CONTROL') == '1'
+                controls['treatment_boundary'] = checkpoint_controls(root, audits, step=1)
+                controls['treatment_step'] = first_step_controls(root, audits, step=1)
+                controls['flashmla'] = attention_controls(root, audits)
+                controls['negative_control_match'] = (all(controls[k] for k in (
+                    'checkpoint_match', 'first_step_chain_match', 'first_step_finite', 'shared_weights_match',
+                    'shared_branch_active', 'same_hardware', 'same_run_controls'))
+                    and controls['flashmla']['control_match']
+                    and not controls['treatment_boundary']['control_end_kv_different_ranks'])
             blocks = [r['ten_step_host_ms_per_step'] for r in (base, candidate)]
             for values, run in zip(blocks, (base, candidate), strict=True):
                 require(len(values) == 10 and all(math.isfinite(v) and v > 0 for v in values)
@@ -384,6 +408,12 @@ def compare(root):
             if r6:
                 equivalence &= all(controls[k] for k in ('first_step_chain_match', 'shared_branch_active',
                                                           'shared_weights_match', 'first_step_finite'))
+            if aa_control:
+                post = controls['treatment_step']
+                equivalence &= (controls['negative_control_match'] and controls['flashmla']['treatment_match']
+                                and controls['treatment_boundary']['checkpoint_match']
+                                and all(post[k] for k in ('first_step_chain_match', 'shared_branch_active',
+                                                           'shared_weights_match', 'first_step_finite')))
             controls['strict_pair_comparable'] = (equivalence and matched and controls['same_run_controls']
                                                   and controls['same_physical_routes'])
         else:

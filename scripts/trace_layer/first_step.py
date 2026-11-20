@@ -11,8 +11,9 @@ STAGES = (('input', ('hidden_input',)),
 FIELDS = tuple(field for _, fields in STAGES for field in fields)
 
 
-def first_step_controls(root, audits):
-    probes = [[r['first_call']['first_step'] for r in audit['initial']] for audit in audits]
+def first_step_controls(root, audits, step=0):
+    call = 'treatment_call' if step else 'first_call'
+    probes = [[r[call]['first_step'] for r in audit['initial']] for audit in audits]
     reqs = {f'req{i}' for i in range(256)}
     known_logits = [set(), set()]
     shared_live = True
@@ -26,7 +27,7 @@ def first_step_controls(root, audits):
                 and len(ids) == 256 and set(ids) == reqs, f'rank {rank} first-step row order')
         for arm, probe in enumerate((b, s)):
             rows = probe['layers']
-            start = audits[arm]['ranks'][rank]['first_epoch']
+            start = audits[arm]['ranks'][rank]['first_epoch'] + step * 40
             require([row['layer'] for row in rows] == list(range(40))
                     and [row['epoch'] for row in rows] == list(range(start, start+40)),
                     f'rank {rank} incomplete first-step layers')
@@ -40,7 +41,7 @@ def first_step_controls(root, audits):
                         nonfinite.append(dict(arm=('baseline','stream')[arm], rank=rank, layer=row['layer'],
                                               field=field, count=count))
                 shared_live &= all(row['shared_nonzero'][key] for key in ('shared_input', 'shared_y'))
-            legacy = audits[arm]['initial'][rank]['first_call']
+            legacy = audits[arm]['initial'][rank][call]
             require(all(legacy[k] == rows[0]['hashes'][k] for k in ('quantized','scales','output')),
                     'first-call evidence differs from the layer chain')
             sampler = probe['sampler']
@@ -80,12 +81,13 @@ def first_step_controls(root, audits):
                 errors.append((40, index, dict(stage='sampler_'+key, rank=rank, count=len(requests),
                                                examples=requests[:4])))
     require(all(seen == reqs for seen in known_logits), 'first-step logits omit requests')
-    samples = [audit['ranks'][0]['native_history']['replay_top1'][0] for audit in audits]
+    samples = [audit['ranks'][0]['native_history']['replay_top1'][step] for audit in audits]
     native = [dict(request=f'req{i}', baseline=x, stream=y) for i,(x,y) in enumerate(zip(*samples, strict=True)) if x!=y]
     if native:
         errors.append((40, 2, dict(stage='native_top1', count=len(native), examples=native[:4])))
     first = min(((layer, phase) for layer, phase, _ in errors), default=None)
-    with (root/'first_step_layers.csv').open('w', newline='') as f:
+    filename = 'treatment_step_layers.csv' if step else 'first_step_layers.csv'
+    with (root/filename).open('w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=list(layers[0]))
         writer.writeheader()
         writer.writerows(sorted(layers, key=lambda row:(row['layer'],row['rank'])))
@@ -94,3 +96,44 @@ def first_step_controls(root, audits):
                 shared_weights_match=not weight_differences, shared_weight_differences=weight_differences,
                 first_step_native_differences=native,
                 first_observed_differences=[detail for layer, phase, detail in errors if (layer, phase)==first])
+
+
+def attention_controls(root, audits):
+    fields = ('query', 'swa_lengths', 'swa_multiset', 'swa_order',
+              'extra_lengths', 'extra_multiset', 'extra_order', 'mla_output')
+    table, result = [], {}
+    for step, call, stage in ((0, 'first_call', 'control'), (1, 'treatment_call', 'treatment')):
+        diffs = []
+        for rank in range(8):
+            probes = [a['initial'][rank][call]['first_step'] for a in audits]
+            ids = probes[0]['sampler']['row_requests']
+            require(len(ids) == 256 and ids == probes[1]['sampler']['row_requests'], 'invalid attention rows')
+            values = []
+            for arm, probe in enumerate(probes):
+                attn = probe['attention']
+                mode = 0 if step == 0 else arm
+                require(attn['mode'] == probe['stream_mode'] == mode and attn['position'] == 40*step+2,
+                        'FlashMLA or MoE probe observed wrong treatment or step')
+                rows = dict(attn['hashes'], **{k+'_lengths': v for k, v in attn['lengths'].items()})
+                require(set(rows) == set(fields) and all(len(v) == 256 for v in rows.values()),
+                        'incomplete FlashMLA rows')
+                for name, data in rows.items():
+                    if name.endswith('_lengths'):
+                        require(all(type(n) is int and n >= 0 for n in data), 'invalid active prefix length')
+                    else:
+                        require(all(len(h) == 64 and len(bytes.fromhex(h)) == 32 for h in data), 'bad FlashMLA hash')
+                values.append(rows)
+            for key in fields:
+                affected = [req for req, a, b in zip(ids, values[0][key], values[1][key], strict=True) if a != b]
+                row = dict(step=step, layer=2, rank=rank, field=key, different_rows=len(affected),
+                           examples=','.join(affected[:4]))
+                table.append(row)
+                if affected:
+                    diffs.append(row)
+        result[stage+'_match'] = not diffs
+        result[stage+'_differences'] = diffs
+    with (root/'flashmla_rows.csv').open('w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=list(table[0]))
+        writer.writeheader()
+        writer.writerows(table)
+    return result

@@ -37,6 +37,11 @@ def test_checkpoint(root, device):
         loaded = sc.checkpoint(root, 0, False, dict(reversed(list(views.items()))), controls)
         assert loaded == saved and torch.equal(source, backing) and torch.equal(other, torch.arange(6, device=device))
         assert [t.data_ptr() for t in views.values()] == pointers and loaded['kv_bytes'] == 104
+        other.zero_()
+        before = sc.checkpoint(root, 0, False, views, controls, audit_prior=True)
+        assert before['before_restore_sha256'] != saved['source_sha256'] == before['readback_sha256']
+        before = sc.checkpoint(root, 0, False, views, controls, audit_prior=True)
+        assert before['before_restore_sha256'] == saved['source_sha256']
         assert sc.tensor_hash(views['v']) == hashlib.sha256(views['v'].cpu().numpy().tobytes()).hexdigest()
         assert sc.tensor_hash(torch.tensor(0.5, dtype=torch.bfloat16)) == hashlib.sha256(
             torch.tensor([0.5], dtype=torch.bfloat16).view(torch.uint8).numpy()).hexdigest()

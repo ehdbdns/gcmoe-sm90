@@ -1418,7 +1418,8 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                 buf.fixed_routes = RouteTape(buf.buffer.device, buf.num_topk, buf.profile_slot_counts.shape[1])
                 if os.environ.get('GC_MOE_FIRST_STEP_AUDIT') == '1':
                     from replay_probe import ReplayProbe
-                    buf.fixed_routes.first_step_probe = ReplayProbe(buf, buf.fixed_routes)
+                    buf.fixed_routes.first_step_probe = ReplayProbe(
+                        buf, buf.fixed_routes, steps=2 if os.getenv('GC_MOE_AA_CONTROL') == '1' else 1)
                 elif os.environ.get('GC_MOE_STRICT_STATE_DIR'):
                     tape = buf.fixed_routes
                     x = buf.x[:tape.batch]
@@ -2164,6 +2165,9 @@ def _install_worker_rpc() -> None:
     if os.environ.get('GC_MOE_STRICT_STATE_DIR'):
         from stream_checkpoint import install_cache_names
         install_cache_names()
+        if os.getenv('GC_MOE_AA_CONTROL') == '1':
+            from attention_probe import install_flash_probe
+            install_flash_probe(lambda: _SHARED_BUFFER.get('buf'))
 
     def gc_moe_rearrange(self) -> bool:
         return rearrange_now()
@@ -2376,6 +2380,9 @@ def _install_worker_rpc() -> None:
         if buf.replay_stream_mode.item() != 0:
             raise RuntimeError('both workers must complete warmup with baseline scheduling')
         with torch.inference_mode():
+            if os.getenv('GC_MOE_AA_CONTROL') == '1':
+                from attention_probe import reset_flash_probe
+                reset_flash_probe(tape)
             tape.freeze(os.environ['GC_MOE_FIXED_DIR'], rank, reference=recording_reference())
             self._gc_reference_tokens.mark_replay_start()
             if not os.environ.get('GC_MOE_STRICT_STATE_DIR'):
@@ -2397,9 +2404,28 @@ def _install_worker_rpc() -> None:
 
     Worker._gc_moe_fixed_routes = gc_moe_fixed_routes
 
+    def gc_moe_treatment_boundary(self):
+        from stream_checkpoint import prepare_worker
+        buf = profile_buffer()
+        tape = buf.fixed_routes
+        if (os.getenv('GC_MOE_AA_CONTROL') != '1' or not getattr(self, '_gc_boundary_verified', False)
+                or tape.position.item() != tape.layers or buf.replay_stream_mode.item() != 0):
+            raise RuntimeError('treatment checkpoint requires one full baseline control step')
+        ref = self._gc_reference_tokens
+        ref.capture_first_sample = True
+        with torch.inference_mode():
+            restored = prepare_worker(self, buf, _EXPERT_REGISTRY, ref,
+                                      os.path.join(os.environ['GC_MOE_STRICT_STATE_DIR'], 'treatment'),
+                                      os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '0', audit_prior=True)
+        self._gc_treatment_verified = True
+        return dict(rank=int(buf.rank_idx), checkpoint=restored)
+
+    Worker._gc_moe_treatment_boundary = gc_moe_treatment_boundary
+
     def gc_moe_activate_stream(self):
         buf = profile_buffer()
-        if not getattr(self, '_gc_boundary_verified', False) or buf.replay_stream_mode.item() != 0:
+        boundary = '_gc_treatment_verified' if os.getenv('GC_MOE_AA_CONTROL') == '1' else '_gc_boundary_verified'
+        if not getattr(self, boundary, False) or buf.replay_stream_mode.item() != 0:
             raise RuntimeError('stream activation requires a verified pre-switch checkpoint')
         with torch.inference_mode():
             buf.replay_stream_mode.fill_(int(os.environ['GC_MOE_SM90_STREAM_M_BLOCKS']))
@@ -2407,15 +2433,22 @@ def _install_worker_rpc() -> None:
 
     Worker._gc_moe_activate_stream = gc_moe_activate_stream
 
-    def gc_moe_first_replay_call(self):
+    def gc_moe_first_replay_call(self, step=0):
         from stream_checkpoint import tensor_hash
         tape = profile_buffer().fixed_routes
         torch.cuda.synchronize()
         if hasattr(tape, 'first_step_probe'):
             rank = int(profile_buffer().rank_idx)
-            audit = tape.first_step_probe.read(tape, os.environ['GC_MOE_STRICT_STATE_DIR'], rank,
-                                               os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '0',
-                                               self._gc_reference_tokens.first_sample)
+            directory = os.environ['GC_MOE_STRICT_STATE_DIR']
+            if step:
+                directory = os.path.join(directory, 'treatment')
+            publish = os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '0'
+            audit = tape.first_step_probe.read(tape, directory, rank, publish,
+                                               self._gc_reference_tokens.first_sample, step)
+            if os.getenv('GC_MOE_AA_CONTROL') == '1':
+                from attention_probe import read_flash_probe
+                audit['attention'] = read_flash_probe(tape, step)
+                audit['stream_mode'] = int(profile_buffer().replay_stream_mode.item())
             first = audit['layers'][0]
             return dict(rank=rank, epoch=first['epoch'], first_step=audit,
                         **{k: first['hashes'][k] for k in ('quantized', 'scales', 'output')})

@@ -81,7 +81,7 @@ def cache_layout(views):
     return dict(views=schemas, sizes=[b.numel() for b in blobs]), blobs
 
 
-def checkpoint(directory, rank, publish, views, controls):
+def checkpoint(directory, rank, publish, views, controls, audit_prior=False):
     """Both arms reload into existing graph addresses and independently read back."""
     prefix = Path(directory) / f'rank{rank}'
     manifest = prefix.with_suffix('.json')
@@ -107,17 +107,22 @@ def checkpoint(directory, rank, publish, views, controls):
     if payload.stat().st_size != sum(layout['sizes']):
         raise ValueError(f'rank {rank}: incorrect checkpoint byte count')
     readback = hashlib.sha256()
+    prior = hashlib.sha256() if audit_prior and not publish else None
     with payload.open('rb') as src:
         for blob in blobs:
             for slab in blob.split(CHUNK):
                 data = bytearray(slab.numel())
                 if src.readinto(data) != len(data):
                     raise IOError('short read restoring KV checkpoint')
+                if prior is not None:
+                    prior.update(slab.cpu().numpy())
                 slab.copy_(torch.frombuffer(data, dtype=torch.uint8))
                 readback.update(slab.cpu().numpy())
     if readback.hexdigest() != expected['sha256']:
         raise ValueError(f'rank {rank}: live KV readback differs from published checkpoint')
-    return dict(source_sha256=expected['sha256'], readback_sha256=readback.hexdigest(),
+    before = ({'before_restore_sha256': expected['sha256'] if publish else prior.hexdigest()}
+              if audit_prior else {})
+    return dict(**before, source_sha256=expected['sha256'], readback_sha256=readback.hexdigest(),
                 controls_sha256=json_hash(controls), layout_sha256=json_hash(layout),
                 kv_bytes=sum(layout['sizes']), kv_views=len(views))
 
@@ -155,7 +160,7 @@ def runner_boundary(runner, reference):
                 cache_groups=json_hash([groups_config, tables.block_sizes, tables.kernel_block_sizes]))
 
 
-def prepare_worker(worker, buf, modules, reference, directory, publish):
+def prepare_worker(worker, buf, modules, reference, directory, publish, audit_prior=False):
     runner = worker.model_runner
     owner = next(m for m in modules if getattr(m, '_eplb_shuffler', None) is not None)
     layers = owner._eplb_shuffler.components
@@ -166,4 +171,4 @@ def prepare_worker(worker, buf, modules, reference, directory, publish):
                     placement=tensor_hash(owner._eplb['plan']), meta=tensor_hash(buf.eco_meta),
                     eco_state=tensor_hash(buf.eco_state),
                     packed_weights=json_hash([[tensor_hash(t) for t in row] for row in layers]))
-    return checkpoint(directory, int(buf.rank_idx), publish, named_caches(runner), controls)
+    return checkpoint(directory, int(buf.rank_idx), publish, named_caches(runner), controls, audit_prior=audit_prior)

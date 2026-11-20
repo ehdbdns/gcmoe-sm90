@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run both arms in the same pinned measurement checkout.
 set -eo pipefail
-if [[ $# != 2 && ! ( $# == 3 && $3 == --valid-cost ) && ! ( $# == 4 && ( $3 == --replay-from || $3 == --same-state-from || $3 == --trace-first-step-from ) ) ]]; then
-  echo "Usage: $0 common-worktree new-output-dir [--valid-cost | --replay-from directory | --same-state-from directory | --trace-first-step-from directory]" >&2; exit 2
+if [[ $# != 2 && ! ( $# == 3 && $3 == --valid-cost ) && ! ( $# == 4 && ( $3 == --replay-from || $3 == --same-state-from || $3 == --trace-first-step-from || $3 == --negative-control-from ) ) ]]; then
+  echo "Usage: $0 common-worktree new-output-dir [--valid-cost | --replay-from directory | --same-state-from directory | --trace-first-step-from directory | --negative-control-from directory]" >&2; exit 2
 fi
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(realpath "$1")
@@ -11,9 +11,9 @@ sha=$(git -C "$here" rev-parse HEAD)
 test "$(git -C "$root" rev-parse HEAD)" = "$sha"
 analysis_python=$(cd "$root" && source scripts/env.sh && printf '%s/bin/python' "$GC_ENV")
 test -x "$analysis_python"
-unset GC_MOE_FIRST_STEP_AUDIT GC_MOE_FIXED_DIR GC_MOE_FIXED_REUSE GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES
+unset GC_MOE_AA_CONTROL GC_MOE_FIRST_STEP_AUDIT GC_MOE_FIXED_DIR GC_MOE_FIXED_REUSE GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES
 if [[ ${3:-} == --valid-cost ]]; then
-  phase_one="$here/../../docs/trace_executor_20261119/fixed_stream_results_r6/comparison.json"
+  phase_one="$here/../../docs/trace_executor_20261119/fixed_stream_results_r7/comparison.json"
   "$analysis_python" - "$phase_one" <<'CHECK'
 import json
 import sys
@@ -31,6 +31,15 @@ save_partial_checkpoint() {
     for manifest in "$GC_MOE_STRICT_STATE_DIR"/rank*.json; do
       if [[ -f "$manifest" ]]; then cp "$manifest" "$bundle/checkpoint/"; fi
     done
+    if [[ -d "$GC_MOE_STRICT_STATE_DIR/treatment" ]]; then
+      mkdir -p "$bundle/checkpoint/treatment"
+      for control in "$GC_MOE_STRICT_STATE_DIR"/control-step-mode*.json; do
+        if [[ -f "$control" ]]; then cp "$control" "$bundle/checkpoint/"; fi
+      done
+      for manifest in "$GC_MOE_STRICT_STATE_DIR"/treatment/rank*.json; do
+        if [[ -f "$manifest" ]]; then cp "$manifest" "$bundle/checkpoint/treatment/"; fi
+      done
+    fi
   fi
   return "$status"
 }
@@ -39,21 +48,30 @@ echo "$sha" > "$bundle/measurement.sha"
 if [[ ${3:-} == --valid-cost ]]; then
   echo valid_cost > "$bundle/comparison.txt"
 else
-  if [[ ${3:-} == --same-state-from || ${3:-} == --trace-first-step-from ]]; then
+  if [[ ${3:-} == --same-state-from || ${3:-} == --trace-first-step-from || ${3:-} == --negative-control-from ]]; then
     GC_MOE_STRICT_STATE_DIR=$(mktemp -d "${GC_MOE_CHECKPOINT_ROOT:-/tmp}/gcmoe-branch-XXXXXXXX")
     export GC_MOE_STRICT_STATE_DIR GC_MOE_KV_BYTES=11811160064
+    if [[ ${3:-} == --negative-control-from ]]; then
+      export GC_MOE_AA_CONTROL=1
+      mkdir "$GC_MOE_STRICT_STATE_DIR/treatment"
+    fi
     "$analysis_python" - "$GC_MOE_STRICT_STATE_DIR" "$GC_MOE_KV_BYTES" <<'CHECK_SPACE'
+from pathlib import Path
 import shutil
 import sys
 available = shutil.disk_usage(sys.argv[1]).free
-needed = 8 * int(sys.argv[2])
+needed = 8 * int(sys.argv[2]) * (2 if Path(sys.argv[1], 'treatment').is_dir() else 1)
 if available < needed:
     sys.exit(f'KV checkpoint needs up to {needed} bytes, mount has {available}; set GC_MOE_CHECKPOINT_ROOT')
 CHECK_SPACE
     echo "$GC_MOE_STRICT_STATE_DIR" > "$bundle/checkpoint-path.txt"
-    if [[ ${3:-} == --trace-first-step-from ]]; then
+    if [[ ${3:-} == --trace-first-step-from || ${3:-} == --negative-control-from ]]; then
       export GC_MOE_FIRST_STEP_AUDIT=1
-      echo fixed_stream_r6 > "$bundle/comparison.txt"
+      if [[ ${GC_MOE_AA_CONTROL:-0} == 1 ]]; then
+        echo fixed_stream_r7 > "$bundle/comparison.txt"
+      else
+        echo fixed_stream_r6 > "$bundle/comparison.txt"
+      fi
     else
       echo fixed_stream_r5 > "$bundle/comparison.txt"
     fi
@@ -69,7 +87,7 @@ CHECK_SPACE
   "$analysis_python" "$here/multilayer_study.py" reference \
     "$results/multilayer_ab_results/step02/baseline/paired" "$GC_MOE_FIXED_DIR" \
     --prepared "$results/fixed_stream_results_failed/tokens.json"
-  if [[ ${3:-} == --replay-from || ${3:-} == --same-state-from || ${3:-} == --trace-first-step-from ]]; then
+  if [[ ${3:-} == --replay-from || ${3:-} == --same-state-from || ${3:-} == --trace-first-step-from || ${3:-} == --negative-control-from ]]; then
     replay=$(realpath "$4")
     cmp "$GC_MOE_FIXED_DIR/tokens.json" "$replay/tokens.json"
     cp "$replay"/{placement.json,routes-rank{0..7}.pt} "$GC_MOE_FIXED_DIR/"
@@ -117,6 +135,10 @@ done
 if [[ -n ${GC_MOE_STRICT_STATE_DIR:-} ]]; then
   mkdir "$bundle/checkpoint"
   cp "$GC_MOE_STRICT_STATE_DIR"/rank{0..7}.json "$bundle/checkpoint/"
+  if [[ ${GC_MOE_AA_CONTROL:-0} == 1 ]]; then
+    mkdir "$bundle/checkpoint/treatment"
+    cp "$GC_MOE_STRICT_STATE_DIR"/treatment/rank{0..7}.json "$bundle/checkpoint/treatment/"
+  fi
 fi
 if [[ -n ${GC_MOE_FIXED_DIR:-} ]]; then
   cp "$GC_MOE_FIXED_DIR/placement.json" "$bundle/"
