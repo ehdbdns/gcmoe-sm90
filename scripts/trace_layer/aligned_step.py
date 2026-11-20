@@ -175,6 +175,26 @@ def layer_timing(call, stamps, has_work, context):
                                            - max(pull_start, gemm_start)))
 
 
+def measure_plan(ranks):
+    """Compare rank shares within one layer and epoch (signed error in percentage points)."""
+    for row in ranks:
+        call = row['raw_kernels']
+        root = min(('dispatch', 'shared', 'plan'), key=lambda role: call[role]['ts'])
+        start, end = call[root]['ts'], call['combine']['end']
+        require(start <= call['routed']['ts'] and end > start, 'invalid MoE graph span')
+        row.update(graph_root=root, graph_start_us=start, combine_end_us=end, moe_us=end - start)
+    score_sum = sum(r['plan_cost'] for r in ranks)
+    time_sum = sum(r['moe_us'] for r in ranks)
+    require(score_sum > 0, 'zero plan score sum')
+    for row in ranks:
+        predicted = row['plan_cost'] / score_sum
+        actual = row['moe_us'] / time_sum
+        row.update(plan_share=predicted, actual_share=actual,
+                   share_error_pp=100 * (predicted - actual))
+    errors = [abs(r['share_error_pp']) for r in ranks]
+    return dict(mae_pp=mean(errors), max_abs_error_pp=max(errors))
+
+
 def build(capture_dir, layers, dispatch_grid, require_overlap=False):
     capture = json.loads((capture_dir / 'capture.json').read_text())
     require(capture.get('gemm_start') == 'first_valid_cta_claim',
@@ -266,11 +286,7 @@ def build(capture_dir, layers, dispatch_grid, require_overlap=False):
             and rank['checks']['drawn_pull_gemm_overlap_us'] > 0]
         require(not require_overlap or result['pull_gemm_overlap_ranks'],
                 f'epoch {epoch}: no rank has both measured and visible pull/GEMM overlap')
-        measured = [rank['dispatch_to_routed_end_us'] for rank in result['ranks']]
-        predicted_mean, measured_mean = mean(plan), mean(measured)
-        result['plan_vs_measured_ratio_l1'] = sum(
-            abs(score / predicted_mean - elapsed / measured_mean)
-            for score, elapsed in zip(plan, measured))
+        result['graph_plan_accuracy'] = measure_plan(result['ranks'])
         yield result, dict(traceEvents=events)
 
 

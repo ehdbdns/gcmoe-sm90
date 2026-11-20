@@ -16,6 +16,7 @@ the prefill/decode split is explicit: every sequence's *first* generated token
 belongs to the prefill window, everything after it is decode.
 """
 import argparse
+import hashlib
 import json
 import os
 import statistics
@@ -901,6 +902,8 @@ def main():
         _collect(outputs)
     t_submit_s = time.perf_counter() - t0
     rec['on'] = False
+    _sync()
+    window_s = time.perf_counter() - t0
     if a.profile_out:
         info = engine.collective_rpc('_gc_moe_prof_stop')
         ok = [x for x in info if isinstance(x, dict) and x.get('ok') and x.get('path')]
@@ -933,17 +936,20 @@ def main():
                   f'within snapshot {capture["device_snapshot_epochs"]}', flush=True)
             if a.fine_layers:
                 epochs = [capture['first_epoch'] + layer for layer in sorted(set(a.fine_layers))]
-                fine_ranks = engine.collective_rpc('_gc_moe_profile_fine_dump', args=(epochs,))
-                (directory / 'fine.json').write_text(
-                    json.dumps(dict(id=capture_id, epochs=epochs, ranks=fine_ranks)))
-                if len(fine_ranks) != ranks or {worker['rank'] for worker in fine_ranks} != set(range(ranks)):
-                    raise RuntimeError('missing or duplicate fine-trace ranks; see fine.json')
-                for worker in fine_ranks:
-                    if worker.get('error') or any(not worker['epochs'].get(str(epoch)) for epoch in epochs):
-                        raise RuntimeError(f'rank {worker["rank"]}: '
-                                           f'{worker.get("error", "missing target fine rows")}; see fine.json')
-    _sync()                       # last real work still queued on the GPUs
-    window_s = time.perf_counter() - t0
+                # Bound the worker RPC and host allocation to one layer in a wide capture.
+                split = len(epochs) > 2
+                for group in ([[epoch] for epoch in epochs] if split else [epochs]):
+                    fine_ranks = engine.collective_rpc('_gc_moe_profile_fine_dump', args=(group,))
+                    name = f'fine-epoch-{group[0]}.json' if split else 'fine.json'
+                    (directory / name).write_text(json.dumps(dict(id=capture_id, epochs=group, ranks=fine_ranks)))
+                    if len(fine_ranks) != ranks or {w['rank'] for w in fine_ranks} != set(range(ranks)):
+                        raise RuntimeError(f'missing or duplicate fine-trace ranks; see {name}')
+                    for worker in fine_ranks:
+                        if worker.get('error') or any(not worker['epochs'].get(str(e)) for e in group):
+                            raise RuntimeError(f'rank {worker["rank"]}: invalid fine rows; see {name}')
+                if split:
+                    (directory / 'fine.json').write_text(json.dumps(dict(id=capture_id, epochs=epochs,
+                                                                          per_epoch_files=True)))
     ir = {}
     if collect_ir:
         irs = engine.collective_rpc('_gc_moe_ir_end')
@@ -1004,7 +1010,8 @@ def main():
               flush=True)
     result = dict(label=a.label, seqs=nseq, seqs_per_rank=a.seqs_per_rank,
                   warm_steps=a.warm_steps, measure_steps=a.measure_steps,
-                  prefill_s=prefill_s, warm_ms_per_step=warn_s,
+                  prompt_sha256=hashlib.sha256(json.dumps(prompts, separators=(',', ':')).encode()).hexdigest(),
+                  capture_id=capture_id, prefill_s=prefill_s, warm_ms_per_step=warn_s,
                   timing='device_synced_window',
                   submit_ms_per_step=t_submit_s / a.measure_steps * 1000,
                   ms_per_step_median=ms, ms_per_step_min=ms,

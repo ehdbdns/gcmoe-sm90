@@ -1,6 +1,6 @@
 # 八卡执行任务书 · EPLB 重排后单步采样
 
-> 当前执行[逐 M 块领票与四组八卡采样任务书](BATCH_CLAIM_TASK.md)。上一轮的[按 M 块发布任务](STREAM_MBLOCK_TASK.md)及其回执保留供对照。
+> 当前执行[多层双臂对照任务书](MULTILAYER_AB_TASK.md)。上轮[逐 M 块领票四组采样](BATCH_CLAIM_TASK.md)保留供查阅。
 
 下文保留此前的单轮采样流程。该流程使用首次有效 CTA 领取打点提交 `cffe4835270f0d0bcc048b502a0b5716eac910b1` 及包含本任务书的后续提交，依次执行步骤 1 至 5。该轮验收禁止使用 `prof_phases.py`、`FINAL_V2` 或任何旧 run。
 

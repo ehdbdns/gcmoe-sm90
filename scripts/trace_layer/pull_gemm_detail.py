@@ -261,8 +261,6 @@ def analyze(capture_dir, deliver_dir, require_streamed_blocks=False, require_bat
     manifest = json.loads((capture_dir / 'capture.json').read_text())
     fine = json.loads((capture_dir / 'fine.json').read_text())
     require(fine.get('id') == manifest['id'], 'fine rows are from another capture')
-    workers = {item['rank']: item for item in fine['ranks']}
-    require(len(fine['ranks']) == RANKS and set(workers) == set(range(RANKS)), 'expected fine rows for 8 ranks')
     device = {item['rank']: item['calls'] for item in manifest['ranks']}
     outputs = []
     selected = []
@@ -273,6 +271,12 @@ def analyze(capture_dir, deliver_dir, require_streamed_blocks=False, require_bat
             continue
         require(counts['capture_id'] == manifest['id']
                 and epoch == manifest['first_epoch'] + counts['layer'], 'counts and manifest disagree')
+        part = fine
+        if fine.get('per_epoch_files'):
+            part = json.loads((capture_dir / f'fine-epoch-{epoch}.json').read_text())
+            require(part['id'] == fine['id'] and part['epochs'] == [epoch], 'wrong fine epoch file')
+        workers = {item['rank']: item for item in part['ranks']}
+        require(len(part['ranks']) == RANKS and set(workers) == set(range(RANKS)), 'expected fine rows for 8 ranks')
         selected.append(epoch)
         require(len(counts['ranks']) == RANKS
                 and {row['rank'] for row in counts['ranks']} == set(range(RANKS)),

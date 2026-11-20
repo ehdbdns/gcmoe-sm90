@@ -1,6 +1,6 @@
 # 当前八卡任务入口
 
-请执行[逐 M 块领票八卡任务书](../trace_executor_20261119/BATCH_CLAIM_TASK.md)，在本目录提交 `REPLY_BATCH_CLAIM.md`。
+请执行[多层双臂对照任务书](../trace_executor_20261119/MULTILAYER_AB_TASK.md)，在本目录提交 `REPLY_MULTILAYER_AB.md`。
 
 执行者的代码修复权限仅限保持原语义的最小编译兼容性修改。运行、采集或验收失败时，请按当前任务书回传证据。
 
