@@ -58,6 +58,8 @@ def collect(raw, dest, mode, step):
                   raw_path=str(raw), capture_id=run['capture_id'], prompt_hash=run['prompt_sha256'],
                   output_hash=hashlib.sha256(json.dumps(run['tokens'], sort_keys=True).encode()).hexdigest(),
                   measured_steps=steps, e2e_ms_per_step=1000*run['window_s']/steps)
+    if 'eco_costfn' in run:
+        record.update(eco_costfn=run['eco_costfn'], stream_m_blocks=run['stream_m_blocks'])
     if mode != 'e2e':
         layers = []
         rank_rows = []
@@ -68,6 +70,12 @@ def collect(raw, dest, mode, step):
             require(c['capture_id'] == run['capture_id'] and c['step'] == step, 'mixed capture or step')
             stem = path.name.removesuffix('.counts.json')
             layers.append(c['layer'])
+            if run.get('eco_costfn') == 2:
+                from gc_moe.eco.h20_valid_cost import slot_cost
+                for rank in c['ranks']:
+                    expected = sum(slot_cost(q) for q in rank['slots_owned'])
+                    require(rank['plan_cost'] == expected,
+                            f"{stem} rank {rank['rank']}: valid score {rank['plan_cost']} != {expected}")
             write(dest/path.name, c)
             for suffix, output in [('perfetto','perfetto')] + (
                     [('detail.perfetto','absolute.perfetto')] if mode == 'fine' else []):
@@ -103,10 +111,16 @@ def compare(root):
     pairs = []
     captures = set()
     paired_layers = []
+    marker = root/'comparison.txt'
+    valid_cost = marker.exists() and marker.read_text().strip() == 'valid_cost'
     for step in STEPS:
         for mode in ('e2e','coarse','fine'):
             runs = [read(root/f'step{step:02d}'/arm/mode/'run.json') for arm in ARMS]
             base, stream = runs
+            if valid_cost:
+                require(base['execution_sha'] == stream['execution_sha']
+                        and [(r['stream_m_blocks'], r['eco_costfn']) for r in runs] == [(1,0), (1,2)],
+                        'valid-cost comparison requires the same streaming kernel revision and cost modes 0/2')
             require(all(r['step'] == step and r['mode'] == mode for r in runs)
                     and base['prompt_hash'] == stream['prompt_hash'], 'unmatched inputs')
             if mode != 'e2e':

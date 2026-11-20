@@ -5,6 +5,7 @@ import cutlass
 import cutlass.cute as cute
 from cutlass import Boolean, Float32, Int32, Int64, Uint8, Uint32, Uint64
 
+from ..eco import h20_valid_cost
 from ..common.math import (
     abs_f32, bits_float, f32x2_to_e4m3x2_bits, round_bf16_f32,
     ue8m0_fp8_inv, ue8m0_fp8_scale_exp,
@@ -245,55 +246,21 @@ class SM90GCMoERoleKernel:
         # count the sole objective", the opposite pole from BLOCKS_ONLY.
         self.eco_tokens_only = (_osbo.environ.get('GC_MOE_ECO_TOKENS_ONLY', '0')
                                 == '1')
-        # ══════════════════════════════════════════════════════════════════
-        # [COST-FN] Measured cost function. Replaces the token-arithmetic model
-        # with the numbers fitted from the mb-claim absolute trace
-        # (t18_abstrace/docs/abstrace/AT256_eco_mbclaim_rank0_full.*.csv):
-        #
-        #   pure GEMM (span - push, already x ntile) : 398.40 + 13.3203*nq
-        #   combine push (valid-linear, already x ntile): 29.07 + 1.1510*v
-        #   inter-task gap: 1.821 us x 38 hand-offs  = 69.2 us per M block
-        #
-        #   C_block(v) = TABLE[nq(v)]                (see [COST-FN-TABLE])
-        #   cost(slot) = sum over the slot's blocks of C_block(that block)
-        #
-        # nq(v) is the GEMM's QUANTISED n (8/16/32/40/48/64), NOT v: the kernel
-        # charges by the padded tile, so valid=17 and valid=32 cost the same.
-        #
-        # Units: 1/16 microsecond as an integer. A fully packed rank is
-        # ~40 slots x ~1400 us = 56000 us = 896000 units, safely inside Int32.
-        # ══════════════════════════════════════════════════════════════════
-        self.eco_costfn = _osbo.environ.get('GC_MOE_ECO_COSTFN', '0') == '1'
-        # x16 so the fractions survive in integers
-        _Q = 16.0
-        # [COST-FN-TABLE] MEASURED per-block cost, one entry per GEMM padding
-        # bucket. This replaces the previous linear fit
-        # (496.67 + 13.32*nq + 1.15*v), whose residual was S-shaped: it
-        # under-predicted BOTH ends by ~3.3 us per ntile (x38 = +65 us on the
-        # block fixed term) and over-predicted the middle by up to 4.4 us.
-        #
-        # Each entry is exactly what the trace measured for that bucket:
-        #     C(nq) = 18 * mean(L1 span | nq) + 20 * mean(L2 span | nq)
-        # The L2 span ALREADY contains the combine push (verified: 960/960
-        # push records have phase==2 and lie inside their GEMM span), so push
-        # is not added again -- the old code subtracted it from BOTH phases,
-        # which was wrong because L1 emits no push at all.
-        #
-        # [COST-FN-TABLE] C_block(nq) = 18*L1_span + 20*L2_span + 37*gap.
-        # The spans are begin->end of each task, so the hand-off BETWEEN two
-        # tasks of the same block is not inside any span and must be added:
-        # 37 adjacent gaps inside a block x 1.821 us = 67.4 us.
-        # Cross-check: with the gap, sum(cost)/71 = 630 us vs the measured
-        # layer wall of 647 us (ratio 0.97); without it, 584 us (0.90).
-        # NB: tuples, not lists -- the CuTe DSL hashes the kernel object and a
-        # list attribute makes it unhashable ("unhashable type: 'list'").
-        _T = (703.2, 746.2, 849.6, 994.0, 1176.8, 1498.0)  # nq 8..64
-        _U = tuple(int(round(x * _Q)) for x in _T)
-        self.cf_tab0, self.cf_tab1, self.cf_tab2 = _U[0], _U[1], _U[2]
-        self.cf_tab3, self.cf_tab4 = _U[3], _U[4]
-        # slack / warm unit / cold key all need "one full block's cost"
-        self.cf_tab5 = _U[5]
-        self.cf_full = _U[5]
+        self.eco_costfn = config.eco_cost_mode != 0
+        self.eco_valid_cost = config.eco_cost_mode == 2
+        if self.eco_valid_cost:
+            geometry = (self.max_m, self.hidden, self.intermediate, schedule.threads[1])
+            if role == 5 and geometry != (64, 5120, 2304, 384):
+                raise ValueError('valid-cost calibration requires M64, H5120, I2304 and the 384-thread routed role')
+            entries = h20_valid_cost.INTERCEPTS
+            self.cf_full = h20_valid_cost.FULL
+        else:
+            # Reproduce the original six-price experiment in sixteenths of a CTA-us.
+            entries = tuple(round(x * 16) for x in (703.2, 746.2, 849.6, 994., 1176.8, 1498.))
+            self.cf_full = entries[-1]
+        (self.cf_tab0, self.cf_tab1, self.cf_tab2,
+         self.cf_tab3, self.cf_tab4, self.cf_tab5) = entries
+        self.cf_row = h20_valid_cost.ROW_COST if self.eco_valid_cost else 0
         # coefficient of the token term (0 => block-count objective only)
         self.eco_tok_w = 0 if self.eco_blocks_only else 1
         # [COST-FN] `slack` is "one full block's worth of cost", i.e. the
@@ -592,19 +559,7 @@ class SM90GCMoERoleKernel:
     # ---- costs (unit_ref L53-78) --------------------------------------
     @cute.jit
     def _eco_block_cost(self, v: Uint32):
-        """[COST-FN-TABLE] C_block(v) from the MEASURED table.
-
-        The GEMM pads `v` to 8/16/32/40/48/64 and the trace was measured per
-        bucket, so the cost is a 6-entry lookup:
-            628.5, 670.4, 781.5, 930.5, 1121.0, 1442.7   [us]
-        Entry k = 18*mean(L1 span | bucket k) + 20*mean(L2 span | bucket k).
-        The L2 span already contains the combine push and the block hand-off
-        gap is inside the spans, so nothing is added on top.
-
-        Nested `if` (not elif, not a ternary): the DSL only merges values
-        across branches this way, and `valid` is compared directly so no
-        separate quantiser function is needed.
-        """
+        """Look up the padded compute shape, then charge for the actual valid rows."""
         c = Uint32(self.cf_tab5)
         if v <= Uint32(48):
             c = Uint32(self.cf_tab4)
@@ -616,6 +571,10 @@ class SM90GCMoERoleKernel:
                         c = Uint32(self.cf_tab1)
                         if v <= Uint32(8):
                             c = Uint32(self.cf_tab0)
+        if cutlass.const_expr(self.eco_valid_cost):
+            c = c + Uint32(self.cf_row) * v
+            if v == Uint32(0):
+                c = Uint32(0)
         return c
 
     @cute.jit
@@ -708,11 +667,10 @@ class SM90GCMoERoleKernel:
         # [COST-FN] the cold key's ordering is "how much does one more block
         # cost on this rank"; under the measured model that marginal price is
         # C_block(bm) with the measured coefficients instead of wb + bm.
-        # [COST-FN] The reference key is `t0*bm - (x%bm)*(wb+bm)`, and `wb+bm`
-        # there is exactly cost(one full block) minus the token term, i.e. the
-        # marginal price of adding a block. Under the measured model the same
-        # quantity is C_block(bm) - bm (the -bm cancels the `+ max_m*tok_w`
-        # that the expression below adds back).
+        if cutlass.const_expr(self.eco_valid_cost):
+            # T0 already includes the tentative split's tail. Remove its exact
+            # charge before comparing destinations for the same full unit.
+            return Int32(t0) - Int32(self._eco_block_cost(x % Uint32(self.max_m)))
         if cutlass.const_expr(self.eco_costfn):
             # [COST-FN-TABLE] no token term in the table model, so the whole
             # per-block price is cf_full; the caller adds nothing back.

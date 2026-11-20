@@ -1,9 +1,16 @@
 """SM90-only launch contract; no imports from the SM100 validation/runtime path."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 import os
 import torch
 from ..sm90_gc import SM90GCSymmBuffer
+
+
+def _cost_mode():
+    mode = os.getenv('GC_MOE_ECO_COSTFN', '0')
+    if mode not in ('0', '1', '2'):
+        raise ValueError('GC_MOE_ECO_COSTFN must be 0 (linear), 1 (legacy table), or 2 (H20 valid)')
+    return int(mode)
 
 
 @dataclass(frozen=True)
@@ -39,6 +46,7 @@ class ValidatedCall:
     sm_reuse: int = 0
     # [SM-REUSE] SM count of the DISPATCH green partition (role 6 inherits it).
     dispatch_partition_sms: int = 0
+    eco_cost_mode: int = field(default_factory=_cost_mode)
 
 
 def validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,

@@ -1023,6 +1023,8 @@ def main():
                   # [ECO-SM90] which split policy this arm used, and its
                   # rank-time weights (empty for the vanilla/rr arms)
                   eco=os.environ.get('GC_MOE_ECO') == '1',
+                  eco_costfn=int(os.environ.get('GC_MOE_ECO_COSTFN', '0')),
+                  stream_m_blocks=int(os.environ.get('GC_MOE_SM90_STREAM_M_BLOCKS', '0')),
                   eco_weights=dict(wb=int(os.environ.get('GC_MOE_ECO_WB', '0')),
                                    wa=int(os.environ.get('GC_MOE_ECO_WA', '0')),
                                    rounds=int(os.environ.get('GC_MOE_ECO_ROUNDS', '1')),
