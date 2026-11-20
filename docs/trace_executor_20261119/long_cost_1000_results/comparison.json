@@ -1,0 +1,76 @@
+{
+  "revision": "9e7c3f2ae3cdeab4a284090d84d0ee7a78d60e92",
+  "strict_pair_comparable": true,
+  "arms": {
+    "linear": {
+      "e2e_ms_per_step": 85.24383402708918,
+      "moe_ms_per_step": 35.716786688,
+      "mean_layer_max_moe_us": 892.9196672,
+      "cross_scores": {
+        "linear": {
+          "moe": {
+            "mae_pp": 0.2070452311373339,
+            "max_abs_pp": 3.1584469022556654
+          },
+          "routed": {
+            "mae_pp": 0.12804752913853004,
+            "max_abs_pp": 5.965566724084163
+          }
+        },
+        "fine": {
+          "moe": {
+            "mae_pp": 0.23295828837934154,
+            "max_abs_pp": 3.2012824345086512
+          },
+          "routed": {
+            "mae_pp": 0.06806098599530612,
+            "max_abs_pp": 5.856375723514947
+          }
+        }
+      },
+      "native_different": 0,
+      "inputs_match": true
+    },
+    "fine": {
+      "e2e_ms_per_step": 85.08693641005084,
+      "moe_ms_per_step": 35.579830208000004,
+      "mean_layer_max_moe_us": 889.4957552000001,
+      "cross_scores": {
+        "linear": {
+          "moe": {
+            "mae_pp": 0.227930071845975,
+            "max_abs_pp": 3.081127806702835
+          },
+          "routed": {
+            "mae_pp": 0.12949230214478852,
+            "max_abs_pp": 6.202268748544132
+          }
+        },
+        "fine": {
+          "moe": {
+            "mae_pp": 0.21270092036731753,
+            "max_abs_pp": 3.098621821664377
+          },
+          "routed": {
+            "mae_pp": 0.07029908559916094,
+            "max_abs_pp": 6.0146729557840475
+          }
+        }
+      },
+      "native_different": 0,
+      "inputs_match": true
+    }
+  },
+  "differing_control_groups": [],
+  "measured_steps_per_arm": 1000,
+  "layers": 40,
+  "rank_samples_per_arm": 320000,
+  "paired_e2e_delta_pct": -0.18405743808810326,
+  "paired_active_routed_mae_delta_pp": -0.0577484435393691,
+  "moe_faster_layers": 40,
+  "paired_moe_delta_ms": -0.13695648000000005,
+  "paired_moe_delta_pct": -0.3834512919551472,
+  "moe_faster_steps": 936,
+  "moe_faster_50_step_blocks": 19,
+  "measured_moe_faster": true
+}
