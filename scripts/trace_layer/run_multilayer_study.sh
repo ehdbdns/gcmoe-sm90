@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Run from the measurement checkout with two clean, pinned kernel worktrees.
 set -eo pipefail
-if [[ $# != 3 && ( $# != 4 || $4 != --valid-cost ) ]]; then
-  echo "Usage: $0 baseline-worktree stream-worktree new-output-dir [--valid-cost]" >&2; exit 2
+if [[ $# != 2 && ( $# != 3 || $3 != --valid-cost ) ]]; then
+  echo "Usage: $0 common-worktree new-output-dir [--valid-cost]" >&2; exit 2
 fi
 here=$(cd "$(dirname "$0")" && pwd)
-baseline=$(realpath "$1")
-stream=$(realpath "$2")
-bundle=$(realpath -m "$3")
-base_sha=98b6194a56e7468653bb6230bf0b3887c9466dce
-stream_sha=6617ee976fa86eb77eb3a34b8b6df3e60059a586
-analysis_python=$(cd "$baseline" && source scripts/env.sh && printf '%s/bin/python' "$GC_ENV")
+root=$(realpath "$1")
+bundle=$(realpath -m "$2")
+sha=$(git -C "$here" rev-parse HEAD)
+test "$(git -C "$root" rev-parse HEAD)" = "$sha"
+analysis_python=$(cd "$root" && source scripts/env.sh && printf '%s/bin/python' "$GC_ENV")
 test -x "$analysis_python"
-if [[ ${4:-} == --valid-cost ]]; then
-  phase_one="$here/../../docs/trace_executor_20261119/multilayer_ab_results/comparison.json"
+unset GC_MOE_FIXED_DIR
+if [[ ${3:-} == --valid-cost ]]; then
+  phase_one="$here/../../docs/trace_executor_20261119/fixed_stream_results/comparison.json"
   "$analysis_python" - "$phase_one" <<'CHECK'
 import json
 import sys
@@ -24,24 +24,23 @@ if not path.is_file() or json.loads(path.read_text()).get('scheduling_gate_passe
 CHECK
 fi
 mkdir "$bundle"
-git -C "$here" rev-parse HEAD > "$bundle/measurement.sha"
-if [[ ${4:-} == --valid-cost ]]; then
-  base_sha=$(git -C "$here" rev-parse HEAD)
-  stream_sha=$base_sha
+echo "$sha" > "$bundle/measurement.sha"
+if [[ ${3:-} == --valid-cost ]]; then
   echo valid_cost > "$bundle/comparison.txt"
+else
+  echo fixed_stream > "$bundle/comparison.txt"
+  GC_MOE_FIXED_DIR=$(mktemp -d /tmp/gcmoe-route-replay-XXXXXXXX)
+  export GC_MOE_FIXED_DIR VLLM_USE_V2_MODEL_RUNNER=1 VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1
+  echo "$GC_MOE_FIXED_DIR" > "$bundle/workload-path.txt"
+  old_base="$here/../../docs/trace_executor_20261119/multilayer_ab_results/step02/baseline/paired"
+  "$analysis_python" "$here/multilayer_study.py" reference "$old_base" "$GC_MOE_FIXED_DIR"
 fi
 export GC_CAPTURE_TOKENS=1
 for arm in baseline stream; do
-  root=$baseline
-  sha=$base_sha
   flag=0
   cost=0
-  if [[ $arm == stream ]]; then
-    root=$stream
-    sha=$stream_sha
-    flag=1
-  fi
-  if [[ ${4:-} == --valid-cost ]]; then
+  if [[ $arm == stream ]]; then flag=1; fi
+  if [[ ${3:-} == --valid-cost ]]; then
     flag=1
     if [[ $arm == stream ]]; then cost=2; fi
   fi
@@ -59,5 +58,9 @@ for arm in baseline stream; do
   sha256sum "$raw/result.json" > "$out/result.sha256"
   cp "$raw/sha256.txt" "$out/raw-sha256.txt"
 done
+if [[ -n ${GC_MOE_FIXED_DIR:-} ]]; then
+  cp "$GC_MOE_FIXED_DIR/placement.json" "$bundle/"
+  sha256sum "$GC_MOE_FIXED_DIR"/{placement.json,tokens.json,routes-rank{0..7}.pt} > "$bundle/workload.sha256"
+fi
 "$analysis_python" "$here/multilayer_study.py" compare "$bundle"
 (cd "$bundle" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)

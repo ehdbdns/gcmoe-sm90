@@ -1,5 +1,7 @@
 """Check graph boundaries, share normalization, and paired study packaging on CPU."""
 import csv
+import hashlib
+import struct
 import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -115,6 +117,33 @@ def main():
             assert read(paired/'comparison.json')['scheduling_gate_passed'] == gate
         assert len((paired/'paired.csv').read_text().splitlines()) == 6
         assert len((paired/'layer_pairs.csv').read_text().splitlines()) == 41
+        # Exercise fixed replay packaging against the profiler's real per-slot rows.
+        audits = []
+        for rank in range(8):
+            values = [q for counts, _ in reports for q in counts['ranks'][rank]['slots_owned']]
+            step_hash = hashlib.sha256(struct.pack(f'<{len(values)}i', *values)).hexdigest()
+            audits.append(dict(rank=rank, calls=4200, first_epoch=reports[0][0]['epoch']-80,
+                               route_ids='ids', route_weights='weights', batch_order='batch',
+                               layer_order='layers', owned_steps=[step_hash]*105,
+                               owned_totals=[[1536]*40 for _ in range(105)], native_top1=[2]*256))
+        result['fixed_workload'] = dict(
+            initial=[dict(rank=r, placement='fixed', eco_state='cold') for r in range(8)], ranks=audits)
+        write(raw/'result.json', result)
+        (raw/'execution.sha').write_text(STREAM_SHA)
+        collect(raw, b_dir, 'paired', 2)
+        fixed_base = read(b_dir/'run.json')
+        write(s_dir/'run.json', dict(fixed_base, stream_m_blocks=1, capture_id='other',
+                                     moe_max_rank_sum_ms=5.9, e2e_ms_per_step=43))
+        (paired/'comparison.txt').write_text('fixed_stream')
+        (paired/'measurement.sha').write_text(STREAM_SHA)
+        fixed_audit = read(b_dir/'workload.json')
+        write(s_dir/'workload.json', fixed_audit)
+        compare(paired)
+        assert read(paired/'comparison.json')['scheduling_gate_passed']
+        fixed_audit['ranks'][0]['owned_steps'][104] = 'different slots, same total'
+        write(s_dir/'workload.json', fixed_audit)
+        compare(paired)
+        assert not read(paired/'comparison.json')['fixed_workload_faster']
         (paired/'comparison.txt').write_text('valid_cost')
         (paired/'measurement.sha').write_text(STREAM_SHA)
         write(b_dir/'run.json', dict(base, stream_m_blocks=1, execution_sha=STREAM_SHA))

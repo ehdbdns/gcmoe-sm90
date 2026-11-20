@@ -712,8 +712,18 @@ def main():
           f'(1+{a.warm_steps}warm+{a.measure_steps}measure+{slack}slack) '
           f'prefill_tokens={total_tokens} chunk={chunk} kv_margin={margin}',
           flush=True)
+    fixed_dir = os.environ.get('GC_MOE_FIXED_DIR')
+    fixed = {}
+    if fixed_dir:
+        from pathlib import Path
+        fixed = json.loads((Path(fixed_dir) / 'tokens.json').read_text())
+        prompt_hash = hashlib.sha256(json.dumps(prompts, separators=(',', ':')).encode()).hexdigest()
+        if (prompt_hash != fixed['prompt_hash'] or set(fixed['tokens']) != {f'req{i}' for i in range(nseq)}
+                or (nseq, a.warm_steps, flush, a.measure_steps, tail_warmup, a.timing_tail_steps)
+                != (256, 200, 2, 1, 2, 100)):
+            raise ValueError('fixed workload does not match the prompts or decode protocol')
     llm = LLM(
-        model=os.environ['MODEL'], tensor_parallel_size=8,
+        **({'logits_processors': ['fixed_tokens:ReferenceTokens']} if fixed_dir else {}),        model=os.environ['MODEL'], tensor_parallel_size=8,
         enable_expert_parallel=True, enable_prefix_caching=False,
         max_model_len=max_len + decode_budget + margin + 64,
         gpu_memory_utilization=float(os.environ.get('GPU_UTIL', '0.80')),
@@ -811,6 +821,11 @@ def main():
     if os.environ.get('GC_MEASURE_LOAD', '1') == '1':
         engine.collective_rpc('_gc_moe_meas_enable')
 
+    if fixed_dir:
+        installed = engine.collective_rpc('_gc_moe_fixed_tokens')
+        if installed != [True] * ranks:
+            raise RuntimeError('reference sampler was not installed on every worker')
+
     # ---- submit -----------------------------------------------------------
     ids = []
     for i, p in enumerate(prompts):
@@ -860,6 +875,9 @@ def main():
     print(f'[eplb] rearrangement {"done" if rearranged else "not applicable"}',
           flush=True)
 
+    frozen_state = []
+    if fixed_dir:
+        frozen_state = engine.collective_rpc('_gc_moe_fixed_routes')
     # ---- 3. measured decode ---------------------------------------------
     # A few throw-away steps: the first forwards after the EPLB weight rewrite
     # (or after any host-side stall) are not representative, and one 400 ms
@@ -1076,6 +1094,11 @@ def main():
                   gen_tokens_total=sum(len(v) for v in got.values()),
                   tokens={k: v for k, v in sorted(got.items())})
 
+    if fixed_dir:
+        if got != fixed['tokens']:
+            raise ValueError('observed per-request token histories differ from the input reference')
+        result['fixed_workload'] = dict(initial=frozen_state,
+                                        ranks=engine.collective_rpc('_gc_moe_fixed_routes', args=(True,)))
     _pp = (result.get('time_ir') or {}).get('plan_pred')
     if _pp and 'pred_ratio' in _pp:
         print(f"[plan-pred] pred_ratio={_pp['pred_ratio']}", flush=True)

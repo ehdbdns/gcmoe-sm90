@@ -851,6 +851,10 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             _t0 = torch.cuda.Event(enable_timing=True)
             _t1 = torch.cuda.Event(enable_timing=True)
             _t0.record()
+        tape = getattr(buf, 'fixed_routes', None)
+        use_tape = tape is not None and tokens == tape.batch and self._eplb is not None
+        if use_tape:
+            topk_ids, topk_weights = tape.select(topk_ids, topk_weights, _LAYER_ROW[id(packed[0][0])])
         buf.x[:tokens].copy_(xq.view(tokens, -1))
         buf.x_sf[:tokens].copy_(xsf.view(tokens, -1))
         if self._eplb is not None and _eco_enabled():
@@ -918,6 +922,8 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         buf.topk_weights[:tokens].copy_(topk_weights.to(torch.float32).view(tokens, -1))
 
         self._launch(packed, buf, output, tokens)
+        if use_tape:
+            tape.finish_call(buf)
         # [METRIC-FIX] Snapshot the per-call occupancy of the call that just
         # finished. role 3 zeroes header[7] and the next call overwrites
         # expert_count, so a single read after the window would see zeros.
@@ -1382,6 +1388,10 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                 trace=os.environ.get('GC_MOE_ECO_TRACE') == '1'
                       or os.environ.get('GC_MOE_PULL_TRACE') == '1')
             self._buffer_key = key
+            if os.environ.get('GC_MOE_FIXED_DIR'):
+                from fixed_workload import RouteTape
+                buf = self._buffer
+                buf.fixed_routes = RouteTape(buf.buffer.device, buf.num_topk, buf.profile_slot_counts.shape[1])
             _SHARED_BUFFER['buf'] = self._buffer
             _SHARED_BUFFER['key'] = key
         return self._buffer
@@ -1620,7 +1630,20 @@ def rearrange_now() -> bool:
     # --- 2. plan on rank 0, broadcast -------------------------------------
     hist_layers = hist.shape[1]
     if buf.rank_idx == 0:
-        new_plan, _, _ = rebalance_experts_global(hist, buf.physical, per_rank)
+        fixed_dir = os.environ.get('GC_MOE_FIXED_DIR')
+        if fixed_dir:
+            import json
+            from pathlib import Path
+            layout_path = Path(fixed_dir) / 'placement.json'
+        if fixed_dir and os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '1':
+            new_plan = torch.tensor(json.loads(layout_path.read_text()),
+                                    dtype=torch.int32, device=buf.buffer.device)
+            if new_plan.shape != (hist_layers, buf.physical):
+                raise ValueError('fixed EPLB placement has the wrong dimensions')
+        else:
+            new_plan, _, _ = rebalance_experts_global(hist, buf.physical, per_rank)
+            if fixed_dir:
+                layout_path.write_text(json.dumps(new_plan.cpu().tolist()))
         new_plan = new_plan.contiguous()
     else:
         new_plan = torch.empty((hist_layers, buf.physical), dtype=torch.int32,
@@ -2343,6 +2366,33 @@ def _install_worker_rpc() -> None:
         return out
 
     Worker._gc_moe_profile_snapshot = gc_moe_profile_snapshot
+
+    def gc_moe_fixed_tokens(self):
+        from fixed_tokens import install
+
+        self._gc_reference_tokens = install(self.model_runner, os.environ['GC_MOE_FIXED_DIR'])
+        return True
+
+    Worker._gc_moe_fixed_tokens = gc_moe_fixed_tokens
+
+    def gc_moe_fixed_routes(self, finish=False):
+        from fixed_workload import digest
+
+        torch.cuda.synchronize()
+        buf = profile_buffer()
+        rank = int(buf.rank_idx)
+        tape = buf.fixed_routes
+        if finish:
+            return dict(tape.audit(rank), native_top1=self._gc_reference_tokens.native_sample(),
+                        batch_order=self._gc_reference_tokens.batch_hash.hexdigest())
+        with torch.inference_mode():
+            tape.freeze(os.environ['GC_MOE_FIXED_DIR'], rank,
+                        reference=os.environ['GC_MOE_SM90_STREAM_M_BLOCKS'] == '0')
+        mod = next(m for m in _EXPERT_REGISTRY if m._eplb is not None)
+        return dict(rank=rank, placement=digest(mod._eplb['plan']), eco_state=digest(buf.eco_state))
+
+    Worker._gc_moe_fixed_routes = gc_moe_fixed_routes
+
 
     def gc_moe_profile_fine_dump(self, epochs):
         """Export just the requested epochs from the armed fine-trace window."""

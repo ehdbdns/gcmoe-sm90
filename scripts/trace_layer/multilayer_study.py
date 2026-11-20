@@ -3,6 +3,8 @@ import argparse
 import csv
 import hashlib
 import json
+import os
+import struct
 from pathlib import Path
 from statistics import mean, median
 
@@ -22,6 +24,19 @@ def read(path):
 
 def write(path, data):
     path.write_text(json.dumps(data, separators=(',', ':'), allow_nan=False) + '\n')
+
+
+def reference(previous, dest):
+    checksum, location = (previous/'result.sha256').read_text().strip().split(maxsplit=1)
+    path = Path(os.environ.get('GC_MOE_REFERENCE_RESULT', location))
+    payload = path.read_bytes()
+    require(hashlib.sha256(payload).hexdigest() == checksum, 'wrong historical baseline result')
+    old = json.loads(payload)
+    prior = read(previous/'run.json')
+    output_hash = hashlib.sha256(json.dumps(old['tokens'], sort_keys=True).encode()).hexdigest()
+    require(old['prompt_sha256'] == prior['prompt_hash'] and output_hash == prior['output_hash'],
+            'historical token reference does not match its receipt')
+    write(dest/'tokens.json', dict(prompt_hash=prior['prompt_hash'], tokens=old['tokens']))
 
 
 def csv_table(path, rows):
@@ -72,6 +87,7 @@ def collect(raw, dest, mode, step):
         record.update(eco_costfn=run['eco_costfn'], stream_m_blocks=run['stream_m_blocks'])
     if mode != 'e2e':
         layers = []
+        slot_counts = [[] for _ in range(8)]
         rank_rows = []
         layer_rows = []
         per_rank = [0.] * 8
@@ -106,6 +122,7 @@ def collect(raw, dest, mode, step):
                                                           'moe_us','plan_cost','plan_share',
                                                           'actual_share','share_error_pp')}))
                 per_rank[r['rank']] += r['moe_us']
+                slot_counts[r['rank']].extend(r['slots_owned'])
         require(layers == (FINE_LAYERS if mode == 'fine' else list(range(40))), 'incomplete layers')
         csv_table(dest/'ranks.csv', rank_rows)
         csv_table(dest/'layers.csv', layer_rows)
@@ -114,6 +131,29 @@ def collect(raw, dest, mode, step):
         if mode in ('coarse', 'paired'):
             record.update(moe_sum_ms_by_rank=[v/1000 for v in per_rank],
                           moe_max_rank_sum_ms=max(per_rank)/1000)
+        if 'fixed_workload' in run:
+            audit = run['fixed_workload']
+            initial = sorted(audit['initial'], key=lambda r: r['rank'])
+            ranks = sorted(audit['ranks'], key=lambda r: r['rank'])
+            require([r['rank'] for r in initial] == [r['rank'] for r in ranks] == list(range(8)),
+                    'incomplete fixed-workload audit')
+            require(len({r['placement'] for r in initial}) == 1, 'ranks disagree on EPLB placement')
+            for r in ranks:
+                require(r['calls'] == 4200 and len(r['owned_steps']) == 105, 'incomplete route replay')
+                require(int(layer_rows[0]['epoch']) == r['first_epoch'] + 40*step,
+                        'profiled call and replay step have different epochs')
+                values = slot_counts[r['rank']]
+                observed = hashlib.sha256(struct.pack(f'<{len(values)}i', *values)).hexdigest()
+                require(observed == r['owned_steps'][step], 'profiled step counts differ from replay audit')
+            for t in range(105):
+                for layer in range(40):
+                    require(sum(r['owned_totals'][t][layer] for r in ranks) == 256*6*8,
+                            f'incomplete routed rows at step {t} layer {layer}')
+            native = [r['native_top1'] for r in ranks if r['native_top1'] is not None]
+            require(native and len(native[0]) == 256 and all(v == native[0] for v in native),
+                    'missing or inconsistent native top-1 audit')
+            write(dest/'workload.json', dict(initial=initial, ranks=ranks))
+            record['fixed_workload'] = True
     write(dest/'run.json', record)
 
 
@@ -182,10 +222,25 @@ def compare(root):
     require(base['prompt_hash'] == candidate['prompt_hash'], 'unmatched prompts')
     marker = root/'comparison.txt'
     valid_cost = marker.exists() and marker.read_text().strip() == 'valid_cost'
+    fixed_stream = marker.exists() and marker.read_text().strip() == 'fixed_stream'
+    controls = {}
     flags = [(r['stream_m_blocks'], r['eco_costfn']) for r in (base, candidate)]
     if valid_cost:
         require(base['execution_sha'] == candidate['execution_sha'] == (root/'measurement.sha').read_text().strip()
                 and flags == [(1, 0), (1, 2)], 'invalid valid-cost arms')
+    elif fixed_stream:
+        require(flags == [(0, 0), (1, 0)] and base['execution_sha'] == candidate['execution_sha']
+                == (root/'measurement.sha').read_text().strip()
+                and all(r.get('fixed_workload') for r in (base, candidate)), 'invalid fixed stream arms')
+        audits = [read(path/'workload.json') for path in dirs]
+        left, right = audits
+        controls['placement_and_initial_state_match'] = left['initial'] == right['initial']
+        keys = ('rank', 'batch_order', 'route_ids', 'route_weights', 'layer_order', 'owned_steps')
+        controls['routes_and_all_slot_counts_match'] = all(
+            all(b[k] == s[k] for k in keys) for b, s in zip(left['ranks'], right['ranks'], strict=True))
+        native = [next(r['native_top1'] for r in audit['ranks'] if r['native_top1'] is not None)
+                  for audit in audits]
+        controls['native_top1_different_of_256'] = sum(b != s for b, s in zip(*native, strict=True))
     else:
         require((base['execution_sha'], candidate['execution_sha']) == (BASELINE_SHA, STREAM_SHA)
                 and flags == [(0, 0), (1, 0)], 'invalid scheduling arms')
@@ -210,9 +265,15 @@ def compare(root):
                            baseline_plan_mae_pp=b['mae_pp'], stream_plan_mae_pp=s['mae_pp']))
     csv_table(root/'layer_pairs.csv', layers)
     faster = {metric: candidate[metric] < base[metric] for metric in ('e2e_ms_per_step', 'moe_max_rank_sum_ms')}
+    controlled_faster = matched and all(faster.values())
+    if fixed_stream:
+        controlled_faster &= controls['placement_and_initial_state_match'] and controls['routes_and_all_slot_counts_match']
+        controls['fixed_workload_faster'] = controlled_faster
     write(root/'comparison.json', dict(study='valid_cost' if valid_cost else 'scheduling',
           matched_outputs=matched, lower=faster, faster_layers=sum(row['delta_us'] < 0 for row in layers),
-          total_layers=len(layers), scheduling_gate_passed=not valid_cost and matched and all(faster.values())))
+          total_layers=len(layers), **controls,
+          scheduling_gate_passed=not valid_cost and controlled_faster
+          and controls.get('native_top1_different_of_256', 0) == 0))
 
 
 if __name__ == '__main__':
@@ -223,9 +284,14 @@ if __name__ == '__main__':
     package.add_argument('dest', type=Path)
     package.add_argument('mode', choices=['coarse','e2e','fine','paired'])
     package.add_argument('step', type=int)
+    ref = sub.add_parser('reference')
+    ref.add_argument('previous', type=Path)
+    ref.add_argument('dest', type=Path)
     sub.add_parser('compare').add_argument('root', type=Path)
     args = parser.parse_args()
     if args.action == 'collect':
         collect(args.raw, args.dest, args.mode, args.step)
+    elif args.action == 'reference':
+        reference(args.previous, args.dest)
     else:
         compare(args.root)
