@@ -1,4 +1,8 @@
-# 当前任务 · 1000 + 1000 步的两臂 fine cost 对照
+# 当前任务 · 修正 EPLB 后的 20 臂主表
+
+回执写入本目录的 `REPLY_MAIN20_FINE_COST.md`。每档 BS 固定工作量，测量完整 MoE、端到端、各 rank 预测误差与 ECO 拍卖成交。[八卡任务书](../trace_executor_20261119/MAIN20_FINE_COST_TASK.md)
+
+# 历史任务 · 1000 + 1000 步的两臂 fine cost 对照
 
 在同一台八卡 H20 上固定 stream，先测线性价格，再测逐 valid 价格。主指标为重排后 1000 步完整 MoE 耗时。请回执至本目录的 `REPLY_LONG_COST_1000.md`。[八卡执行任务书](../trace_executor_20261119/LONG_COST_1000_TASK.md)
 

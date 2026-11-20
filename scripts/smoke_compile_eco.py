@@ -25,6 +25,9 @@ def main():
     step_profile = os.environ.get('GC_MOE_STEP_PROFILE') == '1'
     shared = int(step_profile)
     physical = (448 if step_profile else 424) if eco else 0
+    matrix = os.environ.get('GC_MOE_MATRIX_ARM')
+    if matrix:
+        physical = 384 if matrix == 'vanilla' else 448
     # trace=True so the ECO roles that touch the timeline can be compiled
     layout = SM90GCBufferLayout(ranks, E, CAP, TOPK, H, I, shared, physical, eco, True)
     config = ValidatedCall(ranks=ranks, experts=E, capacity=CAP, topk=TOPK,
@@ -46,7 +49,7 @@ def main():
     ctx = get_context()
     schedule = get_sm90_role_config(config, ctx)
     print('schedule', schedule, flush=True)
-    specs = _role_specs(config, layout, schedule, step_profile)
+    specs = _role_specs(config, layout, schedule, step_profile and matrix != "vanilla")
     print('roles', [(s[1][0], s[1][1], s[1][2], s[1][3]) for s in specs], flush=True)
     identity = _compiler_identity('sm_90a')
     t0 = time.time()

@@ -24,6 +24,7 @@ def scalar_method(name):
 
 
 class ScalarPlan:
+    matrix = True
     threads = 1
     max_m = 64
     eco_wb, eco_wa, eco_tok_w = 26, 0, 1
@@ -35,6 +36,7 @@ class ScalarPlan:
     _eco_emit_quota = scalar_method('_eco_emit_quota')
     _eco_do_auction_round = scalar_method('_eco_do_auction_round')
     _eco_costC = scalar_method('_eco_costC')
+    _eco_block_cost = scalar_method('_eco_block_cost')
     _eco_hp = scalar_method('_eco_hp')
     _eco_in = scalar_method('_eco_in')
     _eco_out = scalar_method('_eco_out')
@@ -51,7 +53,7 @@ class ScalarPlan:
         self.copies = [np.flatnonzero((ref.phy == e) & ref.active).tolist() for e in range(ref.E)]
         for field in ('phy','act','n','k','rem','x','T0','g','pn','u','y','part','quota',
                       'T','tot','nof','nacc','cks','ckv','cki','ckh','ckp','hit',
-                      'grp','of','gcnt','gof','acc'):
+                      'grp','of','gcnt','gof','acc','candidates'):
             setattr(self, f'eco_{field}_off', field)
 
     def _eco_slot_of(self, base, expert, copy):
@@ -87,7 +89,7 @@ class ScalarPlan:
         slab = {name: [0] * self.physical for name in (
             'T0','x','u','g','pn','y','quota','T','tot','nof','nacc','cks','ckv','cki','ckh',
             'ckp','hit','grp','gcnt','acc','key')}
-        slab.update(gof=[0] * (ref.R + 1), of=[0] * (8 * ref.P))
+        slab.update(candidates=[0], gof=[0] * (ref.R + 1), of=[0] * (8 * ref.P))
         units = [(n + ref.bm - 1) // ref.bm for n in counts]
         slab.update(phy=ref.phy.tolist(), act=ref.active.tolist(), n=counts, k=units,
                     rem=[(n - 1) % ref.bm + 1 if n else 0 for n in counts], part=[0xffffffff] * ref.E)
@@ -103,7 +105,10 @@ class ScalarPlan:
         self._eco_emit_quota(slab)
         for _ in range(ref.nr if warm else ref.nr_cold):
             self._eco_rank_time(slab, 'quota', 'T')
-            if self._eco_do_auction_round(None, slab) == 0:
+            moves = self._eco_do_auction_round(None, slab)
+            counts_word = slab['candidates'][0]
+            assert 0 <= moves <= slab['nof'][0] <= counts_word >> 16 <= (counts_word & 65535) <= ref.P
+            if moves == 0:
                 break
             self._eco_emit_quota(slab)
         published = dict(eco_quota=[0] * ref.P, eco_quota_start=[0] * ref.P,
@@ -140,6 +145,22 @@ def test_auctions():
                 prev = (got, counts)
 
 
+def test_fine_auction_prices():
+    from gc_moe.eco.h20_valid_cost import FULL, INTERCEPTS, ROW_COST, block_cost, slot_cost
+    planner = ScalarPlan(UnitPlanner([0, 0], 2, 1, wb=26, wa=0), 2)
+    planner.eco_valid_cost = planner.eco_costfn = True
+    planner.cf_full, planner.cf_row = FULL, ROW_COST
+    for k, price in enumerate(INTERCEPTS):
+        setattr(planner, f'cf_tab{k}', price)
+    for valid in range(1, 65):
+        slab = dict(phy=[0,0],rem=[valid],y=[2,1],part=[0],T0=[100000,200000])
+        shed, partial = planner._eco_out(slab, 0)
+        assert partial == 1 and shed == block_cost(valid)
+        assert planner._eco_in(slab, 1, partial) == slot_cost(64+valid)-slot_cost(64)
+        assert planner._eco_out(slab, 1)[0] == planner._eco_in(slab, 0, 0) == FULL
+        assert planner._eco_cold_key(None, slab, 0, [64+valid,0], 0) == 100000 - block_cost(valid%64)
+
+
 def test_replica_quota():
     for capacity in (4, 8):
         for copies in range(1, capacity + 1):
@@ -160,6 +181,7 @@ def test_replica_quota():
 
 
 if __name__ == '__main__':
+    test_fine_auction_prices()
     test_replica_quota()
     test_auctions()
     print('ECO_COPIES_CPU PASS')

@@ -82,10 +82,11 @@ class SM90GCSymmBuffer:
         self.peer_addresses = self.handle = self.buffer = self.group = None
 
 
+# Legacy public constant. Live RR buffers size their inverse from the physical redundancy.
 MAX_REPLICAS = 8
 
 
-def install_eplb_plan(buffer, physical_to_logical):
+def install_eplb_plan(buffer, physical_to_logical, logical_to_physical=None):
     """Install the EPLB placement into the buffer and return the per-rank views.
 
     Args:
@@ -98,17 +99,8 @@ def install_eplb_plan(buffer, physical_to_logical):
     Returns:
         ``(plan, slots_of)``.  ``plan`` keeps the caller's layer shape.
 
-    [T17-PERLAYER] The per-layer form exists because a single averaged
-    placement cannot serve 40 layers with different hot experts: measured on
-    the real counters, the merged placement gave IR 1.2803 against 1.1324 for
-    the per-layer one (+11.5%), with the worst layer at 1.95 vs 1.23.
-    `slot_logical` becomes `[layers, physical]` and `expert_slots`
-    `[layers, experts, MAX_REPLICAS]`; the kernel reads the row for
-    `epoch % n_layers`.
-
-    MAX_REPLICAS is 8 (was 4): a per-layer plan can concentrate far more copies
-    on one expert than a merged one (measured max 16 copies/layer at BS=256),
-    and silently dropping the tail would lose those slots' tokens.
+    The inverse table retains the order chosen by the upstream policy. Its
+    last dimension can represent all redundant slots plus the original.
     """
     import torch as _t
     import numpy as _np
@@ -138,17 +130,32 @@ def install_eplb_plan(buffer, physical_to_logical):
     experts = buffer.num_experts
 
     plan = _t.as_tensor(raw, dtype=_t.int32, device=buffer.buffer.device)
-    slots_of = _t.full((layers, experts, MAX_REPLICAS), -1, dtype=_t.int32,
-                       device=buffer.buffer.device)
-    for l in range(layers):
-        cnt = _t.zeros(experts, dtype=_t.int32, device=buffer.buffer.device)
-        row = raw[l]
-        for g in range(physical):
-            e = int(row[g])
-            k = int(cnt[e])
-            if k < MAX_REPLICAS:
-                slots_of[l, e, k] = g
-            cnt[e] += 1
+    width = buffer.expert_slots.shape[-1]
+    # Keep the copy-index order returned by the placement policy. Sorting by
+    # physical slot after bin packing changes the destination of the RR gate.
+    if _np.any((raw < 0) | (raw >= experts)):
+        raise ValueError('invalid logical expert in placement')
+    if logical_to_physical is None:
+        inverse = _np.full((layers, experts, width), -1, dtype=_np.int32)
+        for layer, row in enumerate(raw):
+            counts = _np.bincount(row, minlength=experts)
+            if counts.min() == 0 or counts.max() > width:
+                raise ValueError('placement exceeds the allocated inverse map')
+            for expert in range(experts):
+                slots = _np.flatnonzero(row == expert)
+                inverse[layer, expert, :len(slots)] = slots
+        slots_of = _t.as_tensor(inverse, device=plan.device)
+    else:
+        slots_of = _t.as_tensor(logical_to_physical, dtype=_t.int32, device=plan.device)
+        if slots_of.shape != buffer.expert_slots.shape:
+            raise ValueError('policy inverse has the wrong dimensions')
+        for layer, row in enumerate(slots_of.cpu().numpy()):
+            e, k = _np.nonzero(row >= 0)
+            slots = row[e, k]
+            if (not _np.array_equal(_np.sort(slots), _np.arange(physical))
+                    or not _np.array_equal(raw[layer, slots], e)
+                    or _np.any((row[:, 1:] >= 0) & (row[:, :-1] < 0))):
+                raise ValueError('policy inverse does not match physical weights')
     buffer.slot_logical.copy_(plan)
     buffer.expert_slots.copy_(slots_of)
     return _t.as_tensor(given, dtype=_t.int32, device=buffer.buffer.device), slots_of

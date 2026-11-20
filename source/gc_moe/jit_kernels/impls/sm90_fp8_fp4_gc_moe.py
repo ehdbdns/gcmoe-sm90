@@ -90,9 +90,10 @@ def _role_specs(config, layout, schedule, has_stats):
     if layout.stream_blocks and (
             os.environ.get('GC_MOE_MB_CLAIM') != '1' or 0 < config.bound < 32
             or schedule.threads[1] != 384 or schedule.tile_m < 16
-            or getattr(config, 'sm_reuse', False)):
+            or (config.sm_reuse and (config.sm_reuse != 1 or schedule.tile_m != 64
+                                     or not config.eco_logical_experts))):
         raise ValueError('SM90 M-block streaming requires MB-CLAIM, the 384-thread '
-                         'routed schedule with M >= 16 and SM-reuse disabled')
+                         'routed schedule with M >= 16 (SM-reuse requires ECO, M64 and mode 1)')
     routed = get_routed_role_config(config, schedule)
     # [SM-REUSE] Size of the DISPATCH green partition, which role 6 inherits.
     schedule_sms = int(getattr(config, 'dispatch_partition_sms', 0) or 0)

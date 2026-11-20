@@ -18,7 +18,11 @@ class LongRouteTape(RouteTape):
         self.use_reference = torch.zeros_like(self.replaying)
 
     def select_ordinals(self, ordinal_out):
-        stable = route_ordinals(self.selected_ids)
+        if not os.environ.get("GC_MOE_MATRIX_ARM"):
+            self.record_ordinals(self.selected_ids, ordinal_out)
+
+    def record_ordinals(self, selected, ordinal_out):
+        stable = route_ordinals(selected)
         ordinal_out.copy_(stable[0])
         self.ordinals.index_copy_(0, self.index, stable)
 
@@ -81,14 +85,19 @@ def register_long_rpc(worker_class, get_buffer, modules):
                 if m._eplb is not None:
                     m._eplb["stats"].zero_()
             self._long_initial = {}
+            buf._stats_first_epoch = int(buf.header[0].item())
         elif phase == "measure":
             if not getattr(self, "_long_stats_done", False):
                 raise ValueError("missing complete statistics phase")
             ref = self._gc_reference_tokens
             ref.mark_replay_start()
-            self._long_initial = prepare_worker(
-                self, buf, modules, ref, os.environ["GC_MOE_STRICT_STATE_DIR"], publishes_checkpoint()
-            )
+            if buf.layout.matrix:
+                from matrix_workload import prepare_matrix
+                self._long_initial = prepare_matrix(self, buf, modules, ref)
+            else:
+                self._long_initial = prepare_worker(
+                    self, buf, modules, ref, os.environ["GC_MOE_STRICT_STATE_DIR"], publishes_checkpoint()
+                )
         else:
             raise ValueError(phase)
         tape.start_phase(phase, rank)
@@ -99,6 +108,8 @@ def register_long_rpc(worker_class, get_buffer, modules):
             # Ordering stays enabled; arm its 1000 coverage counters after warmup.
             tape.replaying.fill_(False)
         buf.replay_stream_mode.fill_(1)
+        if buf.layout.matrix and buf.eco:
+            buf.auction_counts.fill_(-1)
         buf.long_clocks.zero_()
         buf.long_clocks[:, :2].fill_(-1)  # unsigned 64-bit minimum identity
         self._long_first = int(buf.header[0].item())
@@ -121,7 +132,12 @@ def register_long_rpc(worker_class, get_buffer, modules):
         audit.update(rank=rank, compressed_layers=sorted(map(int, modes)))
         counts = tape.counts.cpu().numpy()
         audit["total_rows_by_layer"] = counts.reshape(tape.steps, tape.layers, -1).sum(axis=(0, 2)).tolist()
+        if buf.layout.matrix:
+            from matrix_workload import source_history
+            audit['demand'] = source_history(buf, modules, phase)
         if phase == "stats":
+            if buf.layout.matrix:
+                buf._matrix_demand = audit['demand']
             self._long_stats_done = True
         elif phase == "measure":
             idx = tape.epochs.long().remainder(len(tape.ids))
@@ -129,12 +145,17 @@ def register_long_rpc(worker_class, get_buffer, modules):
             ref = self._gc_reference_tokens
             if publishes_checkpoint():
                 ref.lengths.copy_(ref.positions)
-            samples = np.asarray(ref.native_history(tape.steps)["replay_top1"], dtype=np.int32)
+            history = ref.native_history(tape.steps)
+            samples = np.asarray(history["replay_top1"], dtype=np.int32)
+            audit["warm_native"] = history["warm_top1_sha256"]
             audit["batch_order"] = ref.batch_hash.hexdigest()
             path = Path(directory) / f"rank{rank}.npz"
+            extra = {}
+            if buf.layout.matrix and buf.eco:
+                extra['auction'] = buf.auction_counts.index_select(0, idx).cpu().numpy()
             with path.open("xb") as f:
                 np.savez_compressed(
-                    f, clocks=clocks, counts=counts, epochs=tape.epochs.cpu().numpy(), native=samples
+                    f, clocks=clocks, counts=counts, epochs=tape.epochs.cpu().numpy(), native=samples, **extra
                 )
         else:
             raise ValueError(phase)

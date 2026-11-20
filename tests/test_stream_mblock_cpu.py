@@ -40,7 +40,16 @@ def main():
         routed = next(kernel for kernel, spec in specs if spec[0] == 2)
         assert (routed.l1_tiles, routed.l2_tiles) == (18, 20)
         assert routed.stream_blocks and not routed.block_ready
-        for invalid in (replace(conf, bound=2), replace(conf, sm_reuse=1)):
+        helper_conf = replace(conf, sm_reuse=1, dispatch_partition_sms=6)
+        helper_specs = dict((s[0], (k,s)) for k,s in _role_specs(helper_conf, stream, schedule, True))
+        helper, launch = helper_specs[6]
+        assert (launch[2],launch[3]) == (384,6) and helper.stream_blocks
+        assert (helper.l1_tiles, helper.l2_tiles) == (routed.l1_tiles, routed.l2_tiles)
+        for cost_mode, slack in ((0,90), (2,11469)):
+            priced = replace(conf, eco_cost_mode=cost_mode, eco_wb=26, eco_wa=0)
+            plan = next(k for k,s in _role_specs(priced,stream,schedule,True) if s[0]==5)
+            assert plan.eco_slack == slack
+        for invalid in (replace(conf, bound=2), replace(conf, sm_reuse=2)):
             try:
                 _role_specs(invalid, stream, get_sm90_role_config(invalid, context), True)
             except ValueError as exc:

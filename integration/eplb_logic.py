@@ -235,3 +235,23 @@ def aggregate_with_sample(stats, block_m, steps, world, sample=None,
         active_header=active_sample,
     )
     return out
+
+
+def placement_window(buf, origin, rank, experts, *, first_epoch=None):
+    """Unroll complete device calls and keep the time axis used by DeepInfer's peak objective."""
+    ring = buf.placement_history
+    layers, physical = origin.shape
+    slots = physical // buf.group.size()
+    end = int(buf.header[0].item())
+    first = max(1, end - len(ring), getattr(buf, '_last_placement_epoch', 1))
+    first = first + (1 - first) % layers
+    if end <= first or (end - first) % layers or (first_epoch is not None and first != first_epoch):
+        raise ValueError(f'incomplete EPLB step window {first}..{end}')
+    epochs = torch.arange(first, end, device=ring.device)
+    rows = ring.index_select(0, epochs % len(ring))
+    if rows.shape[1] != slots + 1 or not torch.equal(rows[:, -1], epochs):
+        raise ValueError('missing EPLB epoch in the physical history')
+    counts = rows[:, :-1].reshape(-1, layers, slots)
+    ids = origin[:, rank * slots:(rank + 1) * slots].long().expand_as(counts)
+    history = counts.new_zeros((len(counts), layers, experts))
+    return history.scatter_add_(-1, ids, counts)

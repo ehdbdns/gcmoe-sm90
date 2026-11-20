@@ -47,6 +47,8 @@ class SM90GCBufferLayout:
     fine_records: int = field(init=False)
     fixed_route_order: bool = field(init=False)
     long_cost: bool = field(init=False)
+    eplb_window: int = field(init=False)
+    matrix: bool = field(init=False)
 
     def __post_init__(self):
         ranks, experts, capacity, topk = self.ranks, self.experts, self.capacity, self.topk
@@ -72,7 +74,16 @@ class SM90GCBufferLayout:
         object.__setattr__(self, 'fine_records', optional_capacity('GC_MOE_FINE_TRACE', '0', 'GC_MOE_FINE_RECS', '262144'))
         object.__setattr__(self, 'pull_trace', os.environ.get('GC_MOE_PULL_TRACE') == '1')
         object.__setattr__(self, 'step_profile', os.environ.get('GC_MOE_STEP_PROFILE') == '1')
-        object.__setattr__(self, 'fixed_route_order', self.eco and bool(os.environ.get('GC_MOE_FIXED_DIR')))
+        matrix = bool(os.environ.get('GC_MOE_MATRIX_ARM'))
+        object.__setattr__(self, 'matrix', matrix)
+        collect_history = (
+            matrix or (os.environ.get('GC_MOE_EPLB') == '1' and os.environ.get('GC_MOE_EPLB_NO_REARRANGE') != '1'
+                       and os.environ.get('GC_MOE_SLOT_PLACEMENT') != 'random'))
+        window = int(os.environ.get('GC_MOE_EPLB_WINDOW', '1000')) if collect_history else 0
+        if collect_history and window < 1:
+            raise ValueError('invalid EPLB history length')
+        object.__setattr__(self, 'eplb_window', window)
+        object.__setattr__(self, 'fixed_route_order', (matrix or self.eco) and bool(os.environ.get('GC_MOE_FIXED_DIR')))
         object.__setattr__(self, 'long_cost', os.environ.get('GC_MOE_LONG_COST') == '1')
         views = {}
         cursor = 0
@@ -142,11 +153,12 @@ class SM90GCBufferLayout:
         # separately, so this table cannot be shared across layers -- doing so
         # measured IR 1.2803 vs 1.1324 for the per-layer form.
         reserve('slot_logical', (layers, physical), 'int32', 4)
-        # expert_slots[layer][e][k]: physical slot ids holding a copy of
-        # logical expert e in that layer (-1 = unused). MAX_REPLICAS = 8
-        # because a per-layer plan concentrates more copies on one expert
-        # (measured up to 16/layer); the host-side reader clamps at 8.
-        reserve('expert_slots', (layers, experts, 8), 'int32', 4)
+        # A logical expert may own every redundant slot, including multiple copies on one rank.
+        reserve('expert_slots', (layers, experts, physical - experts + 1), 'int32', 4)
+        if self.eplb_window:
+            reserve('placement_history', (window * layers, local + 1), 'int32', 4)
+        if self.matrix and self.eco:
+            reserve('auction_counts', (1000 * layers, 7), 'int32', 4)
         # ── ECO (EPLB placement + online plan) ───────────────────────────
         # Only allocated when `eco` is on, so the plain path keeps its exact
         # byte layout. Sizes use PHYSICAL slots (physical = ranks*local).

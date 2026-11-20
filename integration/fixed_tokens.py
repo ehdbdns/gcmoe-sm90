@@ -82,7 +82,7 @@ def install(runner, directory, capacity=None):
         from fixed_workload import publishes_checkpoint
         follow_native = publishes_checkpoint()
     if follow_native:
-        tokens = {f'req{i}': [] for i in range(256)}
+        tokens = {f'req{i}': [] for i in range(int(os.environ.get('GC_MOE_MATRIX_BS', '256')))}
     else:
         with (Path(directory) / 'tokens.json').open() as src:
             tokens = json.load(src)['tokens']

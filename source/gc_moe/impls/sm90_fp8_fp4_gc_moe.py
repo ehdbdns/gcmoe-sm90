@@ -160,6 +160,8 @@ class SM90GCMoERoleKernel:
         # driver's layer count (`GC_MOE_LAYERS`, default 40).
         self.n_layers = layout.n_layers
         self.long_cost = layout.long_cost
+        self.matrix = layout.matrix
+        self.eplb_window = layout.eplb_window
         # [PULL-TRACE] Independent of ECO: measures the pull phase on the
         # plain (no-replica) path too, which had no instrumentation before.
         self.fixed_route_order = layout.fixed_route_order
@@ -357,6 +359,8 @@ class SM90GCMoERoleKernel:
         self.eco_gof_off = take(R + 1)  # auction: per-receiver segment base
         self.eco_grp_off = take(P)      # auction: offer indices grouped by receiver
         self.eco_acc_off = take(P)      # auction: accepted flag per offer slot
+        if self.matrix:
+            self.eco_candidates_off = take(1)
         self.eco_nof_off = take(1)      # auction: number of offers
         self.eco_nacc_off = take(1)     # auction: number of accepted offers
         # [ECO-AUC] packed 64-bit key array: needs 8-byte alignment, so pad the
@@ -961,6 +965,8 @@ class SM90GCMoERoleKernel:
             for r in cutlass.range_constexpr(R):
                 tot = tot + self._eco_s(slab, self.eco_T_off, Uint32(r))
             self._eco_set(slab, self.eco_tot_off, Uint32(0), tot)
+            if cutlass.const_expr(self.matrix):
+                self._eco_set(slab, self.eco_candidates_off, Uint32(0), Uint32(0))
             self._eco_set(slab, self.eco_nof_off, Uint32(0), Uint32(0))
         cute.arch.sync_threads()
         tot = self._eco_s(slab, self.eco_tot_off, Uint32(0))
@@ -996,6 +1002,10 @@ class SM90GCMoERoleKernel:
                                     bv = v
                                     bs = s1
                                     bi = in1
+                if cutlass.const_expr(self.matrix):
+                    # P=448: the low 16 bits count eligible donors, high bits count
+                    # donors with any destination strictly below the source after adding a unit.
+                    self._eco_inc(slab, self.eco_candidates_off, Uint32(0), Uint32(1) + (hit << Uint32(16)))
                 if hit != Uint32(0):
                     self._eco_set(slab, self.eco_cks_off, s0, bs)
                     self._eco_set(slab, self.eco_ckv_off, s0, bv)
@@ -1385,15 +1395,35 @@ class SM90GCMoERoleKernel:
         # [ECO-MEAS] `eco_no_auction` is a compile-time gate: the whole block
         # disappears from the cubin, so it measures the auction itself and
         # nothing else (cold/warm still run above).
+        actual_rounds, offers, accepted = Uint32(0), Uint32(0), Uint32(0)
+        donors, feasible, empty_rounds, rejected_rounds = Uint32(0), Uint32(0), Uint32(0), Uint32(0)
         if not cutlass.const_expr(self.eco_no_auction):
             more = Uint32(1)
             for _it in cutlass.range(rounds):
                 if more != Uint32(0):
                     self._eco_rank_time(slab, self.eco_quota_off, self.eco_T_off)
-                    if self._eco_do_auction_round(base, slab) == Uint32(0):
+                    moves = self._eco_do_auction_round(base, slab)
+                    if cutlass.const_expr(self.matrix):
+                        actual_rounds = actual_rounds + Uint32(1)
+                        submitted = self._eco_s(slab, self.eco_nof_off, Uint32(0))
+                        candidates = self._eco_s(slab, self.eco_candidates_off, Uint32(0))
+                        donors = donors + (candidates & Uint32(65535))
+                        feasible = feasible + (candidates >> Uint32(16))
+                        offers = offers + submitted
+                        empty_rounds = empty_rounds + Uint32(submitted == Uint32(0))
+                        rejected_rounds = rejected_rounds + Uint32(submitted > Uint32(0) and moves == Uint32(0))
+                        accepted = accepted + moves
+                    if moves == Uint32(0):
                         more = Uint32(0)
                     else:
                         self._eco_emit_quota(slab)
+        if cutlass.const_expr(self.matrix):
+            if tid == 0:
+                off = (epoch % Uint32(1000 * self.n_layers)) * Uint32(7)
+                counters = self._field(base, 'auction_counts', Uint32) + off
+                counters[0], counters[1], counters[2] = actual_rounds, offers, accepted
+                counters[3], counters[4] = donors, feasible
+                counters[5], counters[6] = empty_rounds, rejected_rounds
         if tid == 0:
             self._eco_trace(base, 19)  # [ECO-MEAS] auction rounds done
             self._eco_tl_write(base, epoch, 6, read_globaltimer())     # auction_done
@@ -2381,6 +2411,12 @@ class SM90GCMoERoleKernel:
             elif expert_id >= 0 and expert_id < self.ranks * self.local:
                 expert_u = Uint32(expert_id)
                 slot = atom_add_u32(self._field(base, 'send_count', Uint32) + expert_u, Uint32(1))
+                if cutlass.const_expr(self.fixed_route_order):
+                    ordinal = self._field(base, 'route_ordinal', Int32)[route]
+                    if ordinal >= Int32(0):
+                        slot = Uint32(ordinal)
+                    used = self._field(base, 'used_route_ordinal', Uint32)
+                    used[route] = slot
                 destination = Uint64(peer_table[expert_u // self.local])
                 address = Uint64(self.off_source_index) + ((Uint64(expert_u % self.local) * self.ranks + rank) * self.capacity + slot) * 4
                 route_out = cell(destination, address, Uint32)
@@ -2817,6 +2853,7 @@ class SM90GCMoERoleKernel:
                 if cutlass.const_expr(not stream):
                     count_out = cell(base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)
                     count_out[0] = owned
+                self._remember_placement_load(base, epoch, Uint32(expert), owned)
                 if cutlass.const_expr(self.step_profile):
                     # [STEP-PROFILE] per-slot owned rows for this call.
                     sc = cell(base, Uint64(self.off_profile_slot_counts)
@@ -2943,6 +2980,7 @@ class SM90GCMoERoleKernel:
         if tid == 0:
             count_out = cell(base, Uint64(self.off_expert_count) + Uint64(expert) * 4, Uint32)
             count_out[0] = total
+            self._remember_placement_load(base, epoch, Uint32(expert), total)
             if cutlass.const_expr(self.has_stats):
                 recv_stats = cute.make_tensor(stats, cute.make_layout((self.local,)))
                 recv_stats[expert] += total
@@ -3752,6 +3790,15 @@ class SM90GCMoERoleKernel:
         return data_iter + Uint32(k_size // 128)
 
     @cute.jit
+    def _remember_placement_load(self, base: Uint64, epoch: Uint32, expert: Uint32, count: Uint32):
+        if cutlass.const_expr(self.eplb_window > 0):
+            offset = (epoch % Uint32(self.eplb_window * self.n_layers)) * Uint32(self.local + 1)
+            p = self._field(base, 'placement_history', Uint32) + offset
+            p[expert] = count
+            if expert == Uint32(0):
+                p[self.local] = epoch
+
+    @cute.jit
     def _long_row(self, base: Uint64, epoch: Uint32):
         return self._field(base, 'long_clocks', Uint64) + (epoch % Uint32(1000 * self.n_layers)) * Uint32(6)
 
@@ -4555,6 +4602,10 @@ class SM90GCMoERoleKernel:
                 if cutlass.const_expr(self.role != 3):
                     if cute.arch.thread_idx()[0] == 0:
                         red_global_min_u64(self._long_row(base, call_epoch), read_globaltimer())
+                if cutlass.const_expr(self.matrix and self.role == 1 and not self.eco):
+                    if cute.arch.thread_idx()[0] == 0 and cute.arch.block_idx()[0] == 0:
+                        row = self._long_row(base, call_epoch)
+                        row[4] = Uint64(call_epoch)
         if cutlass.const_expr(self.role == 1):
             if cutlass.const_expr(self.direct_route_scan):
                 self._dispatch_direct(base, peers, rank, tokens, stats)

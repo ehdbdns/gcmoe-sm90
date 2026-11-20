@@ -5,7 +5,11 @@
 > 完整移植到 SM90 CuTe DSL，并在 vLLM 上跑通 **五臂**：
 > 原生（无副本）/ random+rr / eplb+rr / eplb+eco / eplb+eco+SM-reuse。
 
-## ★ 最终结果：五臂 × 四档 batch（20 个实验，2026-11-16 复测）
+## 主表重测进度
+
+当前 H20 M64 的 ECO 默认使用逐 valid 价格。在固定放置的 BS256 两臂对照中，完整 MoE 由 35.7168 降至 35.5798 ms/步。新一轮将按 DeepInfer 逐步统计重排、保留 RR 副本顺序并固定同档输入输出，重测下方五臂和四档 BS。[1000 步两臂结果](docs/trace_handover_20261119/REPLY_LONG_COST_1000.md) · [20 臂任务书](docs/trace_executor_20261119/MAIN20_FINE_COST_TASK.md)
+
+## 历史结果 · 五臂 × 四档 batch（2026-11-16，旧 ECO 和线性价格）
 
 **配置**：8×H20（SM90），TP=8 / EP=8，DeepSeek-V4.1-Flash，
 **1000 步 warmup + 1000 步测量**，`GC_MOE_SM90_PULL_TMA=1`，

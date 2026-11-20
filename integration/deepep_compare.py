@@ -617,6 +617,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         self._eplb = None
         # (layer, packed) stashed by the per-layer hook, resolved once all ranks
         # finish loading (see _install_eplb_all).
+        self._packed_layers = []
         self._pending_eplb = []
         self._eplb_done = False
         _EXPERT_REGISTRY.append(self)
@@ -724,6 +725,13 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         # random control arm), otherwise `_install_eplb` never sees any layer.
         if _eplb_enabled() or _slot_placement() != 'identity':
             self._pending_eplb.append((layer, packed))
+        elif os.environ.get('GC_MOE_MATRIX_ARM') == 'vanilla':
+            import re
+            match = re.search(r'layers\.(\d+)', layer.layer_name)
+            if match is None:
+                raise ValueError(f'missing vanilla model layer number in {layer.layer_name}')
+            _LAYER_ROW[id(packed[0][0])] = int(match.group(1))
+            self._packed_layers.append((layer, packed))
         del w13, w2, s13, s2
         # NOTE: `torch.cuda.empty_cache()` used to be called here. With
         # expandable_segments:True it deadlocks once the EPLB path has churned
@@ -858,7 +866,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             _t1 = torch.cuda.Event(enable_timing=True)
             _t0.record()
         tape = getattr(buf, 'fixed_routes', None)
-        use_tape = tape is not None and tokens == tape.batch and self._eplb is not None
+        use_tape = tape is not None and tokens == tape.batch and (self._eplb is not None or buf.layout.matrix)
         if use_tape:
             topk_ids, topk_weights = tape.select(topk_ids, topk_weights, _LAYER_ROW[id(packed[0][0])],
                                                  buf.route_ordinal[:tokens])
@@ -897,17 +905,11 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                 raise RuntimeError(
                     'RR arm: no plan row for this packed pair (layer map '
                     'was rebuilt?)')
-            cand = self._scratch(buf, 'cand', n * width, torch.int32)[:n * width]
-            cand2 = cand.view(n, width)
-            # each expert owns a CONTIGUOUS run of `width` entries, so the
-            # index is layer_base + ids*width + arange(width).
-            col = torch.arange(width, device=ids.device, dtype=torch.int64)
             base = int(_lid) * int(e['slot_experts']) * width
-            gather_idx = ((ids.to(torch.int64).unsqueeze(-1) + 0) * width
-                          + col + base)
-            torch.index_select(e['slot_table'], 0, gather_idx.reshape(-1),
-                               out=cand2.view(-1))
             pick = self._scratch(buf, 'pick', n, torch.int64)[:n]
+            # DeepInfer uses -1 for a masked route; keep it out of the map.
+            valid = ids >= 0
+            safe_ids = ids.clamp_min(0).long()
             # [RR-DEEPINFER] Replica choice is EXACTLY DeepInfer's gate line
             # (deepseek-ai/TileKernels,
             #  tile_kernels/moe/moe_topk_gate_forward_cuda.py:283):
@@ -921,13 +923,17 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             # implementation") and phase-shifted by ep_rank. It is NOT the
             # route's position in the flattened list, and NOT a per-expert
             # occurrence counter.
-            rr_pick(ids, e['count'][_lid], ep_rank=int(buf.rank_idx),
+            rr_pick(safe_ids, e['count'][_lid], ep_rank=int(buf.rank_idx),
                     topk=int(buf.num_topk), out=pick)
             slots = self._scratch(buf, 'slots', n, torch.int32)[:n]
-            torch.gather(cand2, 1, pick.unsqueeze(-1), out=slots.unsqueeze(-1))
+            torch.index_select(e['slot_table'], 0, base + safe_ids * width + pick, out=slots)
+            slots.masked_fill_(~valid, -1)
             buf.topk_idx[:tokens].copy_(slots.view(tokens, -1))
         else:
             buf.topk_idx[:tokens].copy_(topk_ids.to(torch.int64).view(tokens, -1))
+        if use_tape and buf.layout.matrix:
+            # ECO addresses a logical expert, RR addresses a physical slot.
+            tape.record_ordinals(buf.topk_idx[:tokens].unsqueeze(0), buf.route_ordinal[:tokens])
         buf.topk_weights[:tokens].copy_(topk_weights.to(torch.float32).view(tokens, -1))
 
         probe = (tape.boundary_probe if use_tape and hasattr(tape, 'boundary_probe')
@@ -1234,7 +1240,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         _nlay = int(buf.slot_logical.shape[0])
         plan_2d = [list(plan_list) for _ in range(_nlay)]
         plan, slots_of = sm90.install_eplb_plan(buf, plan_2d)
-        # [T17-PERLAYER] slots_of is [layers, experts, MAX_REPLICAS]. The RR
+        # [T17-PERLAYER] slots_of is [layers, experts, extra_slots + 1]. The RR
         # gate needs copy counts PER LAYER: the placement differs per layer, so
         # a single max-across-layers count can hand a route a copy index that
         # does not exist for its own layer (that slot holds -1 and the token is
@@ -1277,7 +1283,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         for m in modules:
             m._eplb = dict(plan=plan, slots=slots_of, per_rank=per_rank,
                            # [T17-PERLAYER] `slot_table` is the WHOLE
-                           # [layers, experts, MAX_REPLICAS] stack flattened;
+                           # [layers, experts, extra_slots + 1] stack flattened;
                            # `apply()` offsets into it with the row of the
                            # layer that owns the packed pair (see _LAYER_ROW).
                            slot_table=slots_of.reshape(-1).contiguous(),
@@ -1384,6 +1390,8 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                # (measured: phy2log read back as the identity 0,1,2,3...).
                os.environ.get('GC_MOE_FINE_TRACE') == '1',
                os.environ.get('GC_MOE_LONG_COST') == '1',
+               os.environ.get('GC_MOE_MATRIX_ARM'), os.environ.get('GC_MOE_MATRIX_BS'),
+               os.environ.get('GC_MOE_EPLB_WINDOW'), os.environ.get('GC_MOE_EPLB_NO_REARRANGE'),
                os.environ.get('GC_MOE_SM90_STREAM_M_BLOCKS') == '1',
                _eplb_enabled() and _eco_enabled())
         # Every layer of this model has identical expert shapes, so one
@@ -1421,7 +1429,8 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                     tape_type = LongRouteTape
                 else:
                     tape_type = RouteTape
-                buf.fixed_routes = tape_type(buf.buffer.device, buf.num_topk, buf.profile_slot_counts.shape[1])
+                buf.fixed_routes = tape_type(buf.buffer.device, buf.num_topk, buf.profile_slot_counts.shape[1],
+                                             **({'batch': int(os.environ['GC_MOE_MATRIX_BS'])} if buf.layout.matrix else {}))
                 if os.environ.get('GC_MOE_FIRST_STEP_AUDIT') == '1':
                     from replay_probe import ReplayProbe
                     buf.fixed_routes.first_step_probe = ReplayProbe(
@@ -1654,46 +1663,67 @@ def rearrange_now() -> bool:
     # i.e. the merged plan left whole layers with their hot experts piled onto
     # one rank -- exactly what a single average cannot avoid.
     per_layer = os.environ.get('GC_MOE_ECOPLB_PER_LAYER', '1') == '1'
-    demand = layer_demand_from_stats(stats, origin, buf.rank_idx, per_rank, experts)
+    from eplb_logic import placement_window
+    if hasattr(buf, 'placement_history'):
+        hist = placement_window(buf, origin, buf.rank_idx, experts,
+                                first_epoch=getattr(buf, '_stats_first_epoch', None))
+    else:
+        # Historical standalone buffers that only expose a cumulative table.
+        hist = layer_demand_from_stats(stats, origin, buf.rank_idx, per_rank, experts).unsqueeze(0)
     if not per_layer:
-        demand = demand.sum(0, keepdim=True)
-    dist.all_reduce(demand, group=dist.group.WORLD)
+        hist = hist.sum(1, keepdim=True)
+    dist.all_reduce(hist, group=dist.group.WORLD)
+    fixed_dir = os.environ.get('GC_MOE_FIXED_DIR')
+    matrix = bool(os.environ.get('GC_MOE_MATRIX_ARM'))
     if os.environ.get('GC_MOE_LONG_COST') == '1':
-        if demand.shape != (40, experts) or not torch.all(demand.sum(1) == 1000 * 256 * 6 * ranks):
-            raise ValueError('EPLB statistics do not cover exactly 1000 full-batch decode steps')
         from pathlib import Path
         from fixed_workload import publishes_checkpoint
-        path = Path(os.environ['GC_MOE_FIXED_DIR']) / 'stats-demand.pt'
-        if publishes_checkpoint():
-            if buf.rank_idx == 0:
-                torch.save(demand.cpu(), path)
-        elif not torch.equal(demand.cpu(), torch.load(path, weights_only=True)):
-            raise ValueError('logical EPLB statistics differ between arms')
-    hist = demand.unsqueeze(0)
-
-    # --- 2. plan on rank 0, broadcast -------------------------------------
-    hist_layers = hist.shape[1]
-    if buf.rank_idx == 0:
-        fixed_dir = os.environ.get('GC_MOE_FIXED_DIR')
-        if fixed_dir:
-            import json
-            from pathlib import Path
-            from fixed_workload import recording_reference
-            layout_path = Path(fixed_dir) / 'placement.json'
-        if fixed_dir and not recording_reference():
-            new_plan = torch.tensor(json.loads(layout_path.read_text()),
-                                    dtype=torch.int32, device=buf.buffer.device)
-            if new_plan.shape != (hist_layers, buf.physical):
-                raise ValueError('fixed EPLB placement has the wrong dimensions')
+        if hist.shape != (1000, 40, experts) or not torch.all(hist.sum(-1) == buf.fixed_routes.batch * 6 * ranks):
+            raise ValueError('EPLB requires one full logical histogram per decode step and layer')
+        if matrix:
+            from fixed_workload import digest
+            if digest(hist) != buf._matrix_demand:
+                raise ValueError('DeepInfer window differs from actual source routes')
         else:
-            new_plan, _, _ = rebalance_experts_global(hist, buf.physical, per_rank)
-            if fixed_dir:
-                layout_path.write_text(json.dumps(new_plan.cpu().tolist()))
+            path = Path(fixed_dir) / 'stats-demand.pt'
+            if publishes_checkpoint():
+                if buf.rank_idx == 0:
+                    torch.save(hist.cpu(), path)
+            elif not torch.equal(hist.cpu(), torch.load(path, weights_only=True)):
+                raise ValueError('logical EPLB histories differ between arms')
+
+    hist_layers = hist.shape[1]
+    # For matrix arms compute the policy independently from the complete
+    # history and verify the maps. The inverse preserves upstream copy order.
+    inverse = None
+    if buf.rank_idx == 0:
+        import json
+        from pathlib import Path
+        from fixed_workload import recording_reference
+        if fixed_dir:
+            layout_path = Path(fixed_dir) / 'placement.json'
+        if fixed_dir and not matrix and not recording_reference() and _eco_enabled():
+            new_plan = torch.tensor(json.loads(layout_path.read_text()), dtype=torch.int32, device=stats.device)
+        else:
+            new_plan, inverse, _ = rebalance_experts_global(hist, buf.physical, per_rank)
+            if fixed_dir and (not matrix or os.environ['GC_MOE_MATRIX_ARM'] == 'rr'):
+                layout_path.write_text(json.dumps(new_plan.tolist()))
+        if new_plan.shape != (hist_layers, buf.physical):
+            raise ValueError('wrong EPLB placement dimensions')
         new_plan = new_plan.contiguous()
     else:
-        new_plan = torch.empty((hist_layers, buf.physical), dtype=torch.int32,
-                               device=buf.buffer.device)
+        new_plan = torch.empty((hist_layers, buf.physical), dtype=torch.int32, device=stats.device)
+    if not _eco_enabled():
+        if buf.rank_idx != 0:
+            inverse = torch.empty((hist_layers, experts, buf.physical-experts+1), dtype=torch.int32, device=stats.device)
+        dist.broadcast(inverse, src=0, group=dist.group.WORLD)
+        inverse = inverse.expand(len(origin), -1, -1)
     dist.broadcast(new_plan, src=0, group=dist.group.WORLD)
+    if matrix and os.environ['GC_MOE_MATRIX_ARM'] != 'rr':
+        import json
+        from pathlib import Path
+        if new_plan.tolist() != json.loads((Path(fixed_dir) / 'placement.json').read_text()):
+            raise ValueError('the EPLB arms produced different placements')
     # [T17-PERLAYER] [layers, physical]; for the merged arm this is the single
     # row broadcast to every layer so the rest of the code is shared.
     target_layers = new_plan.cpu().tolist()
@@ -1735,7 +1765,10 @@ def rearrange_now() -> bool:
 
     # --- 5. repoint routing ----------------------------------------------
     # [T17-PERLAYER] slot_logical / expert_slots also become per-layer.
-    new_t, slots_of = m._gc.sm90_gc.install_eplb_plan(buf, target_layers)
+    new_t, slots_of = m._gc.sm90_gc.install_eplb_plan(buf, target_layers, inverse if not _eco_enabled() else None)
+    if hasattr(buf, 'placement_history'):
+        buf._last_placement_epoch = int(buf.header[0].item())
+        buf._stats_first_epoch = None
     # [T17-PERLAYER] copy COUNTS are per layer: the placement differs per layer,
     # so a max-across-layers count would let the RR gate pick a copy index that
     # does not exist in that layer (slots_of == -1 there, token dropped).

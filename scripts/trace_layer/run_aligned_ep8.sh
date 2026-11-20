@@ -7,7 +7,7 @@ study=0
 layers=(8 20)
 fine_layers=("${layers[@]}")
 case "$variant" in
-  --study-long-cost) study=1 ;;
+  --study-long-cost|--study-main20) study=1 ;;
   --study-paired)
     study=1
     layers=({0..39})
@@ -45,7 +45,7 @@ source scripts/env.sh
 test -x "$GC_ENV/bin/python"
 export GC_MOE_SRC="$PWD/source"
 export PYTHONPATH="$PWD/source:$PWD/patches:$PWD/integration"
-if [[ $variant == --study-paired || $variant == --study-long-cost ]]; then
+if [[ $variant == --study-paired || $variant == --study-long-cost || $variant == --study-main20 ]]; then
   # The in-process EngineCore advances only when the driver calls step().
   # The separate TP/EP worker processes still own the eight GPUs.
   export VLLM_ENABLE_V1_MULTIPROCESSING=0
@@ -68,6 +68,18 @@ export GC_MOE_SHARED_IN_GC=1 GC_MOE_SM90_SM_REUSE=0 GC_MOE_SM90_DISPATCH_SMS=6
 export GC_MOE_CAPACITY=2048 GC_MOE_BOUND=2048 GC_MOE_BLOCK_M_FORCE=64 MAX_BATCHED=2048
 export GC_MOE_PULL_TRACE=1 GC_MOE_ECO_TRACE=1 GC_MOE_FINE_TRACE=0
 export GC_MOE_IR_STEP=0 GC_MEASURE_IR_STEP=0 GC_MEASURE_IR=0 GC_MEASURE_LOAD=0
+if [[ $variant == --study-main20 ]]; then
+  export GC_MOE_ECO_COSTFN=2 GC_MOE_EPLB_WINDOW=1000 GC_MOE_STEP_PROFILE=1
+  export GC_MOE_EPLB_RANDOM_SEED=0
+  case "$GC_MOE_MATRIX_ARM" in
+    vanilla) export GC_MOE_EPLB=0 GC_MOE_ECO=0 GC_MOE_EPLB_NO_REARRANGE=1 ;;
+    random) export GC_MOE_ECO=0 GC_MOE_SLOT_PLACEMENT=random GC_MOE_EPLB_NO_REARRANGE=1 ;;
+    rr) export GC_MOE_ECO=0 ;;
+    eco) ;;
+    eco_smr) export GC_MOE_SM90_SM_REUSE=1 ;;
+    *) exit 2 ;;
+  esac
+fi
 fine_args=()
 if [[ $variant == --fine-trace || $variant == --study-fine || $variant == --study-paired ]]; then
   export GC_MOE_FINE_TRACE=1 GC_MOE_FINE_FLOOR=1 GC_MOE_FINE_EPOCHS=1
@@ -122,10 +134,10 @@ fi
 step="3: capture"
 bash scripts/warm_page_cache.sh "$MODEL" 2>&1 | tee "$out/warm.log"
 driver="$analysis_dir/../real_decode_100_100.py"
-if [[ $variant == --study-long-cost ]]; then
+if [[ $variant == --study-long-cost || $variant == --study-main20 ]]; then
   export GC_MOE_STEP_PROFILE=1
   "$GC_ENV/bin/python" -u "$driver" --long-cost-study --label LONG_COST --output "$out/run.json" \
-    --seqs-per-rank 32 --prefill-lo 256 --prefill-hi 2048 --warm-steps 1000 --measure-steps 1000 \
+    --seqs-per-rank "$(( ${GC_MOE_MATRIX_BS:-256} / 8 ))" --prefill-lo 256 --prefill-hi 2048 --warm-steps 1000 --measure-steps 1000 \
     2>&1 | tee "$out/run.log"
   exit 0
 fi

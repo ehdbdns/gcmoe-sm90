@@ -620,14 +620,21 @@ def main():
                     help='one 1000-step EPLB statistics window and one 1000-step paired cost window')
     a = ap.parse_args()
     long_cost = a.long_cost_study
+    matrix = os.environ.get('GC_MOE_MATRIX_ARM')
+    if os.environ.get('GC_MOE_EPLB') == '1':
+        os.environ['GC_MOE_EPLB_WINDOW'] = str(max(1, a.warm_steps))
     if long_cost:
         required = ('GC_MOE_LONG_COST', 'GC_MOE_EPLB', 'GC_MOE_ECO', 'GC_MOE_COST_STUDY',
                     'GC_MOE_ORDER_EXTRA', 'GC_MOE_STEP_PROFILE', 'GC_MOE_SM90_STREAM_M_BLOCKS')
+        if matrix:
+            required = tuple(k for k in required if k not in ('GC_MOE_EPLB', 'GC_MOE_ECO', 'GC_MOE_COST_STUDY'))
+            if matrix not in ('vanilla', 'random', 'rr', 'eco', 'eco_smr') or int(os.environ['GC_MOE_MATRIX_BS']) != 8*a.seqs_per_rank:
+                ap.error('invalid main table arm or batch')
         if (any(os.getenv(k) != '1' for k in required)
                 or not os.getenv('GC_MOE_FIXED_DIR') or not os.getenv('GC_MOE_STRICT_STATE_DIR')
                 or a.profile_out or a.profile_aligned_step or a.timing_tail_steps or a.fine_layers
                 or os.getenv('GC_MOE_FINE_TRACE') != '0' or os.getenv('GC_MEASURE_FLUSH') != '0'
-                or (a.seqs_per_rank, a.warm_steps, a.measure_steps) != (32, 1000, 1000)):
+                or (a.seqs_per_rank not in ((4,8,16,32) if matrix else (32,)) or (a.warm_steps, a.measure_steps) != (1000,1000))):
             ap.error('long cost study requires the fixed, unprofiled 1000+1000 EP8 configuration')
     if a.timing_tail_steps < 0 or (a.timing_tail_steps and
             (not a.fine_layers or os.environ.get('VLLM_ENABLE_V1_MULTIPROCESSING') != '0')):
@@ -918,7 +925,7 @@ def main():
     # The registry lives in the *worker* processes, so the replan must run
     # there: collective_rpc broadcasts the call to every worker.
     rearranged = False
-    if os.environ.get('GC_MOE_EPLB') == '1':
+    if os.environ.get('GC_MOE_EPLB') == '1' and matrix != 'random':
         try:
             outs = engine.collective_rpc('_gc_moe_rearrange')
             rearranged = any(bool(x) for x in outs)
