@@ -55,7 +55,7 @@ ECO_PORT_CPU PASS
 T1 layer index: 40 unique for 40 layers
 T2 demand: sum=240 (expect 240)
 T3 shuffle reference: bad rows=0/424
-T4 id reuse after del: OCCURRED (this is why _LAYER_REFS must hold strong refs)
+T4 id reuse after del: not observed (this is why _LAYER_REFS must hold strong refs)
 
 CPU_TEST PASS
 T5 distinct layer rows: 40/40, per-layer sum ok
@@ -127,3 +127,64 @@ ATTENTION_ORDER_CUDA PASS
 LONG_COST PASS
 schedule SM90RoleConfig(grids=(24, 72, 288), tile_m=64, threads=(256, 384, 384), smem=(43008, 199680, 0), direct_route_scan=False)
 roles [(1, 43008, 256, 24), (4, 199680, 256, 72), (2, 199680, 384, 72), (3, 0, 384, 288)]
+compiled roles [1, 4, 2, 3] in 12.2s
+schedule SM90RoleConfig(grids=(24, 72, 288), tile_m=64, threads=(256, 384, 384), smem=(43008, 199680, 0), direct_route_scan=False)
+roles [(1, 43008, 256, 24), (4, 199680, 256, 72), (2, 199680, 384, 72), (3, 0, 384, 288)]
+compiled roles [1, 4, 2, 3] in 12.0s
+schedule SM90RoleConfig(grids=(24, 72, 288), tile_m=64, threads=(256, 384, 384), smem=(43008, 199680, 0), direct_route_scan=False)
+roles [(1, 43008, 256, 24), (4, 199680, 256, 72), (2, 199680, 384, 72), (3, 0, 384, 288)]
+compiled roles [1, 4, 2, 3] in 12.2s
+schedule SM90RoleConfig(grids=(24, 71, 288), tile_m=64, threads=(256, 384, 384), smem=(43008, 199680, 0), direct_route_scan=False)
+roles [(1, 43008, 256, 24), (4, 199680, 256, 71), (2, 199680, 384, 71), (5, 53248, 512, 1), (3, 0, 384, 288)]
+eco_linear role 5 cost=0 slack=90
+compiled roles [1, 4, 2, 5, 3] in 17.8s
+schedule SM90RoleConfig(grids=(24, 71, 288), tile_m=64, threads=(256, 384, 384), smem=(43008, 199680, 0), direct_route_scan=False)
+roles [(1, 43008, 256, 24), (4, 199680, 256, 71), (2, 199680, 384, 71), (5, 53248, 512, 1), (3, 0, 384, 288)]
+eco role 5 cost=2 slack=11469
+compiled roles [1, 4, 2, 5, 3] in 17.9s
+schedule SM90RoleConfig(grids=(24, 71, 288), tile_m=64, threads=(256, 384, 384), smem=(43008, 199680, 0), direct_route_scan=False)
+roles [(1, 43008, 256, 24), (4, 199680, 256, 71), (2, 199680, 384, 71), (5, 53248, 512, 1), (6, 199680, 384, 6), (3, 0, 384, 288)]
+eco_smr role 5 cost=2 slack=11469
+compiled roles [1, 4, 2, 5, 6, 3] in 28.2s
+[rank0]:[W1121 22:18:05.849331927 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank2]:[W1121 22:18:05.849344505 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank3]:[W1121 22:18:05.849427828 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank6]:[W1121 22:18:05.849499408 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank5]:[W1121 22:18:05.849757576 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank1]:[W1121 22:18:05.849776926 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank7]:[W1121 22:18:05.850090094 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank4]:[W1121 22:18:05.850461197 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank0]:[W1121 22:18:08.051805061 ProcessGroupNCCL.cpp:5276] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+[cap] eager warm done
+STREAM_CHECK rank=0 sha256=78a0158c98563df6d33edd8e7fd133c309622e4a9ef9c0c73d36e2655e65b042STREAM_CHECK rank=1 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=3 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+
+STREAM_CHECK rank=2 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=5 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=7 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=6 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=4 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+[cap] replay ok finite=True quota_sum=816
+ECO_CAPTURE OK
+[rank0]:[W1121 22:18:23.791200076 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+[rank0]:[W1121 22:18:36.060601482 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank3]:[W1121 22:18:36.060601433 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank2]:[W1121 22:18:36.060725141 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank4]:[W1121 22:18:36.060824756 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank5]:[W1121 22:18:36.060863268 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank7]:[W1121 22:18:36.060983979 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank1]:[W1121 22:18:36.061013766 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank6]:[W1121 22:18:36.061148762 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank0]:[W1121 22:18:37.701183848 ProcessGroupNCCL.cpp:5276] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+[cap] eager warm done
+STREAM_CHECK rank=3 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=4 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=5 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=6 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=1 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=7 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=2 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5bSTREAM_CHECK rank=0 sha256=78a0158c98563df6d33edd8e7fd133c309622e4a9ef9c0c73d36e2655e65b042
+
+[cap] replay ok finite=True quota_sum=816
+ECO_CAPTURE OK
+[rank0]:[W1121 22:18:57.812045832 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
