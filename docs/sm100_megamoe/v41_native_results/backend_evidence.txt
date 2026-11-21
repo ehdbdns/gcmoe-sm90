@@ -1,0 +1,24 @@
+resolved_architecture=DeepseekV41ForCausalLM
+tokenizer_mode=deepseek_v41
+model_path=/mnt/nas1/hf/DeepSeek-V4.1-Flash
+model_size_on_disk=476G
+checkpoint_shards=48
+checkpoint_dtype_declared=bfloat16
+quantization=deepseek_v4_fp8
+expert_dtype=fp4
+mxfp8_linear_kernel=FlashInferCutedslMxfp8LinearKernel
+kv_cache_format=DeepSeek nvfp4_ds_mla
+moe_backend_requested=auto
+moe_backend_resolved=FLASHINFER_TRTLLM_MXFP4_MXFP8
+tensor_parallel_size=8
+pipeline_parallel_size=1
+data_parallel_size=1
+expert_parallel=true
+local_global_experts_per_ep_rank=48/384
+expert_placement=linear
+model_runner=V2
+enforce_eager=true
+cudagraph_mode=NONE
+
+Interpretation: native vLLM auto-backend selection did not select the separate DeepGEMM MegaMoE integration. This run therefore says nothing about MegaMoE parity or performance.
+

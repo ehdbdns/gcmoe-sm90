@@ -1,0 +1,20 @@
+2026-11-21T17:52:33+08:00  workdir/source recorded; source.sha=8f4254a6339a9fe70e439ff37103d8c3a80146e4
+2026-11-21T18:11:18+08:00  slow public-PyPI install attempt aborted
+2026-11-21T18:26:40+08:00  vLLM 0.31.0 wheel downloaded; sha256=39132b433967f0962d03d8a5f633b9bee6b32708f566c7d5637b79f8d0ef3433
+2026-11-21T18:30:02+08:00  vLLM install completed
+2026-11-21T18:30:04+08:00  v41_shape.py passed; config.json sha256=8be45ce0476004a3f529fd896115a4a2e800a129ad2d3ec05b16050f52e21879
+2026-11-21T18:32:28+08:00  first launch resolved architecture DeepseekV41ForCausalLM
+2026-11-21T18:32:31+08:00  first launch failed: vLLM spawn tried to rerun /tmp/sm100-native-20261121-175023/<stdin>
+2026-11-21T18:33:08+08:00  second launch started through v41_native_smoke.py with identical model, sampling, TP/EP and backend options
+2026-11-21T18:33:16+08:00  second launch resolved architecture DeepseekV41ForCausalLM
+2026-11-21T18:34:25+08:00  native MoE backend resolved: FLASHINFER_TRTLLM_MXFP4_MXFP8
+2026-11-21T18:51:30+08:00  six workers (TP0-TP5) finished page-cache prefetch; last of those 955.18 s
+2026-11-21T19:02:54+08:00  workers TP6/TP7 reported page-cache prefetch complete (1638.59/1639.25 s)
+2026-11-21T19:32:10+08:00  last checkpoint progress line: 32/48 shards, 57:12 elapsed
+2026-11-21T19:33:49+08:00  executor began shutdown while waiting for worker exit count=8
+2026-11-21T19:33:58+08:00  workers still alive after SIGTERM; 6 got SIGKILL; EngineCore reported startup failure
+2026-11-21T19:34:11+08:00  MainProcess sent SIGTERM to EngineCore
+2026-11-21T19:34:13+08:00  model.log closed; Python exited 1
+2026-11-21T19:35:34+08:00  nvidia-smi query-compute-apps returned empty; all eight GPUs free
+2026-11-21T19:36:25+08:00  second release check also returned empty; no vLLM worker remains
+

@@ -1,0 +1,23 @@
+=== Attempt 1: original task heredoc ===
+First observed failure timestamp: 2026-11-21T18:32:31+08:00
+Architecture had already resolved to DeepseekV41ForCausalLM.
+vLLM forced the spawn multiprocessing method and tried to re-import `<stdin>` as a file.
+
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/sm100-native-20261121-175023/<stdin>'
+RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {'EngineCore': 1}
+
+Exit code: 1. Full original stdout/stderr is preserved in model.heredoc-failure.log.
+
+=== Attempt 2: identical model, sampling and backend through a file entry point ===
+The entry point was changed from `python - <<'PYTHON'` to `python v41_native_smoke.py` only so vLLM spawn could re-import a real file. No model, tokenizer, dtype, TP/EP degree, sampling parameter, framework version or MoE backend was changed.
+
+First terminal error sequence at 2026-11-21T19:33:49+08:00:
+(EngineCore pid=404184) INFO  [multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(EngineCore pid=404184) WARNING [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(EngineCore pid=404184) WARNING [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=6
+(EngineCore pid=404184) ERROR [core.py:1433] EngineCore failed to start.
+Exception: WorkerProc initialization failed due to an exception in a background process. See stack trace for root cause.
+RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+
+The last checkpoint progress line was 32/48 shards at 57:12. No Python worker traceback was emitted by vLLM; the parent only reports that a background worker failed. The original model.log is preserved without truncation. Exit code: 1.
+

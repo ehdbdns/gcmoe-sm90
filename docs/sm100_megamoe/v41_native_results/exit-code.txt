@@ -1,0 +1,6 @@
+attempt_1_exit_code=1
+attempt_2_exit_code=1
+
+attempt_1_note=Original task heredoc under `set -eo pipefail`; Python raised FileNotFoundError for `<stdin>`, so the shell exited non-zero. The wrapper did not print a separate EXIT line.
+attempt_2_note=Final Python process traced `RuntimeError: Engine core initialization failed`; the launcher then exited 1.
+
