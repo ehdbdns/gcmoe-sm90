@@ -1,0 +1,45 @@
+{
+  "source_commit": "040eba834d6e51c338e895440ef6c45646199613",
+  "task_blob": "d13dbd2",
+  "launches": 2,
+  "arms": [
+    "deep_gemm_mega_moe",
+    "gc_moe"
+  ],
+  "exit_codes": {
+    "deep_gemm_mega_moe": 0,
+    "gc_moe": 0
+  },
+  "generated_ids": {
+    "deep_gemm_mega_moe": [
+      75,
+      200,
+      18,
+      200
+    ],
+    "gc_moe": [
+      75,
+      200,
+      18,
+      200
+    ]
+  },
+  "layers_total": 40,
+  "layers_equal": 40,
+  "first_hash_difference": null,
+  "first_id_difference": null,
+  "eplb_config": {
+    "num_redundant_experts": 64,
+    "step_interval": 3000,
+    "use_async": true,
+    "policy": "default"
+  },
+  "layout": {
+    "logical_experts_per_layer": 384,
+    "physical_slots_per_layer": 448,
+    "local_experts_per_rank": 56,
+    "sequence_parallel_asserted": true,
+    "fused_shared_asserted": true,
+    "ranks": 8
+  }
+}

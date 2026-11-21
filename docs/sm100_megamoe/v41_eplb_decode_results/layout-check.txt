@@ -1,0 +1,18 @@
+Runtime assertion path: scripts/sm100/v41_gc_worker.py::inspect_v41_replicas
+
+For every one of the 40 language_model.model.layers.N.ffn modules:
+- len(logical_replica_count) == 384
+- min(logical_replica_count) >= 1
+- len(logical_to_physical_map) == 384
+- sum(logical_replica_count) == 448
+- sorted(selected physical slots) == range(448)
+- experts.num_local_experts == 56
+- experts.has_fused_shared_experts is true
+- module.use_sequence_parallel is true
+
+scripts/sm100/v41_native_smoke.py then asserts:
+- len(collective_rpc("inspect_v41_replicas")) == 8
+- every rank returned exactly 40 rows
+- all eight rank results are identical
+
+Both arms completed these assertions without exception.
