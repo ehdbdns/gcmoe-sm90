@@ -1,0 +1,20 @@
+SM100 DEEPINFER PLACEMENT PREFLIGHT
+
+[deep_gemm_mega_moe] exit=0
+DeepInfer RR and physical load checks passed
+
+plan_sha256=4048ec19e4051ca7df85ccc3efe5c8d9b9e4eabe6d09e4b3d8305a2b6a6faf81
+changed_slots_total=17873
+sampled_slot_mismatches=0
+
+[gc_moe] exit=0
+DeepInfer RR and physical load checks passed
+
+plan_sha256=4048ec19e4051ca7df85ccc3efe5c8d9b9e4eabe6d09e4b3d8305a2b6a6faf81
+changed_slots_total=17873
+sampled_slot_mismatches=0
+
+gc_adapter_pids=[3139305, 3139307, 3139308, 3139311, 3139312, 3139314, 3139316, 3139317]
+gc_adapter_matches_workers=True
+
+worker_pids={"deep_gemm_mega_moe": {"0": 2742938, "1": 2742939, "2": 2742942, "3": 2742943, "4": 2742945, "5": 2742948, "6": 2742949, "7": 2742956}, "gc_moe": {"0": 3139305, "1": 3139307, "2": 3139308, "3": 3139311, "4": 3139312, "5": 3139314, "6": 3139316, "7": 3139317}}
