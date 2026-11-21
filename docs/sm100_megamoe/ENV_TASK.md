@@ -50,4 +50,4 @@ git push origin HEAD:main
 
 ## 后续五臂
 
-计划为原生、MegaMoE + EPLB + RR、MegaMoE + EPLB + ECO、GCMoE + EPLB + RR、GCMoE + EPLB + ECO。四个 EPLB 臂对齐逐层放置，两个 RR 臂对齐副本选择，两个 ECO 臂对齐价格、slack 与拍卖规则。拟覆盖 BS256、512、1024、2048，实际容量待本机验证。端到端、完整 MoE、token IR、总 M 块、峰值 rank M 块、活跃物理槽、M 块 IR、routed/graph 预测误差与 ECO 成交数沿用主表口径。适配阶段需确认两种内核的实际 M 块粒度和计时边界，避免把不同单位直接比较。严格回放及原生输出仍需独立验收。[当前主表](../../README.md)
+目标模型统一使用 SM90 主表的 DeepSeek-V4.1-Flash。计划为原生、MegaMoE + EPLB + RR、MegaMoE + EPLB + ECO、GCMoE + EPLB + RR、GCMoE + EPLB + ECO。四个 EPLB 臂对齐逐层放置，两个 RR 臂对齐副本选择，两个 ECO 臂对齐价格、slack 与拍卖规则。拟覆盖 BS256、512、1024、2048，实际容量待本机验证。端到端、完整 MoE、token IR、总 M 块、峰值 rank M 块、活跃物理槽、M 块 IR、routed/graph 预测误差与 ECO 成交数沿用主表口径。适配阶段需确认两种内核的实际 M 块粒度和计时边界，避免把不同单位直接比较。严格回放及原生输出仍需独立验收。[当前主表](../../README.md)

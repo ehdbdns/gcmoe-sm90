@@ -35,7 +35,14 @@ def worker(local_rank, world, checkpoint_dir):
     rank, size, group = init_dist(local_rank, world)
     assert size == 8 and torch.cuda.get_device_capability() == (10, 3)
     deep_gemm.use_deterministic_algorithms(True)
-    experts, hidden, inter, topk, tokens = 256, 4096, 2048, 6, 256
+    from v41_shape import model_shape
+    if checkpoint_dir:
+        cfg = model_shape(checkpoint_dir)
+        experts, hidden = cfg["n_routed_experts"], cfg["hidden_size"]
+        inter, topk = cfg["moe_intermediate_size"], cfg["num_experts_per_tok"]
+    else:
+        experts, hidden, inter, topk = 256, 4096, 2048, 6
+    tokens = 256
     torch.manual_seed(13000 + rank)
     x = torch.randn(tokens, hidden, device="cuda", dtype=torch.bfloat16)
     x, sf = per_token_cast_to_fp8(x, use_ue8m0=True, gran_k=32, use_packed_ue8m0=True)
