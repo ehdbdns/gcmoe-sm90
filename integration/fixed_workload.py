@@ -7,6 +7,10 @@ import torch
 
 
 def publishes_checkpoint():
+    if os.getenv("GC_MOE_VANILLA_STATS_REPLAY") == "1":
+        if os.getenv("GC_MOE_MATRIX_ARM") != "vanilla":
+            raise ValueError("vanilla statistics replay requires the vanilla arm")
+        return False
     if os.environ.get('GC_MOE_MATRIX_ARM'):
         return os.environ['GC_MOE_MATRIX_ARM'] == 'vanilla'
     if os.environ.get('GC_MOE_COST_STUDY') == '1':

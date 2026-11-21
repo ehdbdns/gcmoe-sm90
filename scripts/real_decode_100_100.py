@@ -947,6 +947,11 @@ def main():
 
     if long_cost:
         training = long_window('stats')
+        if os.getenv("GC_MOE_VANILLA_STATS_REPLAY") == "1":
+            with Path(a.output).open("x") as f:
+                json.dump(dict(arm=matrix, phase="stats", prompt_hash=prompt_hash,
+                               prefill_steps=prefill_steps, stats=training), f)
+            return
         warn_s = training['ms_per_step']
     else:
         warn_s = time_window(a.warm_steps)
