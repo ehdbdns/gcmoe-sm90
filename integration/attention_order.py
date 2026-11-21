@@ -1,5 +1,6 @@
 """Order the selected physical KV slots at the vLLM FlashMLA decode boundary."""
 import hashlib
+from functools import wraps
 
 import numpy as np
 import torch
@@ -67,6 +68,19 @@ def order_extra(indices, lengths, buf, layer):
                            indices.stride(0), indices.stride(-1), lengths.stride(0),
                            triton.next_power_of_2(width))
     return result
+
+
+def install_prefill_order():
+    from vllm.models.deepseek_v41.nvidia import flashmla
+    combine = flashmla.combine_topk_swa_indices
+
+    @wraps(combine)
+    def ordered_indices(*args, **kwargs):
+        indices, lengths = combine(*args, **kwargs)
+        ordered = order_extra(indices.unsqueeze(1), lengths, None, 0)
+        return ordered.squeeze(1), lengths
+
+    flashmla.combine_topk_swa_indices = ordered_indices
 
 
 def reset_order(tape, modules, backend):

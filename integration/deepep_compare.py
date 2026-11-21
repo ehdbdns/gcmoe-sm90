@@ -2232,6 +2232,9 @@ def _install_worker_rpc() -> None:
     if os.environ.get('GC_MOE_STRICT_STATE_DIR'):
         from stream_checkpoint import install_cache_names
         install_cache_names()
+        if os.getenv("GC_MOE_ORDER_PREFILL") == "1":
+            from attention_order import install_prefill_order
+            install_prefill_order()
         if os.getenv('GC_MOE_AA_CONTROL') == '1' or os.getenv('GC_MOE_ORDER_EXTRA') == '1':
             from attention_probe import install_flash_probe
             install_flash_probe(lambda: _SHARED_BUFFER.get('buf'), os.getenv('GC_MOE_ORDER_EXTRA') == '1')
