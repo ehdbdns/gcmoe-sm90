@@ -153,3 +153,39 @@ eco_linear/eco 17.1–17.7 s、`[1,4,2,5,6,3]` eco_smr 27.7 s）；
    此前所有基于旧参考的 Perfetto/rank-token/M 块数据均不可跨版本对比 —— 是否需要按本版本重采。
 3. 是否需要在 random 臂上以 `GC_MOE_MATRIX_PREFIX_CHECK=0`（新参考已发布、只做计时）方式继续，
    或先定位 req176 的 4 处分歧再决定。
+
+## 8. 该失败的性质（与历史主表对照）
+
+**观察到的事实**（不是推测）：
+
+1. random 臂的 **prefill 原生校验通过**：`begin('stats')` 中的
+   `verify_native_prefix("prefill", zeros)` 未报错，117 个 prefill 引擎步、220,096 个
+   prefill token 与参考逐位一致。
+2. 失败只出现在 **stats 窗口**，且只有 **4 / 256,000（0.0016%）** 个样本翻转。
+3. 八卡报的是同一处（req176 / position 664 / 620 步），说明不是单卡损坏。
+4. 同一份参考在 vanilla 臂上自证通过（vanilla 是发布者，`use_reference=False`，走真实路由）。
+
+**与历史一致**：`REPLY_MAIN24_COST` 中 20 个非 vanilla 臂的 `warm_native_equal`
+全部为 false、256 档正式窗口原生差异 11–30 处；`REPLY_MAIN24_PREFIX_CAPACITY`
+的 random 臂在 prefill 处就有 190 处失配。本轮稳定 top-k 把 prefill 的失配压到 0，
+**但没能把 decode 窗口压到 0**（4 处）。
+
+**合理推断**（需设计端确认，本执行者未做代码改动）：random 臂
+`publishes_checkpoint()` 为假 → 路由从 vanilla 的 `stats-rank*.pt` 回放
+（`use_reference=True`），但 **EP 专家放置是随机的**，专家分组和归约顺序随放置改变；
+`GC_MOE_ORDER_PREFILL=1` + `GC_MOE_STABLE_PREFILL_TOPK=1` 只规范化了 **sparse attention
+的 top-k 平局**，不约束 MoE 内部按放置变化的浮点归约顺序。这解释了为什么 prefill
+（索引/稀疏路径为主）能一致、decode（每步 40 层 MoE）会漂 4 个 token。
+
+**因此**：`GC_MOE_MATRIX_PREFIX_CHECK=1` 这个「原生差异为零」的门禁，
+对**任何会改变专家放置的臂**都要求"自变量不起作用"，逻辑上无法同时满足。
+需要设计端在两种口径中选一个：
+
+1. **门禁只对 vanilla 自证**，其余臂记录原生差异数（本轮 random 为 4 / 256,000）
+   并把 `strict_pair_comparable` 置 false，照常给出计时**观察值**（历史上就是这么做的）；
+2. 或要求非 vanilla 臂也逐位一致 —— 那等于放弃"放置改变"这一实验自变量。
+
+若选口径 1，本轮已完成的 vanilla 可直接作为基线：稳定 top-k 下
+**90.362（stats）/ 91.143（measured）ms/步**，与旧口径 `REPLY_MAIN24_COST` 的
+**90.231 ms** 相差 0.15%，说明稳定 top-k 对 E2E 计时几乎无影响，
+六个臂的性能排序（random 最差、eco_smr 最快）预计可以沿用。
