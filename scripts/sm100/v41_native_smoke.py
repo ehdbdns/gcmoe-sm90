@@ -11,7 +11,14 @@ def main():
     parser.add_argument("--backend", choices=("auto", "deep_gemm_mega_moe", "gc_moe"), default="auto")
     parser.add_argument("--prefix-audit", action="store_true")
     parser.add_argument("--eplb-decode", action="store_true")
+    parser.add_argument("--deepinfer-rr", action="store_true")
     args = parser.parse_args()
+    if args.deepinfer_rr and not args.eplb_decode:
+        parser.error("--deepinfer-rr requires --eplb-decode")
+    if args.deepinfer_rr:
+        os.environ["GC_MOE_V41_DEEPINFER_RR"] = "1"
+    else:
+        os.environ.pop("GC_MOE_V41_DEEPINFER_RR", None)
     if args.eplb_decode and (args.prefix_audit or args.backend == "auto"):
         parser.error("--eplb-decode requires an explicit MoE backend and autoregressive generation")
     if args.backend == "gc_moe":
@@ -60,10 +67,18 @@ def main():
                                   generated=int(output.token_ids[0]))), flush=True)
             tokens.append(ref_id)
         return
+    if args.deepinfer_rr:
+        before = model.collective_rpc("inspect_rr_calls")
     out = model.generate(
         [prompt],
         SamplingParams(temperature=0, max_tokens=4, ignore_eos=True),
     )
+    if args.deepinfer_rr:
+        after = model.collective_rpc("inspect_rr_calls")
+        calls = [b - a for a, b in zip(before, after, strict=True)]
+        if len(calls) != 8 or min(calls) < 40:
+            raise RuntimeError(f"Missing RR calls during generation: {calls}")
+        print(json.dumps(dict(rr_calls=calls)), flush=True)
     ids = list(out[0].outputs[0].token_ids)
     if args.eplb_decode:
         ranks = model.collective_rpc("inspect_v41_replicas")

@@ -2,7 +2,13 @@
 from functools import wraps
 
 
+_rr_calls = 0
+
+
 class MoeAuditWorker:
+    def inspect_rr_calls(self):
+        return _rr_calls
+
     def inspect_v41_replicas(self):
         import hashlib
         rows = []
@@ -81,4 +87,20 @@ def install_gc_experts():
     DeepseekV4MegaMoEExperts.finalize_weights = finalize_gc
 
 
+def install_rr():
+    import os
+    if os.environ.get("GC_MOE_V41_DEEPINFER_RR") != "1":
+        return
+    from vllm.models.deepseek_v4.nvidia import model
+    from v41_rr import map_and_record
+
+    def route(**kwargs):
+        global _rr_calls
+        _rr_calls += 1
+        return map_and_record(model.get_ep_group().rank_in_group, **kwargs)
+
+    model.eplb_map_to_physical_and_record = route
+
+
+install_rr()
 install_gc_experts()
