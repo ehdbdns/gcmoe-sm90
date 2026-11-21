@@ -3,6 +3,27 @@ from functools import wraps
 
 
 class MoeAuditWorker:
+    def inspect_v41_replicas(self):
+        import hashlib
+        rows = []
+        for name, module in self.get_model().named_modules():
+            if not name.endswith(".ffn") or not hasattr(module, "experts"):
+                continue
+            experts = module.experts
+            state = experts.eplb_state
+            counts = state.logical_replica_count.tolist()
+            mapping = state.logical_to_physical_map.tolist()
+            if len(counts) != 384 or min(counts) < 1 or len(mapping) != len(counts):
+                raise RuntimeError(f"{name}: incomplete logical replica map")
+            slots = [slot for row, n in zip(mapping, counts) for slot in row[:n]]
+            if (sum(counts) != 448 or sorted(slots) != list(range(448))
+                    or experts.num_local_experts != 56 or not experts.has_fused_shared_experts
+                    or not module.use_sequence_parallel):
+                raise RuntimeError(f"{name}: unexpected physical layout or shared fusion state")
+            digest = hashlib.sha256(str((counts, slots)).encode()).hexdigest()
+            rows.append(dict(layer=name, placement_sha256=digest))
+        return rows
+
     def inspect_v41_moe(self):
         rows = []
         for name, module in self.get_model().named_modules():

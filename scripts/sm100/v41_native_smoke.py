@@ -10,13 +10,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", choices=("auto", "deep_gemm_mega_moe", "gc_moe"), default="auto")
     parser.add_argument("--prefix-audit", action="store_true")
+    parser.add_argument("--eplb-decode", action="store_true")
     args = parser.parse_args()
+    if args.eplb_decode and (args.prefix_audit or args.backend == "auto"):
+        parser.error("--eplb-decode requires an explicit MoE backend and autoregressive generation")
     if args.backend == "gc_moe":
         os.environ["GC_MOE_V41_ENGINE"] = "gc"
     else:
         os.environ.pop("GC_MOE_V41_ENGINE", None)
     extension = ({"worker_extension_cls": "v41_gc_worker.MoeAuditWorker"}
-                 if args.prefix_audit or args.backend == "gc_moe" else {})
+                 if args.prefix_audit or args.eplb_decode or args.backend == "gc_moe" else {})
     assert torch.cuda.device_count() == 8
     assert all(torch.cuda.get_device_capability(i) == (10, 3) for i in range(8))
     model = LLM(
@@ -30,6 +33,9 @@ def main():
         max_num_seqs=8,
         max_num_batched_tokens=2048,
         **extension,
+        **({"enable_eplb": True, "eplb_config": {"num_redundant_experts": 64,
+                                                 "step_interval": 3000}}
+           if args.eplb_decode else {}),
         seed=0,
         dtype="bfloat16",
         async_scheduling=False,
@@ -59,6 +65,11 @@ def main():
         SamplingParams(temperature=0, max_tokens=4, ignore_eos=True),
     )
     ids = list(out[0].outputs[0].token_ids)
+    if args.eplb_decode:
+        ranks = model.collective_rpc("inspect_v41_replicas")
+        if len(ranks) != 8 or len(ranks[0]) != 40 or any(rank != ranks[0] for rank in ranks):
+            raise RuntimeError("EPLB replica layouts disagree or have incomplete layer coverage")
+        print(json.dumps(dict(backend=args.backend, replica_layers=ranks[0])), flush=True)
     assert len(ids) == 4
     print(json.dumps(dict(backend=args.backend, prompt=prompt, generated_ids=ids)), flush=True)
 
