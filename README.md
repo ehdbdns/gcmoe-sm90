@@ -5,7 +5,22 @@
 > 完整移植到 SM90 CuTe DSL，并在 vLLM 上跑通 **五臂**：
 > 原生（无副本）/ random+rr / eplb+rr / eplb+eco / eplb+eco+SM-reuse。
 
-## 最新主表 · 8×H20，四档 BS × 六臂
+## 最新严格对照主表 · 8×H20 · BS256
+
+DeepSeek-V4.1-Flash，TP=EP=8，M64，六臂均开启 stream 和稳定的 prefill、decode top-k。每臂一次运行，前 1000 步统计，后 1000 步测量。15/15 对通过严格校验，每对正式窗口的 256,000 个原生 token 均一致。端到端和完整 MoE 耗时单位为 ms/步，预测误差单位为百分点。[逐对校验](docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/pairs.csv) · [完整精度与列名](docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/main_table.csv)
+
+| BS | 臂 | 端到端 | 相对 vanilla | 完整 MoE | token IR | 总 M 块 | 峰值 M 块 | 活跃物理槽 | M 块 IR | routed 误差 | graph 误差 | 拍卖成交数 |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 256 | vanilla | 94.588 | +0.00% | 40.415 | 1.407 | 371.66 | 56.58 | 292.12 | 1.219 | 0.0919 | 1.9275 | — |
+| 256 | random | 98.231 | +3.85% | 43.335 | 1.489 | 415.42 | 63.41 | 341.34 | 1.222 | 0.1148 | 1.9992 | — |
+| 256 | rr | 90.998 | -3.80% | 35.303 | 1.083 | 404.55 | 54.36 | 356.06 | 1.075 | 0.0575 | 0.4748 | — |
+| 256 | eco_linear | 90.052 | -4.80% | 35.643 | 1.057 | 371.66 | 49.06 | 315.26 | 1.056 | 0.1276 | 0.2127 | 186,670 |
+| 256 | eco | 90.512 | -4.31% | 35.600 | 1.060 | 371.66 | 49.05 | 315.34 | 1.056 | 0.0738 | 0.2181 | 187,082 |
+| 256 | eco_smr | 88.757 | -6.17% | 34.083 | 1.060 | 371.66 | 49.05 | 315.34 | 1.056 | 0.1689 | 0.2181 | 187,082 |
+
+BS256 实测最快的是 `eco_smr`，相对 vanilla 的端到端耗时下降 6.17%，完整 MoE 耗时下降 15.67%。在 `eco_linear` 与 `eco` 的单独对照中，逐 valid 价格的 routed 预测误差从 0.1276 降至 0.0738 个百分点，完整 MoE 耗时下降 0.12%，端到端耗时上升 0.51%。本轮每臂测量一次。两种 fine 价格臂均接受 187,082 次出价，各有 40,000 次层调用，每次均有成交。[拍卖数据](docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/auction.csv) · [回执](docs/trace_handover_20261119/REPLY_SM90_MAIN24_STABLE_DECODE_BS256.md)
+
+## 历史主表 · 8×H20，四档 BS × 六臂
 
 DeepSeek-V4.1-Flash，TP=EP=8，M64。24 臂全部开启 stream，每臂运行一次，前 1000 步统计，重排后 1000 步测量。测量代码为 `0d7a87d`。同档的 `eco_linear` 使用线性价格与 slack 90，`eco` 使用逐 valid 价格与 slack 11469，`eco_smr` 在后者基础上开启 SM-reuse。
 
