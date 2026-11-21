@@ -10,7 +10,8 @@ def model_shape(root):
     cfg = json.loads(raw)
     expected = dict(hidden_size=5120, moe_intermediate_size=2304, n_routed_experts=384,
                     num_experts_per_tok=6, num_hidden_layers=40)
-    actual = {k: cfg.get(k) for k in expected}
+    text_config = cfg.get("text_config", cfg)
+    actual = {k: text_config.get(k) for k in expected}
     if "DeepseekV41ForCausalLM" not in cfg.get("architectures", []) or actual != expected:
         raise ValueError(f"Incompatible with SM90 V4.1-Flash: {cfg.get('architectures')}, {actual}")
     return {**actual, "config_sha256": hashlib.sha256(raw).hexdigest()}

@@ -947,7 +947,18 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         if probe is not None:
             probe['quantized'].copy_(buf.x[:tokens].view(torch.uint8))
             probe['scales'].copy_(buf.x_sf[:tokens])
+        layer_audit = getattr(buf, "prefix_layer_audit", None)
+        observe_layer = (layer_audit is not None and len(layer_audit.hidden_samples) < 20
+                         and not _capturing_enabled())
+        if observe_layer:
+            from stream_checkpoint import tensor_hash
+            boundary = dict(step=len(layer_audit.hidden_samples), layer=_LAYER_ROW[id(packed[0][0])],
+                            tokens=int(tokens), hidden=tensor_hash(x), ids=tensor_hash(buf.topk_idx[:tokens]),
+                            weights=tensor_hash(buf.topk_weights[:tokens]))
         self._launch(packed, buf, output, tokens)
+        if observe_layer:
+            boundary["output"] = tensor_hash(output[:tokens])
+            layer_audit.moe_boundaries.append(boundary)
         if probe is not None:
             if output.dtype != probe['output'].dtype:
                 raise ValueError('layer-zero output probe requires BF16')
@@ -2416,6 +2427,11 @@ def _install_worker_rpc() -> None:
         from fixed_tokens import install
 
         self._gc_reference_tokens = install(self.model_runner, os.environ['GC_MOE_FIXED_DIR'], capacity)
+        if os.getenv("GC_MOE_PREFIX_LAYER_AA") == "1":
+            if not hasattr(self._gc_reference_tokens, "hidden_samples"):
+                raise ValueError("layer audit requires prefix hidden audit")
+            self._gc_reference_tokens.moe_boundaries = []
+            profile_buffer().prefix_layer_audit = self._gc_reference_tokens
         return True
 
     Worker._gc_moe_fixed_tokens = gc_moe_fixed_tokens
@@ -2432,6 +2448,8 @@ def _install_worker_rpc() -> None:
             for j in (actual[i, :length] != expected[i, :length]).nonzero().flatten().tolist():
                 mismatches.append([i, j, actual[i, j].item(), expected[i, j].item()])
         result = dict(positions=n, samples=sum(n), mismatches=mismatches, batch_order=ref.batch_hash.hexdigest())
+        if hasattr(ref, "moe_boundaries"):
+            result["moe_boundaries"] = ref.moe_boundaries
         if hasattr(ref, "hidden_samples"):
             result["hidden_samples"] = ref.hidden_samples
         return result

@@ -1,6 +1,6 @@
 # 【SM100】DeepSeek-V4.1-Flash 第 0 层真实 routed 权重八卡 RR 验证
 
-本轮及后续五臂统一使用与 SM90 主表相同的 DeepSeek-V4.1-Flash。上轮旧形状的合成权重结果仅作接口验证。先在 admin 可读的模型目录或共享存储中定位 V4.1-Flash，将实际目录导出为 SM100_V41_MODEL。若找不到，先回执缺失路径或所需挂载，等权重就绪再占卡。若旧任务已启动，保留其结果并标注旧模型。本轮读取第 0 层真实打包权重，按逻辑专家装载 w1/w3 至 L1、w2 至 L2，并转换 scale 布局。使用与上一轮相同的合成输入和 gate，分别运行原生 identity 与逐层 EPLB + RR，核验 16 份 rank 记录、槽计数和逐元素输出。该对照检验换槽后是否保持结果，两臂共享加载器，不能独立验证模型语义。
+本轮及后续五臂统一使用与 SM90 主表相同的 DeepSeek-V4.1-Flash。上轮旧形状的合成权重结果仅作接口验证。已由执行者定位可读权重，本次在同一挂载重试。若找不到，先回执缺失路径或所需挂载，等权重就绪再占卡。若旧任务已启动，保留其结果并标注旧模型。本轮读取第 0 层真实打包权重，按逻辑专家装载 w1/w3 至 L1、w2 至 L2，并转换 scale 布局。使用与上一轮相同的合成输入和 gate，分别运行原生 identity 与逐层 EPLB + RR，核验 16 份 rank 记录、槽计数和逐元素输出。该对照检验换槽后是否保持结果，两臂共享加载器，不能独立验证模型语义。
 
 只在同组八卡均空闲并确认无人预约时执行，否则每 60 秒等待复查。遵循[【SM100】共享机器规则](ENV_TASK.md)。执行者只执行下列步骤，仅允许有记录的语义等价编译修复。失败保留首条异常。
 
@@ -15,7 +15,7 @@ source /home/admin/workspace/megamoe/env.sh
 dg=/home/admin/workspace/megamoe/DeepGEMM
 test "$(git -C "$dg" rev-parse HEAD)" = 5081f8513af57e61696de4f4f04b0e707ffb503e
 export PYTHONPATH="$dg:${PYTHONPATH:-}"
-: "${SM100_V41_MODEL:?set to the accessible DeepSeek-V4.1-Flash checkpoint}"
+export SM100_V41_MODEL=/mnt/nas1/hf/DeepSeek-V4.1-Flash
 python scripts/sm100/v41_shape.py "$SM100_V41_MODEL" | tee "$work/config.log"
 python scripts/sm100/checkpoint_experts.py "$SM100_V41_MODEL" | tee "$work/checkpoint.log"
 sha256sum "$SM100_V41_MODEL/model.safetensors.index.json" >> "$work/config.log"
@@ -37,4 +37,4 @@ export MASTER_ADDR=127.0.0.1 MASTER_PORT=8361
 ) 2>&1 | tee "$work/smoke.log"
 ```
 
-回执注明模型实际路径及可核实的来源或 revision。将 config.log、checkpoint.log、smoke.log、执行 SHA、分配及释放时间和逐 rank 结果提交至 docs/sm100_megamoe/checkpoint_rr_results/ 与 docs/sm100_megamoe/REPLY_CHECKPOINT_RR.md，推送 main。无需启动框架或测量性能。
+回执注明模型实际路径及可核实的来源或 revision。将 config.log、checkpoint.log、smoke.log、执行 SHA、分配及释放时间和逐 rank 结果提交至 docs/sm100_megamoe/checkpoint_v41_retry_results/ 与 docs/sm100_megamoe/REPLY_CHECKPOINT_V41_RETRY.md，推送 main。无需启动框架或测量性能。
