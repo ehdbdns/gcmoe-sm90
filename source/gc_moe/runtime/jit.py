@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import hashlib
 import inspect
+import json
 import os
 from pathlib import Path
 import re
@@ -76,6 +77,17 @@ def _source_identity(source_root: str, stamps: tuple) -> str:
     return digest.hexdigest()
 
 
+def _environment_cache_key(settings) -> str:
+    native_key = getattr(settings, 'cache_key_str', None)
+    if native_key is not None:
+        return native_key()
+    # CuTe DSL 4.7.1 hashes the resolved manager fields in get_module_hash.
+    # Include field names and stable KEEP token ordering across worker processes.
+    fields = {name: sorted(value) if isinstance(value, frozenset) else value
+              for name, value in vars(settings).items()}
+    return json.dumps(fields, default=os.fspath, sort_keys=True, separators=(',', ':'))
+
+
 def compiler_identity(target: str, entrypoint, source_root: Path,
                       kernel_name: str) -> CompilerIdentity:
     tool = Path(SYSTEM_PTXAS)
@@ -126,7 +138,7 @@ def compiler_identity(target: str, entrypoint, source_root: Path,
     native_identity = (str(native), native_stamp, _binary_identity(str(native), native_stamp))
     return CompilerIdentity(
         target, options, assembly, realpath, stamp, version, digest,
-        settings.cache_key_str(), normalized,
+        _environment_cache_key(settings), normalized,
         function._dsl_object.get_version().hexdigest(), _source_identity(str(source_root), tuple(stamps)),
         native_identity)
 
