@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/data0/home/admin/workspace/megamoe/checkpoint-v41-PLDU2flI/code/scripts/sm100/v41_shape.py", line 20, in <module>
+    print(json.dumps(model_shape(sys.argv[1])))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/checkpoint-v41-PLDU2flI/code/scripts/sm100/v41_shape.py", line 15, in model_shape
+    raise ValueError(f"Incompatible with SM90 V4.1-Flash: {cfg.get('architectures')}, {actual}")
+ValueError: Incompatible with SM90 V4.1-Flash: ['DeepseekV41ForCausalLM'], {'hidden_size': None, 'moe_intermediate_size': None, 'n_routed_experts': None, 'num_experts_per_tok': None, 'num_hidden_layers': None}
+74b0686a3d2891980d5e303251b075a3bccae2c2ff650747db2620a649b98fa8  /mnt/nas1/hf/DeepSeek-V4.1-Flash/model.safetensors.index.json
+8be45ce0476004a3f529fd896115a4a2e800a129ad2d3ec05b16050f52e21879  /mnt/nas1/hf/DeepSeek-V4.1-Flash/config.json
