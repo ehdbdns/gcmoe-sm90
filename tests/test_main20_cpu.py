@@ -55,6 +55,37 @@ def test_policy():
         raise AssertionError("stale ring accepted")
 
 
+def test_matrix_replay_checks():
+    from fixed_tokens import ReferenceTokens
+    from long_cost import LongRouteTape
+
+    ref = ReferenceTokens({"req0": [4, 5, 6], "req1": [8, 9]}, "cpu", capacity=5)
+    ref.positions.copy_(torch.tensor([3, 2]))
+    ref.native[:, :3] = torch.tensor([[4, 5, 6], [8, 9, 77]])
+    start = torch.tensor([1, 1])
+    ref.verify_native_prefix("stats", start)
+    ref.native[0, 0] = 0  # Before the window.
+    ref.native[1, 1] = 3
+    try:
+        ref.verify_native_prefix("stats", start)
+    except ValueError as exc:
+        assert "req1, position 1, native 3, reference 9" in str(exc)
+    else:
+        raise AssertionError("accepted divergent native token")
+
+    with patch.dict("os.environ", GC_MOE_MATRIX_ARM="rr"):
+        tape = LongRouteTape("cpu", 2, 3, steps=2, layers=1, batch=2)
+        out = torch.empty((2, 2), dtype=torch.int32)
+        tape.record_ordinals(torch.tensor([[[1, 2], [1, 2]]]), out)
+        buf = SimpleNamespace(used_route_ordinal=out.clone(), eco_tl_step=torch.tensor([1], dtype=torch.int32),
+                              profile_slot_counts=torch.zeros((256, 3), dtype=torch.int32))
+        tape.finish_call(buf)
+        tape.index.fill_(1)
+        buf.used_route_ordinal[1, 0] = 0
+        tape.finish_call(buf)
+        assert tape.ordinal_match.tolist() == [True, False]
+
+
 def test_worker_export(root):
     from long_cost import register_long_rpc
 
@@ -88,6 +119,8 @@ def test_worker_export(root):
         pass
 
     ref = SimpleNamespace(
+        replay_start=torch.zeros(1),
+        verify_native_prefix=lambda phase, start: None,
         native_history=lambda steps: dict(replay_top1=[[7], [8]], warm_top1_sha256="warm"),
         batch_hash=hashlib.sha256(),
     )
@@ -387,6 +420,7 @@ def test_archive(root):
 
 if __name__ == "__main__":
     torch.set_num_threads(1)
+    test_matrix_replay_checks()
     test_policy()
     test_prepared_prices()
     test_rr_counts()

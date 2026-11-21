@@ -1,4 +1,8 @@
-# 当前任务 · 修正 EPLB 后的 24 臂主表
+# 当前任务 · BS256 严格回放与显存复核
+
+回执写入本目录的 `REPLY_MAIN24_PREFIX_CAPACITY.md`。[执行步骤](../trace_executor_20261119/MAIN24_PREFIX_CAPACITY_TASK.md)
+
+# 历史任务 · 修正 EPLB 后的 24 臂主表
 
 回执写入本目录的 `REPLY_MAIN24_COST.md`。每档 BS 固定工作量，新增关闭 SM-reuse 的线性 ECO 价格对照，测量完整 MoE、端到端、各 rank 预测误差与 ECO 拍卖成交。[八卡任务书](../trace_executor_20261119/MAIN24_COST_TASK.md)
 

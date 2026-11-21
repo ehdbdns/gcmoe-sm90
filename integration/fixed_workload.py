@@ -41,14 +41,19 @@ class RouteTape:
     layers = 40
     batch = 256
 
-    def __init__(self, device, topk, slots, steps=steps, layers=layers, batch=batch):
+    def __init__(self, device, topk, slots, steps=steps, layers=layers, batch=batch, compact_audit=False):
         self.steps, self.layers, self.batch = steps, layers, batch
         calls = steps * layers
         shape = (calls, batch, topk)
         self.ids = torch.zeros(shape, dtype=torch.int64, device=device)
         self.weights = torch.zeros(shape, dtype=torch.float32, device=device)
-        self.ordinals = torch.full(shape, -1, dtype=torch.int32, device=device)
-        self.used_ordinals = torch.empty_like(self.ordinals)
+        self.compact_audit = compact_audit
+        if compact_audit:
+            self.ordinal_match = torch.zeros(calls, dtype=torch.bool, device=device)
+            self.expected_ordinal = torch.empty((batch, topk), dtype=torch.int32, device=device)
+        else:
+            self.ordinals = torch.full(shape, -1, dtype=torch.int32, device=device)
+            self.used_ordinals = torch.empty_like(self.ordinals)
         self.counts = torch.zeros((calls, slots), dtype=torch.int32, device=device)
         self.epochs = torch.zeros(calls, dtype=torch.int32, device=device)
         self.layer_ids = torch.full((calls,), -1, dtype=torch.int32, device=device)
@@ -78,6 +83,9 @@ class RouteTape:
     def finish_call(self, buf, output=None):
         if hasattr(self, 'first_step_probe'):
             self.first_step_probe.record(buf, output)
+        elif self.compact_audit:
+            matched = (self.expected_ordinal == buf.used_route_ordinal[:self.batch]).all().reshape(1)
+            self.ordinal_match.index_copy_(0, self.index, matched)
         else:
             self.used_ordinals.index_copy_(0, self.index, buf.used_route_ordinal[:self.batch].unsqueeze(0))
         epoch = buf.eco_tl_step

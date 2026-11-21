@@ -870,7 +870,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         if use_tape:
             topk_ids, topk_weights = tape.select(topk_ids, topk_weights, _LAYER_ROW[id(packed[0][0])],
                                                  buf.route_ordinal[:tokens])
-        elif tape is not None:
+        elif tape is not None and not buf.layout.matrix:
             buf.route_ordinal[:tokens].fill_(-1)
         buf.x[:tokens].copy_(xq.view(tokens, -1))
         buf.x_sf[:tokens].copy_(xsf.view(tokens, -1))
@@ -934,6 +934,12 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         if use_tape and buf.layout.matrix:
             # ECO addresses a logical expert, RR addresses a physical slot.
             tape.record_ordinals(buf.topk_idx[:tokens].unsqueeze(0), buf.route_ordinal[:tokens])
+        elif tape is not None and buf.layout.matrix:
+            # Mixed-size prefill also needs a deterministic row within the
+            # actual dispatch destination (physical for RR, logical for ECO).
+            from fixed_workload import route_ordinals
+            ordered = route_ordinals(buf.topk_idx[:tokens].unsqueeze(0))
+            buf.route_ordinal[:tokens].copy_(ordered[0])
         buf.topk_weights[:tokens].copy_(topk_weights.to(torch.float32).view(tokens, -1))
 
         probe = (tape.boundary_probe if use_tape and hasattr(tape, 'boundary_probe')

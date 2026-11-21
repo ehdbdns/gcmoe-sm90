@@ -43,6 +43,21 @@ class ReferenceTokens:
         sampled[:, 0].copy_(torch.where(num_sampled.bool(), expected, sampled[:, 0]))
         self.positions.index_add_(0, rows, num_sampled.long())
 
+    def verify_native_prefix(self, phase, start):
+        # Called outside timing. Compare only accepted samples, in request
+        # coordinates, with the publisher's original greedy token stream.
+        pos = torch.arange(self.native.shape[1], device=self.device)
+        accepted = (pos >= start[:, None]) & (pos < self.positions[:, None])
+        different = accepted & (self.native != self.table)
+        if different.any().item():
+            rows, cols = different.nonzero(as_tuple=True)
+            offsets = cols - start[rows]
+            i = offsets.argmin()
+            row, col = rows[i].item(), cols[i].item()
+            raise ValueError(f'{phase}: {len(rows)} native top-1 mismatches; '
+                             f'first relative offset {offsets[i].item()}, req{row}, position {col}, '
+                             f'native {self.native[row, col].item()}, reference {self.table[row, col].item()}')
+
     def mark_replay_start(self):
         self.replay_start = self.positions.clone()
         self.capture_first_sample = os.environ.get('GC_MOE_FIRST_STEP_AUDIT') == '1'

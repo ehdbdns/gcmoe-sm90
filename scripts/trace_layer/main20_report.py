@@ -136,6 +136,14 @@ def arm_data(directory, bs, arm, sha, with_linear=False):
             control[phase].append(
                 {k: row[k] for k in ("rank", "first_epoch", "ids", "weights", "demand", "compressed_layers")}
             )
+            if config.get("GC_MOE_MATRIX_PREFIX_CHECK") == "1":
+                require(row["ordinal_calls_verified"] == calls, "incomplete ordinal audit")
+                if phase == "stats":
+                    snap = start["checkpoint"]["prefill_snapshot"]
+                    manifest = load(directory.parent / "checkpoint/prefill" / f"rank{row['rank']}.json")
+                    require(snap["readback_sha256"] == snap["source_sha256"] == manifest["sha256"],
+                            "invalid prefill boundary")
+                    control[phase][-1]["prefill_snapshot"] = snap
             if phase == "measured":
                 require(2 in row["compressed_layers"], "incomplete attention audit")
                 boundary = start["checkpoint"]
@@ -467,7 +475,7 @@ def report(root, batches, with_linear=None):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("root", type=Path)
-    p.add_argument("--bs", type=int, choices=BATCHES)
+    p.add_argument("--bs", type=int, choices=(*BATCHES, 512, 1024, 2048))
     p.add_argument(
         "--with-linear",
         action="store_true",

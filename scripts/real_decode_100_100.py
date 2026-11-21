@@ -158,7 +158,13 @@ def _compilation_config():
     mode = os.environ.get('CUDAGRAPH_MODE', 'FULL_DECODE_ONLY')
     if mode == 'default':
         return None
-    return {'cudagraph_mode': getattr(CUDAGraphMode, mode)}
+    config = {'cudagraph_mode': getattr(CUDAGraphMode, mode)}
+    batch = int(os.environ.get('GC_MOE_MATRIX_BS', '0'))
+    if os.environ.get('GC_MOE_MATRIX_ARM') and batch > 256:
+        # Pure decode has exactly this shape. Avoid retaining dozens of
+        # capture pools or falling back to eager above the default graph cap.
+        config.update(cudagraph_capture_sizes=[batch], max_cudagraph_capture_size=batch)
+    return config
 
 
 def _irstep_reduce(dumps):
@@ -640,7 +646,7 @@ def main():
                 or not os.getenv('GC_MOE_FIXED_DIR') or not os.getenv('GC_MOE_STRICT_STATE_DIR')
                 or a.profile_out or a.profile_aligned_step or a.timing_tail_steps or a.fine_layers
                 or os.getenv('GC_MOE_FINE_TRACE') != '0' or os.getenv('GC_MEASURE_FLUSH') != '0'
-                or (a.seqs_per_rank not in ((4,8,16,32) if matrix else (32,)) or (a.warm_steps, a.measure_steps) != (1000,1000))):
+                or (a.seqs_per_rank not in ((4,8,16,32,64,128,256) if matrix else (32,)) or (a.warm_steps, a.measure_steps) != (1000,1000))):
             ap.error('long cost study requires the fixed, unprofiled 1000+1000 EP8 configuration')
     if a.timing_tail_steps < 0 or (a.timing_tail_steps and
             (not a.fine_layers or os.environ.get('VLLM_ENABLE_V1_MULTIPROCESSING') != '0')):
@@ -680,6 +686,8 @@ def main():
     # against a 990k pool). So: pick with a placeholder, compute the real
     # budget, then re-pick with that budget as the per-stream overhead.
     kv_pool = int(os.environ.get('GC_KV_BUDGET', '1150000'))
+    if matrix and nseq > 256 and int(os.environ.get('GC_KV_BUDGET', '0')) <= 0:
+        raise ValueError('set GC_KV_BUDGET to the calibrated token budget for this matrix batch')
     prompts = load_prompts(nseq, a.prefill_lo, a.prefill_hi)
     flush = int(os.environ.get('GC_MEASURE_FLUSH', '5'))
     tail_warmup = 2 if a.timing_tail_steps else 0
@@ -688,7 +696,7 @@ def main():
         tot = sum(len(p) for p in prompts)
         slack = 2 * (-(-tot // chunk)) + 64
         budget = 1 + a.warm_steps + a.measure_steps + slack + extra_steps
-        overhead = budget + 512 + 64
+        overhead = budget + int(os.environ.get('GC_PREFILL_MARGIN', '512')) + 64 if matrix and nseq > 256 else budget + 512 + 64
         os.environ['GC_KV_OVERHEAD'] = str(overhead)
         if sum(len(p) + overhead for p in prompts) <= kv_pool:
             break
