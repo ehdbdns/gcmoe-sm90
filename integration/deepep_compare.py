@@ -948,7 +948,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             probe['quantized'].copy_(buf.x[:tokens].view(torch.uint8))
             probe['scales'].copy_(buf.x_sf[:tokens])
         layer_audit = getattr(buf, "prefix_layer_audit", None)
-        observe_layer = (layer_audit is not None and len(layer_audit.hidden_samples) < 20
+        observe_layer = (layer_audit is not None and len(layer_audit.hidden_samples) in layer_audit.moe_steps
                          and not _capturing_enabled())
         if observe_layer:
             from stream_checkpoint import tensor_hash
@@ -2434,6 +2434,11 @@ def _install_worker_rpc() -> None:
             if not hasattr(self._gc_reference_tokens, "hidden_samples"):
                 raise ValueError("layer audit requires prefix hidden audit")
             self._gc_reference_tokens.moe_boundaries = []
+            first = int(os.getenv("GC_MOE_PREFIX_LAYER_FIRST", 0))
+            stop = int(os.getenv("GC_MOE_PREFIX_LAYER_STOP", 20))
+            if not 0 <= first < stop:
+                raise ValueError("invalid prefill MoE audit step range")
+            self._gc_reference_tokens.moe_steps = range(first, stop)
             profile_buffer().prefix_layer_audit = self._gc_reference_tokens
             if os.getenv("GC_MOE_PREFIX_BLOCK_AA") == "1":
                 from prefix_module_probe import install as install_block_probe
