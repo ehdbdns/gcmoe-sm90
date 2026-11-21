@@ -1,6 +1,7 @@
 """Hash the effective sparse prefill inputs without reading unused KV workspace."""
 from contextvars import ContextVar
 from functools import wraps
+import os
 
 import torch
 
@@ -31,11 +32,13 @@ def install(ref, capturing):
     cls = flashmla.DeepseekV4FlashMLAAttention
     prefill = cls._forward_prefill
     sparse = flashmla.flash_mla_sparse_fwd
+    first = int(os.getenv("GC_MOE_PREFIX_BLOCK_FIRST", 12))
+    stop = int(os.getenv("GC_MOE_PREFIX_BLOCK_STOP", 14))
     active = ContextVar("gc_prefix_sparse_heads", default=None)
 
     @wraps(prefill)
     def observe_prefill(self, *args, **kwargs):
-        if self.layer_id != 20 or len(ref.hidden_samples) not in (12, 13) or capturing():
+        if self.layer_id != 20 or len(ref.hidden_samples) not in range(first, stop) or capturing():
             return prefill(self, *args, **kwargs)
         token = active.set(self.n_local_heads)
         try:

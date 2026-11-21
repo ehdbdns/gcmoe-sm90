@@ -1,4 +1,5 @@
 """Diagnostic-only eager boundaries around the first divergent decoder block."""
+import os
 import re
 import torch
 from stream_checkpoint import tensor_hash
@@ -16,11 +17,15 @@ def tensors(value):
 
 def install(runner, ref, capturing):
     ref.block_records = []
+    first = int(os.getenv("GC_MOE_PREFIX_BLOCK_FIRST", 12))
+    stop = int(os.getenv("GC_MOE_PREFIX_BLOCK_STOP", 14))
+    if not 0 <= first < stop:
+        raise ValueError("invalid prefill block audit window")
 
     def observer(name, edge):
         def record(module, args, kwargs, output=None):
             step = len(ref.hidden_samples)
-            if step in (12, 13) and not capturing():
+            if step in range(first, stop) and not capturing():
                 values = (args, kwargs) if edge == "in" else output
                 ref.block_records.append(dict(step=step, module=name, edge=edge, tensors=tensors(values)))
         return record
