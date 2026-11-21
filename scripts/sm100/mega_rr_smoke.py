@@ -165,7 +165,11 @@ def worker(local_rank, world, checkpoint_dir, with_shared, eco_reference, compar
             row["max_abs_diff_from_mega_identity"] = float((y.float() - ref.float()).abs().max())
         if online:
             row["online_config"] = cfg
-            row["plan_matches_reference"] = torch.equal(state[:len(physical)].long(), expected)
+            # Warm state stores quotas only for active replicated slots (eco_unit_kernel.cu).
+            replica_slots = [slot for copies in gpu_reference.copies.values() for slot in copies]
+            warm_expected = torch.zeros_like(expected)
+            warm_expected[replica_slots] = expected[replica_slots]
+            row["plan_matches_reference"] = torch.equal(state[:len(physical)].long(), warm_expected)
             row["counts_match_history"] = torch.equal(state[len(physical):].long(), history.long())
         shared_changed = True
         if shared:
