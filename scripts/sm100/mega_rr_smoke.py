@@ -1,5 +1,6 @@
 """Eight-rank, model-shaped routed-only correctness test for DeepGEMM 5081f851."""
 from pathlib import Path
+import argparse
 import json
 import sys
 import torch
@@ -26,7 +27,7 @@ def packed_weights(experts, n, k, seed):
     return w, deep_gemm.transform_sf_into_required_layout(sf, n, k, (1, 32), size)
 
 
-def worker(local_rank, world):
+def worker(local_rank, world, checkpoint_dir):
     import deep_gemm
     from deep_gemm.utils import per_token_cast_to_fp8
     from deep_gemm.utils.dist import init_dist
@@ -48,12 +49,18 @@ def worker(local_rank, world):
                                                        experts // size + 8)
     slots = mega_rr_slots(logical, inverse[0], count[0], rank)
     assert torch.equal(layout[0][slots].long(), logical)
+    from real_routed_weights import ExpertCheckpoint
+    checkpoint = ExpertCheckpoint(checkpoint_dir) if checkpoint_dir else None
     ref = None
     for name, physical, route in (("identity", torch.arange(experts, device="cuda"), logical),
                                   ("eplb_rr", layout[0], slots)):
         local = physical.chunk(size)[rank].tolist()
-        l1, l2 = deep_gemm.transform_weights_for_mega_moe(
-            packed_weights(local, 2 * inter, hidden, 100), packed_weights(local, hidden, inter, 1000))
+        if checkpoint is None:
+            raw = packed_weights(local, 2 * inter, hidden, 100), packed_weights(local, hidden, inter, 1000)
+        else:
+            raw = checkpoint.packed(local, ("w1", "w3"), inter, hidden), checkpoint.packed(local, ("w2",), hidden, inter)
+        l1, l2 = deep_gemm.transform_weights_for_mega_moe(*raw)
+        del raw
         buf = deep_gemm.get_symm_buffer_for_mega_moe(group, len(physical), tokens, topk, hidden, inter,
                                                       num_shared_experts=0, mma_type="fp8xfp4")
         buf.x[:tokens].copy_(x)
@@ -84,4 +91,7 @@ def worker(local_rank, world):
 if __name__ == "__main__":
     if torch.cuda.device_count() != 8:
         raise SystemExit("Expected the allocated group of exactly eight idle GPUs")
-    torch.multiprocessing.spawn(worker, args=(8,), nprocs=8)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkpoint", type=Path)
+    args = parser.parse_args()
+    torch.multiprocessing.spawn(worker, args=(8, args.checkpoint), nprocs=8)
