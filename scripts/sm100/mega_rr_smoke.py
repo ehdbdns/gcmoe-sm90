@@ -37,7 +37,7 @@ def copy_shared_input_scales(dest, sf, block_m):
     dest.index_copy_(0, address, sf)
 
 
-def worker(local_rank, world, checkpoint_dir, with_shared, eco_reference, compare_gc):
+def worker(local_rank, world, checkpoint_dir, with_shared, eco_reference, compare_gc, live_eco):
     import deep_gemm
     from deep_gemm.utils import per_token_cast_to_fp8
     from deep_gemm.utils.dist import init_dist
@@ -102,6 +102,14 @@ def worker(local_rank, world, checkpoint_dir, with_shared, eco_reference, compar
         gc_shared = dict(shared_l1_weights=gc_l1, shared_l2_weights=gc_l2)
         cases.extend([("gc_eplb_rr", layout[0], slots),
                       ("gc_eplb_eco_reference", layout[0], route)])
+    if live_eco:
+        from gc_moe.eco.meta_sm90 import reorder_single_copy_first
+        from gc_moe.eco.meta_sm100 import build_eco_meta_sm100
+        from gc_moe.eco.plan import eco_unit_config
+        ordered, _ = reorder_single_copy_first(layout[0].cpu().numpy(), size)
+        live_layout = torch.as_tensor(ordered, device=logical.device)
+        meta = torch.as_tensor(build_eco_meta_sm100(ordered, size, experts), device=logical.device)
+        cases.append(("gc_eplb_eco_gpu", live_layout, logical))
     control = None
     for name, physical, route in cases:
         shared = with_shared and name != "routed_control"
@@ -120,8 +128,10 @@ def worker(local_rank, world, checkpoint_dir, with_shared, eco_reference, compar
             shared_kwargs = shared_args
         l1, l2 = transform(*raw)
         del raw
+        online = name == "gc_eplb_eco_gpu"
         buf = allocate(group, len(physical), tokens, topk, hidden, inter,
-                                                      num_shared_experts=int(shared), mma_type="fp8xfp4")
+                                                      num_shared_experts=int(shared), mma_type="fp8xfp4",
+                                                      **({"eco": True} if online else {}))
         buf.x[:tokens].copy_(x)
         buf.x_sf[:tokens].copy_(sf)
         if shared:
@@ -132,24 +142,37 @@ def worker(local_rank, world, checkpoint_dir, with_shared, eco_reference, compar
         buf.topk_weights[:tokens].copy_(weights)
         y = torch.empty((tokens, hidden), dtype=torch.bfloat16, device="cuda")
         received = torch.zeros(len(local), dtype=torch.int32, device="cuda")
+        if online:
+            cfg = eco_unit_config(size, block_m)
+            gpu_reference = UnitPlanner(ordered, size, experts, *cfg)
+            quotas = gpu_reference.plan(history.cpu().numpy())
+            expected_gpu = torch.as_tensor(quotas, device=logical.device)
+            state = torch.zeros(len(physical) + experts, device=logical.device, dtype=torch.int16)
+            shared_kwargs = dict(shared_kwargs, eco_meta=meta, eco_state=state, eco_logical_experts=experts)
         launch(y, l1, l2, buf, cumulative_local_expert_recv_stats=received,
                                    **(shared_kwargs if shared else {}))
         expected = torch.bincount(route.flatten(), minlength=len(physical))
         dist.all_reduce(expected, group=group)
         if name.endswith("eco_reference") and not torch.equal(expected, quota):
             raise ValueError("actual route histogram differs from ECO quota")
+        if online:
+            expected = expected_gpu
         delta = 0 if ref is None else (y != ref).sum().item()
         row = dict(arm=name, rank=rank, different_elements=delta,
                    valid_output=bool(torch.isfinite(y).all() and y.abs().max() > 0),
                    slot_count_match=torch.equal(expected.chunk(size)[rank], received.long()))
         if ref is not None:
             row["max_abs_diff_from_mega_identity"] = float((y.float() - ref.float()).abs().max())
+        if online:
+            row["online_config"] = cfg
+            row["plan_matches_reference"] = torch.equal(state[:len(physical)].long(), expected)
+            row["counts_match_history"] = torch.equal(state[len(physical):].long(), history.long())
         shared_changed = True
         if shared:
             row["changed_from_routed_only"] = int((y != control).sum().item())
             shared_changed = row["changed_from_routed_only"] > 0
         print(json.dumps(row), flush=True)
-        bad = torch.tensor(int(not shared_changed or delta != 0 or not row["valid_output"] or not row["slot_count_match"]), device="cuda")
+        bad = torch.tensor(int(not row.get("plan_matches_reference", True) or not row.get("counts_match_history", True) or not shared_changed or delta != 0 or not row["valid_output"] or not row["slot_count_match"]), device="cuda")
         dist.all_reduce(bad, group=group)
         if name == "routed_control":
             control = y.clone()
@@ -170,11 +193,14 @@ if __name__ == "__main__":
     parser.add_argument("--shared", action="store_true")
     parser.add_argument("--eco-reference", action="store_true")
     parser.add_argument("--compare-gc", action="store_true")
+    parser.add_argument("--live-eco", action="store_true")
     args = parser.parse_args()
+    if args.live_eco and not args.compare_gc:
+        parser.error("--live-eco requires --compare-gc")
     if args.compare_gc and not args.eco_reference:
         parser.error("--compare-gc requires --eco-reference")
     if args.eco_reference and not args.shared:
         parser.error("--eco-reference requires --shared")
     if args.shared and not args.checkpoint:
         parser.error("--shared requires --checkpoint")
-    torch.multiprocessing.spawn(worker, args=(8, args.checkpoint, args.shared, args.eco_reference, args.compare_gc), nprocs=8)
+    torch.multiprocessing.spawn(worker, args=(8, args.checkpoint, args.shared, args.eco_reference, args.compare_gc, args.live_eco), nprocs=8)
