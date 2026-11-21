@@ -1,4 +1,4 @@
-# 当前任务 · BS256 严格回放与显存复核
+# 【SM90】当前任务 · BS256 严格回放与显存复核
 
 回执写入本目录的 `REPLY_MAIN24_PREFIX_CAPACITY.md`。[执行步骤](../trace_executor_20261119/MAIN24_PREFIX_CAPACITY_TASK.md)
 
