@@ -1,0 +1,24 @@
+2026-11-21T19:45:25+08:00 executor launcher starts
+2026-11-21T19:45:42+08:00 local XFS weight copy starts
+2026-11-21T20:07:42+08:00 local weight copy completes; 510313473710 bytes, 48 shards
+2026-11-21T20:07:43+08:00 model process starts (pid 870641)
+2026-11-21T20:08:02+08:00 vLLM V1 engine initialization begins
+2026-11-21T20:08:22+08:00 eight worker processes start (TP0-EP0 ... TP7-EP7)
+2026-11-21T20:08:40+08:00 native backend resolved: FLASHINFER_TRTLLM_MXFP4_MXFP8
+2026-11-21T20:16:13+08:00 peak sampled cgroup memory.current: 977049341952 bytes
+2026-11-21T20:16:28+08:00 last shard load progress; all 48/48 shards completed in 06:18
+2026-11-21T20:17:33+08:00 FlashInfer MNNVL all-reduce workspace initialized on all eight ranks
+2026-11-21T20:23:46+08:00 first FlashInfer cubin fetch in this run
+2026-11-21T20:28:14+08:00 memory profiling completes: 657.5 s, weights 36.12 GiB/rank, KV cache 175.94 GiB/rank
+2026-11-21T20:28:15+08:00 GPU KV cache size 8,369,325 tokens
+2026-11-21T20:29:43+08:00 FlashInfer autotune begins
+2026-11-21T21:08:12+08:00 last successful cubin download
+2026-11-21T21:08:19+08:00 no shared-memory broadcast block for 60 s
+2026-11-21T21:08:21+08:00 TP2 and TP3 workers log signal 15 / SystemExit
+2026-11-21T21:08:32+08:00 first fatal log: VllmWorker-0 died unexpectedly (exit code None)
+2026-11-21T21:08:37+08:00 engine-initiated SIGTERM to remaining workers
+2026-11-21T21:08:41+08:00 engine sends SIGKILL to six remaining workers
+2026-11-21T21:08:57+08:00 model-full.log final write
+2026-11-21T21:09:14+08:00 model exits with code 1; memory.after recorded
+2026-11-21T21:09:16+08:00 first executor observation of empty nvidia-smi compute-app process list
+2026-11-21T21:12:24+08:00 GPU-empty recheck recorded in gpu-release.txt

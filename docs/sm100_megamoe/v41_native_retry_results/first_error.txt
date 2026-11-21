@@ -1,0 +1,62 @@
+(EngineCore pid=887891) INFO 11-21 21:08:19 [distributed/device_communicators/shm_broadcast.py:812] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(Worker_TP2_EP2 pid=903161) DEBUG 11-21 21:08:21 [v1/executor/multiproc_executor.py:870] WorkerProc handling signal 15, raising SystemExit
+Exception ignored on calling ctypes callback function: <function setup_cubin_loader.<locals>.get_cubin_callback at 0x7fdd42155800>
+Traceback (most recent call last):
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/flashinfer/jit/cubin_loader.py", line 316, in get_cubin_callback
+(Worker_TP3_EP3 pid=903163) DEBUG 11-21 21:08:21 [v1/executor/multiproc_executor.py:870] WorkerProc handling signal 15, raising SystemExit
+Exception ignored on calling ctypes callback function: <function setup_cubin_loader.<locals>.get_cubin_callback at 0x7f8a48159e40>
+Traceback (most recent call last):
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/flashinfer/jit/cubin_loader.py", line 316, in get_cubin_callback
+    cubin = get_artifact(name.decode("utf-8"), sha256.decode("utf-8"))
+    cubin = get_artifact(name.decode("utf-8"), sha256.decode("utf-8"))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/flashinfer/jit/cubin_loader.py", line 232, in get_artifact
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/flashinfer/jit/cubin_loader.py", line 232, in get_artifact
+    download_file(uri, local_path, session=session)
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/flashinfer/jit/cubin_loader.py", line 83, in download_file
+    download_file(uri, local_path, session=session)
+    with lock:
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/flashinfer/jit/cubin_loader.py", line 83, in download_file
+         ^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/filelock/_api.py", line 937, in __enter__
+    with lock:
+         ^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/filelock/_api.py", line 937, in __enter__
+    self.acquire()
+    self.acquire()
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/filelock/_api.py", line 1037, in acquire
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/filelock/_api.py", line 1037, in acquire
+    self._poll_until_acquired(
+    self._poll_until_acquired(
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/filelock/_api.py", line 1177, in _poll_until_acquired
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/filelock/_api.py", line 1177, in _poll_until_acquired
+    time.sleep(delay)
+    time.sleep(delay)
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 869, in signal_handler
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 869, in signal_handler
+    shutdown_requested.set()
+    shutdown_requested.set()
+  File "/usr/lib64/python3.12/threading.py", line 616, in set
+  File "/usr/lib64/python3.12/threading.py", line 616, in set
+    def set(self):
+    def set(self):
+
+
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 873, in signal_handler
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 873, in signal_handler
+    raise SystemExit()
+    raise SystemExit()
+SystemExit: 
+SystemExit: 
+(EngineCore pid=887891) DEBUG 11-21 21:08:24 [distributed/device_communicators/shm_broadcast.py:215] Poller timed out
+(MainProcess pid=870641) DEBUG 11-21 21:08:25 [v1/engine/utils.py:1323] Waiting for 1 local, 0 remote core engine proc(s) to start.
+(EngineCore pid=887891) DEBUG 11-21 21:08:29 [distributed/device_communicators/shm_broadcast.py:215] Poller timed out
+(EngineCore pid=887891) ERROR 11-21 21:08:32 [v1/executor/multiproc_executor.py:314] Worker proc VllmWorker-0 died unexpectedly (exit code: None), shutting down executor.
+(EngineCore pid=887891) DEBUG 11-21 21:08:32 [v1/executor/multiproc_executor.py:508] [shutdown] Executor: start worker_count=8
+(EngineCore pid=887891) INFO 11-21 21:08:32 [v1/executor/multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(EngineCore pid=887891) DEBUG 11-21 21:08:34 [distributed/device_communicators/shm_broadcast.py:215] Poller timed out
+(MainProcess pid=870641) DEBUG 11-21 21:08:35 [v1/engine/utils.py:1323] Waiting for 1 local, 0 remote core engine proc(s) to start.
+(EngineCore pid=887891) WARNING 11-21 21:08:37 [v1/executor/multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=7
+(EngineCore pid=887891) DEBUG 11-21 21:08:39 [distributed/device_communicators/shm_broadcast.py:215] Poller timed out
+(EngineCore pid=887891) WARNING 11-21 21:08:41 [v1/executor/multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=6

@@ -1,0 +1,62 @@
+START=2026-11-21T20:07:43+08:00
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 103, in _wait_for_response
+    response = self.aggregate(self.get_response())
+                              ^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 435, in get_response
+    status, result = mq.dequeue(timeout=dequeue_timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/distributed/device_communicators/shm_broadcast.py", line 900, in dequeue
+    with self.acquire_read(timeout, indefinite) as buf:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/distributed/device_communicators/shm_broadcast.py", line 808, in acquire_read
+    raise RuntimeError("cancelled")
+RuntimeError: cancelled
+(MainProcess pid=870641) DEBUG 11-21 21:08:55 [v1/engine/core_client.py:490] [shutdown] MPClient: background resource cleanup start
+(MainProcess pid=870641) DEBUG 11-21 21:08:55 [v1/utils.py:628] [shutdown] Process manager: start process_count=1 timeout=5s names=EngineCore
+(MainProcess pid=870641) INFO 11-21 21:08:55 [v1/utils.py:638] [shutdown] Process manager: send sigterm to process EngineCore
+(MainProcess pid=870641) DEBUG 11-21 21:08:55 [v1/utils.py:670] [shutdown] Process manager: complete
+(MainProcess pid=870641) DEBUG 11-21 21:08:55 [v1/engine/core_client.py:547] [shutdown] MPClient: background resource cleanup complete
+Traceback (most recent call last):
+  File "/tmp/sm100-native-retry-20261121-1945/docs/sm100_megamoe/v41_native_results/v41_native_smoke.py", line 36, in <module>
+    main()
+  File "/tmp/sm100-native-retry-20261121-1945/docs/sm100_megamoe/v41_native_results/v41_native_smoke.py", line 11, in main
+    model = LLM(
+            ^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/entrypoints/llm.py", line 344, in __init__
+    self.llm_engine = LLMEngine.from_engine_args(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 185, in from_engine_args
+    return cls(
+           ^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 111, in __init__
+    self.engine_core = EngineCoreClient.make_client(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 126, in make_client
+    return SyncMPClient(
+           ^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 917, in __init__
+    super().__init__(
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 674, in __init__
+    with launch_core_engines(
+         ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/contextlib.py", line 144, in __exit__
+    next(self.gen)
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/utils.py", line 1268, in launch_core_engines
+    wait_for_engine_startup(
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/utils.py", line 1348, in wait_for_engine_startup
+    raise RuntimeError(
+RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+(MainProcess pid=870641) DEBUG 11-21 21:08:55 [contextlib.py:478] [shutdown] DeepseekV4Renderer
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 8 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 9 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+END=2026-11-21T21:09:14+08:00 EXIT=1

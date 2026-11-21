@@ -1,0 +1,17 @@
+executor_external_timeout_setting=none
+launcher_mode=setsid-detached
+launcher_timeout_command=absent
+model_was_not_run_under_timeout=confirmed_by_launcher.sh
+
+worker_start=2026-11-21T20:08:22+08:00
+first_sigterm_observed=2026-11-21T21:08:21+08:00
+delta_seconds=3599
+first_death_log=2026-11-21T21:08:32+08:00 VllmWorker-0 died unexpectedly (exit code None)
+engine_initiated_sigterm=2026-11-21T21:08:37+08:00
+
+systemd_scope=session-1882009.scope
+RuntimeMaxUSec=unset
+MemoryMax=infinity
+TasksMax=infinity
+
+interpretation=The first SIGTERM is observed 3599 s after worker start and 16 s before the first death log; the engine's own SIGTERM occurs only at 21:08:37, after the death. Thus the first signal did not originate from the engine's normal shutdown path. No external timeout is configured in the launcher, and the scope has no RuntimeMaxUSec. The exact signal sender could not be identified because system journal/Audit access is permission-limited.
