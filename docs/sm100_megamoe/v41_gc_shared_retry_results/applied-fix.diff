@@ -1,0 +1,45 @@
+commit c4a1410ae78317ccba5911aeeb25a0298a333320
+Author:     刘佳睿 <awesomeaning@gmail.com>
+AuthorDate: Sat Nov 21 14:35:08 2026 +0000
+Commit:     刘佳睿 <awesomeaning@gmail.com>
+CommitDate: Sat Nov 21 14:35:08 2026 +0000
+
+    Preserve 2D ModelOpt shared weights alongside GC tile-packed payloads
+
+diff --git a/scripts/sm100/v41_gc_worker.py b/scripts/sm100/v41_gc_worker.py
+index 5941263..fa40c18 100644
+--- a/scripts/sm100/v41_gc_worker.py
++++ b/scripts/sm100/v41_gc_worker.py
+@@ -14,6 +14,22 @@ class MoeAuditWorker:
+         return rows
+ 
+ 
++def preserve_loader_weight(finalize_shared):
++    @wraps(finalize_shared)
++    def finalize(self, deep_gemm, shared_experts):
++        # vLLM assigns the fused payload to the loader Parameter. GC packs it
++        # in 3D, while ModelOpt still needs the original 2D checkpoint matrix.
++        weight = shared_experts.gate_up_proj.weight
++        checkpoint = weight.data
++        try:
++            return finalize_shared(self, deep_gemm, shared_experts)
++        finally:
++            # vLLM retained a separate tensor in _transformed_shared_l1_weights.
++            weight.data = checkpoint
++
++    return finalize
++
++
+ def install_gc_experts():
+     import os
+     if os.environ.get("GC_MOE_V41_ENGINE") != "gc":
+@@ -38,6 +54,9 @@ def install_gc_experts():
+             print(f"V41 GC expert adapter installed pid={os.getpid()}", flush=True)
+         return finalize(self, *args, **kwargs)
+ 
++    DeepseekV4MegaMoEExperts._finalize_shared_expert_weights = preserve_loader_weight(
++        DeepseekV4MegaMoEExperts._finalize_shared_expert_weights
++    )
+     DeepseekV4MegaMoEExperts.finalize_weights = finalize_gc
+ 
+ 

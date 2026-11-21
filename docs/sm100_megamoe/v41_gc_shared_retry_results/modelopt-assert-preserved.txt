@@ -1,0 +1,32 @@
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948] WorkerProc failed to start.
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948] Traceback (most recent call last):
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 915, in worker_main
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]     worker = WorkerProc(*args, **kwargs)
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 682, in __init__
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]     self.worker.load_model()
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 545, in load_model
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]     self.model_runner.load_model(load_dummy_weights=load_dummy_weights)
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/gpu/model_runner.py", line 379, in load_model
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]     self.model = model_loader.load_model(
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]                  ^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/model_executor/model_loader/base_loader.py", line 91, in load_model
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]     process_weights_after_loading(model, model_config, target_device)
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/model_executor/model_loader/utils.py", line 170, in process_weights_after_loading
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]     quant_method.process_weights_after_loading(module)
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/model_executor/layers/quantization/modelopt.py", line 2541, in process_weights_after_loading
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]     self.wkey.process(layer, WEIGHT)
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/model_executor/layers/quantization/modelopt.py", line 2261, in process
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]     assert layer.weight.ndim == 2 and layer.weight.dtype == MXFP8_VALUE_DTYPE
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=1167428) ERROR 11-21 22:26:20 [v1/executor/multiproc_executor.py:948] AssertionError
+(EngineCore pid=1156275) INFO 11-21 22:26:20 [v1/executor/multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+first_error_timestamp=2026-11-21T22:26:20+08:00
+backend_exit_code=1
+launcher_exit_code=1
