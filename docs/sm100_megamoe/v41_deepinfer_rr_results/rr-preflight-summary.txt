@@ -1,0 +1,12 @@
+SM100 DEEPINFER RR PREFLIGHT
+
+[deep_gemm_mega_moe] exit=0
+DeepInfer RR and physical load checks passed
+
+[gc_moe] exit=0
+DeepInfer RR and physical load checks passed
+
+gc_adapter_pids=[2938922, 2938923, 2938924, 2938925, 2938926, 2938927, 2938928, 2938929]
+gc_adapter_matches_workers=True
+
+worker_pids={"deep_gemm_mega_moe": {"0": 2611416, "1": 2611417, "2": 2611421, "3": 2611422, "4": 2611424, "5": 2611426, "6": 2611427, "7": 2611428}, "gc_moe": {"0": 2938922, "1": 2938923, "2": 2938924, "3": 2938925, "4": 2938926, "5": 2938927, "6": 2938928, "7": 2938929}}
