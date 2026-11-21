@@ -31,7 +31,8 @@ class ExpertCheckpoint:
             if len(payload) != end-start:
                 raise ValueError(f"Short read for {key}")
         tensor = torch.frombuffer(payload, dtype=torch.uint8).reshape(shape)
-        return tensor.view(torch.int8 if dtype == "I8" else torch.float8_e8m0fnu)
+        return tensor.view({"I8": torch.int8, "F8_E8M0": torch.float8_e8m0fnu,
+                            "F8_E4M3": torch.float8_e4m3fn}[dtype])
 
     def packed(self, experts, projections, rows, k):
         import deep_gemm
@@ -47,3 +48,14 @@ class ExpertCheckpoint:
                 scale = self.tensor(prefix+".scale", "F8_E8M0", (rows, k//32))
                 sf[i, band].copy_(scale.float())
         return w, deep_gemm.transform_sf_into_required_layout(sf, n, k, (1, 32), len(experts))
+
+    def shared(self, projections, rows, k):
+        weights, scales = [], []
+        for projection in projections:
+            prefix = f"layers.0.ffn.shared_experts.{projection}"
+            weights.append(self.tensor(prefix+".weight", "F8_E4M3", (rows, k)))
+            scale = self.tensor(prefix+".scale", "F8_E8M0", (rows//32, k//32))
+            scales.append(scale.view(torch.uint8).repeat_interleave(32, dim=0))
+        # DeepGEMM expects four packed exponent bytes per int and MN-major scales.
+        sf = torch.cat(scales).view(torch.int32).cuda()
+        return torch.cat(weights).cuda(), sf.T.contiguous().T

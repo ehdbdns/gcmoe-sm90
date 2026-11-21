@@ -27,7 +27,17 @@ def packed_weights(experts, n, k, seed):
     return w, deep_gemm.transform_sf_into_required_layout(sf, n, k, (1, 32), size)
 
 
-def worker(local_rank, world, checkpoint_dir):
+def copy_shared_input_scales(dest, sf, block_m):
+    # Upstream shared-L1 scale layout, including padding when M is below 128.
+    dest.zero_()
+    idx = torch.arange(sf.shape[0], device=sf.device)
+    m = idx % block_m
+    address = (idx // block_m * ((block_m + 127) // 128 * 128)
+               + m // 128 * 128 + m % 32 * 4 + m % 128 // 32)
+    dest.index_copy_(0, address, sf)
+
+
+def worker(local_rank, world, checkpoint_dir, with_shared):
     import deep_gemm
     from deep_gemm.utils import per_token_cast_to_fp8
     from deep_gemm.utils.dist import init_dist
@@ -59,8 +69,17 @@ def worker(local_rank, world, checkpoint_dir):
     from real_routed_weights import ExpertCheckpoint
     checkpoint = ExpertCheckpoint(checkpoint_dir) if checkpoint_dir else None
     ref = None
-    for name, physical, route in (("identity", torch.arange(experts, device="cuda"), logical),
-                                  ("eplb_rr", layout[0], slots)):
+    identity = torch.arange(experts, device="cuda")
+    cases = [("identity", identity, logical), ("eplb_rr", layout[0], slots)]
+    shared_args = {}
+    if with_shared:
+        shared_l1, shared_l2 = deep_gemm.transform_weights_for_mega_moe(
+            checkpoint.shared(("w1", "w3"), inter, hidden), checkpoint.shared(("w2",), hidden, inter))
+        shared_args = dict(shared_l1_weights=shared_l1, shared_l2_weights=shared_l2)
+        cases.insert(0, ("routed_control", identity, logical))
+    control = None
+    for name, physical, route in cases:
+        shared = with_shared and name != "routed_control"
         local = physical.chunk(size)[rank].tolist()
         if checkpoint is None:
             raw = packed_weights(local, 2 * inter, hidden, 100), packed_weights(local, hidden, inter, 1000)
@@ -69,24 +88,35 @@ def worker(local_rank, world, checkpoint_dir):
         l1, l2 = deep_gemm.transform_weights_for_mega_moe(*raw)
         del raw
         buf = deep_gemm.get_symm_buffer_for_mega_moe(group, len(physical), tokens, topk, hidden, inter,
-                                                      num_shared_experts=0, mma_type="fp8xfp4")
+                                                      num_shared_experts=int(shared), mma_type="fp8xfp4")
         buf.x[:tokens].copy_(x)
         buf.x_sf[:tokens].copy_(sf)
+        if shared:
+            block_m = deep_gemm.get_block_m_for_mega_moe(size, len(physical), buf.num_max_tokens_per_rank,
+                                                          tokens, topk, "fp8xfp4")
+            copy_shared_input_scales(buf.shared_l1_acts_sf, sf, block_m)
         buf.topk_idx[:tokens].copy_(route)
         buf.topk_weights[:tokens].copy_(weights)
         y = torch.empty((tokens, hidden), dtype=torch.bfloat16, device="cuda")
         received = torch.zeros(len(local), dtype=torch.int32, device="cuda")
-        deep_gemm.fp8_fp4_mega_moe(y, l1, l2, buf, cumulative_local_expert_recv_stats=received)
+        deep_gemm.fp8_fp4_mega_moe(y, l1, l2, buf, cumulative_local_expert_recv_stats=received,
+                                   **(shared_args if shared else {}))
         expected = torch.bincount(route.flatten(), minlength=len(physical))
         dist.all_reduce(expected, group=group)
         delta = 0 if ref is None else (y != ref).sum().item()
         row = dict(arm=name, rank=rank, different_elements=delta,
                    valid_output=bool(torch.isfinite(y).all() and y.abs().max() > 0),
                    slot_count_match=torch.equal(expected.chunk(size)[rank], received.long()))
+        shared_changed = True
+        if shared:
+            row["changed_from_routed_only"] = int((y != control).sum().item())
+            shared_changed = row["changed_from_routed_only"] > 0
         print(json.dumps(row), flush=True)
-        bad = torch.tensor(int(delta != 0 or not row["valid_output"] or not row["slot_count_match"]), device="cuda")
+        bad = torch.tensor(int(not shared_changed or delta != 0 or not row["valid_output"] or not row["slot_count_match"]), device="cuda")
         dist.all_reduce(bad, group=group)
-        if ref is None:
+        if name == "routed_control":
+            control = y.clone()
+        elif name == "identity":
             ref = y.clone()
         dist.barrier(group=group)
         buf.destroy()
@@ -100,5 +130,8 @@ if __name__ == "__main__":
         raise SystemExit("Expected the allocated group of exactly eight idle GPUs")
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--shared", action="store_true")
     args = parser.parse_args()
-    torch.multiprocessing.spawn(worker, args=(8, args.checkpoint), nprocs=8)
+    if args.shared and not args.checkpoint:
+        parser.error("--shared requires --checkpoint")
+    torch.multiprocessing.spawn(worker, args=(8, args.checkpoint, args.shared), nprocs=8)
