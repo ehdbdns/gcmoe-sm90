@@ -61,6 +61,8 @@ def main():
     try:
         import torch
         n = torch.cuda.device_count()
+        if n != 8:
+            raise SystemExit(f"Expected exactly 8 allocated CUDA devices, found {n}. Check the allocation before probing.")
         result["torch"] = dict(version=torch.__version__, cuda=torch.version.cuda,
                                cxx11_abi=torch._C._GLIBCXX_USE_CXX11_ABI,
                                arch_list=torch.cuda.get_arch_list(),
