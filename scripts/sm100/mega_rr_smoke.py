@@ -37,7 +37,7 @@ def copy_shared_input_scales(dest, sf, block_m):
     dest.index_copy_(0, address, sf)
 
 
-def worker(local_rank, world, checkpoint_dir, with_shared):
+def worker(local_rank, world, checkpoint_dir, with_shared, eco_reference):
     import deep_gemm
     from deep_gemm.utils import per_token_cast_to_fp8
     from deep_gemm.utils.dist import init_dist
@@ -77,6 +77,21 @@ def worker(local_rank, world, checkpoint_dir, with_shared):
             checkpoint.shared(("w1", "w3"), inter, hidden), checkpoint.shared(("w2",), hidden, inter))
         shared_args = dict(shared_l1_weights=shared_l1, shared_l2_weights=shared_l2)
         cases.insert(0, ("routed_control", identity, logical))
+    quota = None
+    if eco_reference:
+        sys.path.insert(0, str(ROOT / "source/gc_moe/eco"))
+        from unit_ref import UnitPlanner
+        from mega_eplb import mega_quota_slots
+        planner = UnitPlanner(layout[0].cpu().numpy(), size, experts, block_m=64, wb=260, wa=111)
+        quota = torch.as_tensor(planner.plan(history.cpu().numpy()), device=logical.device, dtype=torch.long)
+        local_rows = torch.bincount(logical.flatten(), minlength=experts)
+        source_rows = [torch.empty_like(local_rows) for _ in range(size)]
+        dist.all_gather(source_rows, local_rows, group=group)
+        prior = torch.stack(source_rows)[:rank].sum(0)
+        route = mega_quota_slots(logical, layout[0], quota, prior, history.long().flatten())
+        if not torch.equal(layout[0][route].long(), logical):
+            raise ValueError("quota routing selected a different expert")
+        cases.append(("eplb_eco_reference", layout[0], route))
     control = None
     for name, physical, route in cases:
         shared = with_shared and name != "routed_control"
@@ -103,6 +118,8 @@ def worker(local_rank, world, checkpoint_dir, with_shared):
                                    **(shared_args if shared else {}))
         expected = torch.bincount(route.flatten(), minlength=len(physical))
         dist.all_reduce(expected, group=group)
+        if name == "eplb_eco_reference" and not torch.equal(expected, quota):
+            raise ValueError("actual route histogram differs from ECO quota")
         delta = 0 if ref is None else (y != ref).sum().item()
         row = dict(arm=name, rank=rank, different_elements=delta,
                    valid_output=bool(torch.isfinite(y).all() and y.abs().max() > 0),
@@ -131,7 +148,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--shared", action="store_true")
+    parser.add_argument("--eco-reference", action="store_true")
     args = parser.parse_args()
+    if args.eco_reference and not args.shared:
+        parser.error("--eco-reference requires --shared")
     if args.shared and not args.checkpoint:
         parser.error("--shared requires --checkpoint")
-    torch.multiprocessing.spawn(worker, args=(8, args.checkpoint, args.shared), nprocs=8)
+    torch.multiprocessing.spawn(worker, args=(8, args.checkpoint, args.shared, args.eco_reference), nprocs=8)
