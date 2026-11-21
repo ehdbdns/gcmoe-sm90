@@ -2420,6 +2420,21 @@ def _install_worker_rpc() -> None:
 
     Worker._gc_moe_fixed_tokens = gc_moe_fixed_tokens
 
+    def prefix_diagnostic(self):
+        ref = self._gc_reference_tokens
+        n = ref.positions.cpu().tolist()
+        actual = ref.native.cpu()
+        expected = ref.table.cpu()
+        mismatches = []
+        for i, length in enumerate(n):
+            if not 0 < length <= ref.lengths[i].item():
+                raise ValueError(f'invalid prefill length for req{i}')
+            for j in (actual[i, :length] != expected[i, :length]).nonzero().flatten().tolist():
+                mismatches.append([i, j, actual[i, j].item(), expected[i, j].item()])
+        return dict(positions=n, samples=sum(n), mismatches=mismatches, batch_order=ref.batch_hash.hexdigest())
+
+    Worker._gc_moe_prefix_diagnostic = prefix_diagnostic
+
     if os.environ.get('GC_MOE_LONG_COST') == '1':
         from long_cost import register_long_rpc
         register_long_rpc(Worker, profile_buffer, _EXPERT_REGISTRY)

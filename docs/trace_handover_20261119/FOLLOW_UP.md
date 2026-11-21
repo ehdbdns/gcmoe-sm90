@@ -1,6 +1,6 @@
-# 【SM90】当前任务 · BS256 严格回放与显存复核
+# 【SM90】BS256 prefill 自对照诊断
 
-回执写入本目录的 `REPLY_MAIN24_PREFIX_CAPACITY.md`。[执行步骤](../trace_executor_20261119/MAIN24_PREFIX_CAPACITY_TASK.md)
+本轮只跑 vanilla 和 random 的 prefill，回执写入 REPLY_SM90_PREFIX_AA.md。[【SM90】执行任务书](../trace_executor_20261119/SM90_PREFIX_AA_TASK.md)
 
 # 历史任务 · 修正 EPLB 后的 24 臂主表
 

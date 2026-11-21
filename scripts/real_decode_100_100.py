@@ -760,7 +760,7 @@ def main():
                           and k != 'GC_MOE_SM90_STREAM_M_BLOCKS'}
         from pathlib import Path
         from fixed_workload import publishes_checkpoint
-        recording_tokens = long_cost and publishes_checkpoint()
+        recording_tokens = long_cost and publishes_checkpoint() and os.getenv("GC_MOE_PREFIX_DIAG") != "1"
         if not recording_tokens:
             fixed = json.loads((Path(fixed_dir) / 'tokens.json').read_text())
         prompt_hash = hashlib.sha256(json.dumps(prompts, separators=(',', ':')).encode()).hexdigest()
@@ -908,6 +908,19 @@ def main():
     prefill_s = time.perf_counter() - t0
     print(f'[prefill] {nseq} seqs, {prefill_steps} engine steps, '
           f'{prefill_s:.1f}s (not timed)', flush=True)
+
+    if os.getenv("GC_MOE_PREFIX_DIAG") == "1":
+        if not long_cost or matrix not in ("vanilla", "random") or recording_tokens:
+            raise ValueError("prefill diagnostic requires a matrix reference consumer")
+        reports = engine.collective_rpc('_gc_moe_prefix_diagnostic')
+        if len(reports) != ranks or any(report != reports[0] for report in reports):
+            raise ValueError("prefill diagnostic differs across workers")
+        if any(got[rid] != fixed['tokens'][rid][:n] for rid, n in zip(ids, reports[0]['positions'])):
+            raise ValueError("prefill feedback differs from reference")
+        with Path(a.output).open('x') as f:
+            json.dump(dict(arm=matrix, prompt_hash=prompt_hash, prefill_steps=prefill_steps,
+                           **reports[0]), f)
+        return
 
     # ---- 2. warm decode: EPLB learning window ----------------------------
     def long_window(phase):

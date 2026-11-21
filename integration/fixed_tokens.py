@@ -95,7 +95,7 @@ def install(runner, directory, capacity=None):
     follow_native = None
     if capacity is not None:
         from fixed_workload import publishes_checkpoint
-        follow_native = publishes_checkpoint()
+        follow_native = publishes_checkpoint() and os.environ.get("GC_MOE_PREFIX_DIAG") != "1"
     if follow_native:
         tokens = {f'req{i}': [] for i in range(int(os.environ.get('GC_MOE_MATRIX_BS', '256')))}
     else:

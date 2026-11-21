@@ -1,6 +1,6 @@
-# 【SM90】八卡执行任务书 · EPLB 重排后单步采样
+# 【SM90】BS256 prefill 自对照诊断
 
-> 当前执行 BS256 严格回放复核，逐阶段检查原生输出和 KV，记录大 batch 容量规划所需的显存数据。[任务书与回执要求](MAIN24_PREFIX_CAPACITY_TASK.md)
+本轮只跑 vanilla 和 random 的 prefill，回执写入 REPLY_SM90_PREFIX_AA.md。[【SM90】执行任务书](SM90_PREFIX_AA_TASK.md)
 
 下文保留此前的单轮采样流程。该流程使用首次有效 CTA 领取打点提交 `cffe4835270f0d0bcc048b502a0b5716eac910b1` 及包含本任务书的后续提交，依次执行步骤 1 至 5。该轮验收禁止使用 `prof_phases.py`、`FINAL_V2` 或任何旧 run。
 
