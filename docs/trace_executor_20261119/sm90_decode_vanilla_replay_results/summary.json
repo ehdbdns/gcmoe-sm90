@@ -1,0 +1,13 @@
+{"task":"SM90_DECODE_VANILLA_REPLAY","execution_sha":"97d92dc2ce615d453d9c34c12c91c239d9eb3ae8",
+ "arm":"vanilla (consumer)","GC_MOE_VANILLA_STATS_REPLAY":"1",
+ "reference":"/tmp/gcmoe-main24-bs256-c2LF5VbC/replay/tokens.json",
+ "reference_sha256":"880da497abce4830742fb3d060cf52bc7db575b8b71c475de246731c16d536b8",
+ "prefill_steps":117,"prefill":"passed (no prefill mismatch)",
+ "decode_steps_logged":1000,"decode_first_iter":117,"decode_last_iter":1116,
+ "decode_all_256_tokens":true,"decode_mean_iter_ms":75.16,"decode_median_iter_ms":75.08,
+ "decode_min_iter_ms":73.64,"decode_max_iter_ms":85.67,"max_kv_usage_percent":9.3,
+ "kv_cache_tokens":1530922,
+ "failure":{"phase":"stats","ranks":"8/8","req":"req176","position":322,"relative_offset":278,
+   "native":223,"reference":19958,"mismatches":7,
+   "capture_workspace":"/tmp/gcmoe-aligned-HFwfvEzw"},
+ "same_request_as_random_arm":"req176 (random arm failed at position 664, offset 620, 4 mismatches)"}
