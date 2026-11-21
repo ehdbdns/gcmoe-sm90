@@ -1,0 +1,53 @@
+{
+ "task": "SM90_STABLE_DECODE_AA",
+ "execution_sha": "0dd9579b0abbe8aefab8bfaa57d68defdd2cba93",
+ "publisher": {
+  "exit_code": 0,
+  "phase": "stats",
+  "prefill_steps": 117,
+  "stats_ms_per_step": 93.344,
+  "decode_steps": 1000,
+  "decode_logged_mean_ms": 77.53,
+  "decode_logged_median_ms": 77.45,
+  "decode_min_ms": 76.02,
+  "decode_max_ms": 110.13,
+  "peak_kv_percent": 9.3,
+  "kv_cache_tokens": 1530922,
+  "free_bytes": 24582094848,
+  "peak_reserved_bytes": 66339209216,
+  "total_bytes": 102085492736
+ },
+ "consumer": {
+  "exit_code": 0,
+  "phase": "stats",
+  "prefill_steps": 117,
+  "stats_ms_per_step": 94.193,
+  "decode_steps": 1000,
+  "decode_logged_mean_ms": 78.26,
+  "decode_logged_median_ms": 78.22,
+  "decode_min_ms": 76.75,
+  "decode_max_ms": 83.79,
+  "peak_kv_percent": 9.3,
+  "kv_cache_tokens": 1530922,
+  "free_bytes": 24582094848,
+  "peak_reserved_bytes": 66339209216,
+  "total_bytes": 102085492736
+ },
+ "aa": {
+  "prompt_hash_equal": true,
+  "prefill_steps_equal": true,
+  "rank_audits_identical_all_eight": true,
+  "routing_ids_sha256": "ccfe108dc331daad...",
+  "weights_sha256_identical": true,
+  "rows_by_layer_identical": true,
+  "demand_sha256_identical": true,
+  "ordinal_calls_verified": 40000,
+  "prefill_snapshot_readback_identical": true,
+  "native_token_mismatches": 0
+ },
+ "reference": {
+  "path": "tokens.json",
+  "sha256": "2e997e79a77a63e9e8db36a79e03b0056d0eadb0fd2d38e08826cd5be8bd120e"
+ },
+ "state_dir": "IN_PLACE (166 GiB, KV+route kept on the execution host)"
+}
