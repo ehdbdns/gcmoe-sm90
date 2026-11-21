@@ -39,7 +39,12 @@ nvidia-smi --query-gpu=index,name,driver_version,memory.used,memory.total --form
 export MODEL="${MODEL:-/home/admin/local_models/DeepSeek-V4.1-Flash}"
 export DATASET="${DATASET:-/mnt/nas2/nanjun.cp/MoE-Bench-Experiments/datasets/dsv4-flash_online_input_ids_26-10-08_1.jsonl}"
 test -d "$MODEL"
-test -r "$DATASET"
+IFS=, read -ra dataset_files <<< "$DATASET"
+for dataset_file in "${dataset_files[@]}"; do
+  dataset_file=${dataset_file#"${dataset_file%%[![:space:]]*}"}
+  dataset_file=${dataset_file%"${dataset_file##*[![:space:]]}"}
+  [[ -z "$dataset_file" || -r "$dataset_file" ]] || { echo "Unreadable dataset: $dataset_file" >&2; exit 1; }
+done
 source config/experiment.env
 source scripts/env.sh
 test -x "$GC_ENV/bin/python"

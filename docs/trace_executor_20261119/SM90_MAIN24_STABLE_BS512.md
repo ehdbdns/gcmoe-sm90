@@ -2,6 +2,10 @@
 
 BS256 的 15 对严格验收已通过，本轮保持同一六臂、M64、stream、稳定 prefill 和 decode top-k、相同数据集筛选区间与每臂 1000+1000 步。每卡配置 20 GiB KV；软件 prompt 预算取 2,300,000 个逻辑 token，由 BS256 默认预算按请求数放大，最终以运行时满 batch、无抢占及 KV 水位验收。一次一臂，首次失败保存现场。仅允许等价编译修复。
 
+## 数据文件
+
+批准使用 config/experiment.env 中的 _1.jsonl 和 _2.jsonl，两文件顺序固定。六臂共同使用同一选择器、长度范围与参考；512 条请求包含重复 prompt。此档的 prompt 池与单文件 BS256 不同，跨档变化同时受输入组成和 BS 影响。已成功进入模型阶段的运行继续，不重复已完成臂；若旧 SHA 在逗号拼接路径的可读性检查处退出，请从本次修正版本重新开始。两份源文件分别记录 SHA256。
+
 ## 执行命令
 
 在执行仓库的干净 main 分支运行，保留当前机器已验证的模型、数据、HCA 和环境设置。GC_MOE_CHECKPOINT_ROOT 选择有足够空间的本地文件系统，脚本会检查双边界 KV 和两段 route bank 的空间。
@@ -18,6 +22,11 @@ cd "$work/code"
 unset GC_MOE_PREFIX_DIAG GC_MOE_PREFIX_SPARSE_AA GC_MOE_PREFIX_BLOCK_AA GC_MOE_PREFIX_LAYER_AA GC_MOE_PREFIX_HIDDEN_AA
 export GC_MOE_ORDER_PREFILL=1 GC_MOE_STABLE_PREFILL_TOPK=1 GC_MOE_STABLE_DECODE_TOPK=1
 unset GC_MOE_DECODE_STATS_AA GC_MOE_VANILLA_STATS_REPLAY
+dataset_dir=/mnt/nas2/nanjun.cp/MoE-Bench-Experiments/datasets
+first="$dataset_dir/dsv4-flash_online_input_ids_26-10-08_1.jsonl"
+second="$dataset_dir/dsv4-flash_online_input_ids_26-10-08_2.jsonl"
+export DATASET="$first,$second"
+sha256sum "$first" "$second" > "$work/dataset.sha256"
 export GC_KV_BUDGET=2300000 GC_MAIN24_SINGLE_BS=512 GC_MOE_KV_BYTES=21474836480
 export GC_MOE_CHECKPOINT_ROOT="${GC_MOE_CHECKPOINT_ROOT:-/tmp}"
 if bash scripts/trace_layer/run_main24.sh "$work"; then code=0; else code=$?; fi
