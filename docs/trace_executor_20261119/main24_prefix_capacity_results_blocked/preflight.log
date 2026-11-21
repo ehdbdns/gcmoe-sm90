@@ -1,0 +1,189 @@
+Filesystem      Size  Used Avail Use% Mounted on
+overlay         5.0T  1.3T  3.8T  26% /
+overlay         5.0T  1.3T  3.8T  26% /
+index, uuid, name, memory.used [MiB]
+0, GPU-76d609fa-c5ce-ab73-ab1c-bc9a7d48c382, NVIDIA H20, 4 MiB
+1, GPU-640ee7d1-cfb5-7f2a-099c-3f4c48086af3, NVIDIA H20, 4 MiB
+2, GPU-408ed3f9-1bf7-5c3f-019c-6af8d03ae1ab, NVIDIA H20, 4 MiB
+3, GPU-abc6c27c-09dc-3ba1-bd06-2e20347b670b, NVIDIA H20, 4 MiB
+4, GPU-d6fe1535-69db-942f-4902-eccad1d45e0b, NVIDIA H20, 4 MiB
+5, GPU-b82e3765-511c-46fe-a2cc-fedaf57fe0eb, NVIDIA H20, 4 MiB
+6, GPU-67e51032-23b4-9d30-320c-c02c658a597e, NVIDIA H20, 4 MiB
+7, GPU-f0942a6f-794e-9840-004c-30f2c55270b7, NVIDIA H20, 4 MiB
+source/gc_moe/eplb/policy.py: OK
+ALIGNED_STEP_CPU PASS
+ATTENTION_ORDER_CPU PASS
+ATTENTION_PROBE_CPU PASS
+ECO_COPIES_CPU PASS
+G1 null-plan gate: whole stream to the first active copy, conserved
+  sum over an expert's copies == its routed count            OK 
+  every expert uses at most one copy (trivial split)         OK 
+  quota_start all zero                                       OK 
+  (8 replicated experts in this layout; 56 single-copy ones are unaffected by the gate)
+
+G2 no-auction gate: cold/warm kept, quota == reference with rounds=0
+  E=64 bm=16 wb=0: gate deterministic                        OK 
+  E=64 bm=16 wb=0: gate conserves tokens                     OK 
+       full  max-rank time=1973 IR=1.2970
+       gated max-rank time=1973 IR=1.2970
+  E=64 bm=16 wb=0: gate is no better than the full plan (auction only helps) OK 
+  E=64 bm=32 wb=64: gate deterministic                       OK 
+  E=64 bm=32 wb=64: gate conserves tokens                    OK 
+       full  max-rank time=6085 IR=1.2569
+       gated max-rank time=6085 IR=1.2569
+  E=64 bm=32 wb=64: gate is no better than the full plan (auction only helps) OK 
+  E=128 bm=64 wb=0: gate deterministic                       OK 
+  E=128 bm=64 wb=0: gate conserves tokens                    OK 
+       full  max-rank time=3241 IR=1.0803
+       gated max-rank time=3241 IR=1.0803
+  E=128 bm=64 wb=0: gate is no better than the full plan (auction only helps) OK 
+
+G3 warm-state contract: what step 6 reads is what publish writes
+  eco_state view holds 2*P words                             OK 
+  counts live in [P, P+E) of that view                       OK 
+  quotas live in [0, P)                                      OK 
+       write offset used by _eco_publish_count_state = P + e = 480 + e
+       read  offset used by step 6                = P + e = 480 + e
+  read and write agree (=> warm path reachable)              OK 
+
+ECO_GATES_CPU PASS
+[eco] meta re-installed after rearrangement
+[eplb] rearranged: slots=6 per_rank=3 layers=2 max_physical_copies/layer=3 max_replicated/layer=2 mean_replicated/layer=1.5
+[eco] meta re-installed after rearrangement
+[eplb] rearranged: slots=6 per_rank=3 layers=2 max_physical_copies/layer=3 max_replicated/layer=2 mean_replicated/layer=1.5
+ECO_PORT_CPU PASS
+T1 layer index: 40 unique for 40 layers
+T2 demand: sum=240 (expect 240)
+T3 shuffle reference: bad rows=0/424
+T4 id reuse after del: not observed (this is why _LAYER_REFS must hold strong refs)
+
+CPU_TEST PASS
+T5 distinct layer rows: 40/40, per-layer sum ok
+
+CPU_TEST_T5 PASS
+T6 world_size inflation: 200/8 = 25 (matches real routes 25)
+
+CPU_TEST_ALL PASS
+T7 window semantics: tokens=24/step blocks=8 active_ever=8 active_step=8 active_header=8 sample_tokens=24
+T8 traps: active_ever=48/48 but per-step tokens=0.48 (occupancy is far lower)
+T9 deepinfer RR: 63 replicated routes, agree-with-plain-key=0.091 on the 11 where it is measurable (want <0.9), ep_rank shifts=0.825 (want >0)
+
+CPU_TEST_FINAL PASS
+  uniform 8/rank     physical=448 per_rank=56 max_copies=2 dup_rank=0 even=True OK
+  uniform 4/rank     physical=424 per_rank=53 max_copies=2 dup_rank=0 even=True OK
+  uniform 1/rank     physical=392 per_rank=49 max_copies=2 dup_rank=0 even=True OK
+  no redundancy      physical=384 per_rank=48 max_copies=1 dup_rank=0 even=True OK
+  skewed hot x8      physical=448 per_rank=56 max_copies=8 dup_rank=0 even=True OK
+  single ultra-hot   physical=448 per_rank=56 max_copies=8 dup_rank=0 even=True OK
+EPLB_PLACEMENT_CPU PASS
+gate: dropped 15 prefill calls, kept exactly 1 layer [16]
+label=SYNTH epoch=16 slots=14 mblocks=14 total_mblocks=14 total_tasks=532 plot_unit=tasks (slot x N-tile) suspect=False pull_done_us=53 role6_first_us=None role2_blocks=14 role6_blocks=0 role2_tasks=532 role6_tasks=0 cons_first_us=40 cons_end_us=91 backlog_pos_pct=100.0
+label=SYNTH epoch=16 slots=14 mblocks=14 total_mblocks=14 total_tasks=532 plot_unit=tasks (slot x N-tile) suspect=False pull_done_us=53 role6_first_us=40 role2_blocks=10 role6_blocks=4 role2_tasks=380 role6_tasks=152 cons_first_us=40 cons_end_us=91 backlog_pos_pct=100.0
+ALL CPU CHECKS PASSED
+FIRST_STEP_CPU PASS
+[data] 256 prompts (32/rank x 8), len 1..1
+[budget] decode_budget=372 (1+200warm+1measure+66slack) prefill_tokens=256 chunk=8192 kv_margin=512
+FIXED_WORKLOAD_CPU PASS
+H20_VALID_COST_CPU PASS
+LONG_COST PASS
+MAIN20_CPU PASS
+T1 per-slot block count uses ceil, not float floor-division
+  tokens / layer                                       got=              35.9 want=              35.9 OK
+  blocks / layer (fixed)                               got=               5.0 want=               5.0 OK
+    old formula would have given                                      3.0 
+  -> the old formula under-counted by 2 block(s) on this input
+  per-slot blocks: [1, 1, 1, 2, 0] (x=[0.5, 3.0, 16.0, 16.4, 0.0], bm=16)
+
+T2 block_m must be the routed role tile_m (divisor matters when a slot exceeds one chunk)
+  blocks with tile_m=64  (kernel, correct): 49  = 47 quiet slots x 1 + ceil(100/64)=2
+  blocks with tile_m=240 (SM100 selector):  48  = 47 x 1 + ceil(100/240)=1
+  divisor is material for a hot slot                   got=                 1 want=                 1 OK
+  -- and for the load actually measured in this experiment (≈0.4 token/slot/step):
+     blocks(tile_m=64)=48  blocks(tile_m=240)=48  active=48
+     -> blocks == active slots there, so the DIVISOR was not the error; the FLOOR-DIVISION was (see T1).
+
+T3 per-call occupancy: sampled value vs a post-window read of 0
+  active (snapshot)                                    got=                20 want=                20 OK
+  active (late read of header[7])                      got=                 0 want=                 0 OK
+  active_step from the one-call sample                 got=                20 want=                20 OK
+  tokens of that call                                  got=              20.0 want=              20.0 OK
+  blocks of that call                                  got=                20 want=                20 OK
+  -> a late read silently reports 0 active slots; the snapshot does not
+
+T4 window totals conserve the routed token count
+  tokens / layer                                       got=              24.0 want=              24.0 OK
+  blocks / layer                                       got=              24.0 want=              24.0 OK
+  active_ever (window-wide)                            got=                24 want=                24 OK
+
+METRICS_CPU PASS
+MULTILAYER_STUDY_CPU PASS
+PULL_GEMM_DETAIL_CPU PASS
+STREAM_CHECKPOINT_CPU PASS
+STREAM_MBLOCK_CPU PASS
+vLLM 0.31.0 torch 2.13.0+cu130 CUDA 13.0
+STREAM_CHECKPOINT_CUDA PASS
+ATTENTION_ORDER_CUDA PASS
+LONG_COST PASS
+schedule SM90RoleConfig(grids=(24, 72, 288), tile_m=64, threads=(256, 384, 384), smem=(43008, 199680, 0), direct_route_scan=False)
+roles [(1, 43008, 256, 24), (4, 199680, 256, 72), (2, 199680, 384, 72), (3, 0, 384, 288)]
+compiled roles [1, 4, 2, 3] in 18.7s
+schedule SM90RoleConfig(grids=(24, 72, 288), tile_m=64, threads=(256, 384, 384), smem=(43008, 199680, 0), direct_route_scan=False)
+roles [(1, 43008, 256, 24), (4, 199680, 256, 72), (2, 199680, 384, 72), (3, 0, 384, 288)]
+compiled roles [1, 4, 2, 3] in 18.4s
+schedule SM90RoleConfig(grids=(24, 72, 288), tile_m=64, threads=(256, 384, 384), smem=(43008, 199680, 0), direct_route_scan=False)
+roles [(1, 43008, 256, 24), (4, 199680, 256, 72), (2, 199680, 384, 72), (3, 0, 384, 288)]
+compiled roles [1, 4, 2, 3] in 18.0s
+schedule SM90RoleConfig(grids=(24, 71, 288), tile_m=64, threads=(256, 384, 384), smem=(43008, 199680, 0), direct_route_scan=False)
+roles [(1, 43008, 256, 24), (4, 199680, 256, 71), (2, 199680, 384, 71), (5, 53248, 512, 1), (3, 0, 384, 288)]
+eco_linear role 5 cost=0 slack=90
+compiled roles [1, 4, 2, 5, 3] in 25.8s
+schedule SM90RoleConfig(grids=(24, 71, 288), tile_m=64, threads=(256, 384, 384), smem=(43008, 199680, 0), direct_route_scan=False)
+roles [(1, 43008, 256, 24), (4, 199680, 256, 71), (2, 199680, 384, 71), (5, 53248, 512, 1), (3, 0, 384, 288)]
+eco role 5 cost=2 slack=11469
+compiled roles [1, 4, 2, 5, 3] in 27.5s
+schedule SM90RoleConfig(grids=(24, 71, 288), tile_m=64, threads=(256, 384, 384), smem=(43008, 199680, 0), direct_route_scan=False)
+roles [(1, 43008, 256, 24), (4, 199680, 256, 71), (2, 199680, 384, 71), (5, 53248, 512, 1), (6, 199680, 384, 6), (3, 0, 384, 288)]
+eco_smr role 5 cost=2 slack=11469
+compiled roles [1, 4, 2, 5, 6, 3] in 43.3s
+[rank2]:[W1121 14:08:30.370780842 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank5]:[W1121 14:08:30.370793811 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank4]:[W1121 14:08:30.370817556 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank7]:[W1121 14:08:30.370826408 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank6]:[W1121 14:08:30.370821681 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank1]:[W1121 14:08:30.370828578 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank0]:[W1121 14:08:30.370845045 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank3]:[W1121 14:08:30.370854626 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank0]:[W1121 14:08:32.852169376 ProcessGroupNCCL.cpp:5276] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+[cap] eager warm done
+STREAM_CHECK rank=2 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5bSTREAM_CHECK rank=1 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+
+STREAM_CHECK rank=3 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=5 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=7 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=6 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5bSTREAM_CHECK rank=4 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+
+STREAM_CHECK rank=0 sha256=78a0158c98563df6d33edd8e7fd133c309622e4a9ef9c0c73d36e2655e65b042
+[cap] replay ok finite=True quota_sum=816
+ECO_CAPTURE OK
+[rank0]:[W1121 14:08:52.995170864 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+[rank0]:[W1121 14:09:05.594758050 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank3]:[W1121 14:09:05.594904370 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank1]:[W1121 14:09:05.594990284 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank4]:[W1121 14:09:05.595102920 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank5]:[W1121 14:09:05.595133370 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank7]:[W1121 14:09:05.595178183 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank2]:[W1121 14:09:05.595248179 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank6]:[W1121 14:09:05.595972645 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank0]:[W1121 14:09:07.567898975 ProcessGroupNCCL.cpp:5276] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+[cap] eager warm done
+STREAM_CHECK rank=1 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5bSTREAM_CHECK rank=2 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+
+STREAM_CHECK rank=0 sha256=78a0158c98563df6d33edd8e7fd133c309622e4a9ef9c0c73d36e2655e65b042
+STREAM_CHECK rank=6 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=7 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=5 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=3 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=4 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+[cap] replay ok finite=True quota_sum=816
+ECO_CAPTURE OK
+[rank0]:[W1121 14:09:32.241549731 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
