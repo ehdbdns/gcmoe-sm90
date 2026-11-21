@@ -1,6 +1,6 @@
 # 【SM90】BS256 prefill 自对照诊断
 
-本轮只跑两次 vanilla prefill 并检查前 20 步逐层 MoE 输入输出，回执写入 REPLY_SM90_PREFIX_LAYER_AA.md。[【SM90】执行任务书](../trace_executor_20261119/SM90_PREFIX_LAYER_AA.md)
+本轮只跑两次 vanilla prefill 并检查层 19/20 的模块输入输出，回执写入 REPLY_SM90_PREFIX_BLOCK_AA.md。[【SM90】执行任务书](../trace_executor_20261119/SM90_PREFIX_BLOCK_AA.md)
 
 # 历史任务 · 修正 EPLB 后的 24 臂主表
 

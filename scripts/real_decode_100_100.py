@@ -914,6 +914,8 @@ def main():
             raise ValueError("prefill diagnostic requires a matrix reference consumer")
         reports = engine.collective_rpc('_gc_moe_prefix_diagnostic')
         extra = {}
+        if os.getenv("GC_MOE_PREFIX_BLOCK_AA") == "1":
+            extra["block_by_rank"] = [report.pop("block_records") for report in reports]
         if os.getenv("GC_MOE_PREFIX_LAYER_AA") == "1":
             extra["moe_by_rank"] = [report.pop("moe_boundaries") for report in reports]
         if os.getenv("GC_MOE_PREFIX_HIDDEN_AA") == "1":

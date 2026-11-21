@@ -2432,6 +2432,9 @@ def _install_worker_rpc() -> None:
                 raise ValueError("layer audit requires prefix hidden audit")
             self._gc_reference_tokens.moe_boundaries = []
             profile_buffer().prefix_layer_audit = self._gc_reference_tokens
+            if os.getenv("GC_MOE_PREFIX_BLOCK_AA") == "1":
+                from prefix_module_probe import install as install_block_probe
+                install_block_probe(self.model_runner, self._gc_reference_tokens, _capturing_enabled)
         return True
 
     Worker._gc_moe_fixed_tokens = gc_moe_fixed_tokens
@@ -2448,6 +2451,8 @@ def _install_worker_rpc() -> None:
             for j in (actual[i, :length] != expected[i, :length]).nonzero().flatten().tolist():
                 mismatches.append([i, j, actual[i, j].item(), expected[i, j].item()])
         result = dict(positions=n, samples=sum(n), mismatches=mismatches, batch_order=ref.batch_hash.hexdigest())
+        if hasattr(ref, "block_records"):
+            result["block_records"] = ref.block_records
         if hasattr(ref, "moe_boundaries"):
             result["moe_boundaries"] = ref.moe_boundaries
         if hasattr(ref, "hidden_samples"):

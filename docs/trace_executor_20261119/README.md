@@ -1,6 +1,6 @@
 # 【SM90】BS256 prefill 自对照诊断
 
-本轮只跑两次 vanilla prefill 并检查前 20 步逐层 MoE 输入输出，回执写入 REPLY_SM90_PREFIX_LAYER_AA.md。[【SM90】执行任务书](SM90_PREFIX_LAYER_AA.md)
+本轮只跑两次 vanilla prefill 并检查层 19/20 的模块输入输出，回执写入 REPLY_SM90_PREFIX_BLOCK_AA.md。[【SM90】执行任务书](SM90_PREFIX_BLOCK_AA.md)
 
 下文保留此前的单轮采样流程。该流程使用首次有效 CTA 领取打点提交 `cffe4835270f0d0bcc048b502a0b5716eac910b1` 及包含本任务书的后续提交，依次执行步骤 1 至 5。该轮验收禁止使用 `prof_phases.py`、`FINAL_V2` 或任何旧 run。
 
