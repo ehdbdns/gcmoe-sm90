@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 
@@ -6,6 +7,9 @@ from vllm import LLM, SamplingParams
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--backend", choices=("auto", "deep_gemm_mega_moe"), default="auto")
+    args = parser.parse_args()
     assert torch.cuda.device_count() == 8
     assert all(torch.cuda.get_device_capability(i) == (10, 3) for i in range(8))
     model = LLM(
@@ -14,7 +18,7 @@ def main():
         enable_expert_parallel=True,
         enable_prefix_caching=False,
         enforce_eager=True,
-        kernel_config={"enable_flashinfer_autotune": False},
+        kernel_config={"enable_flashinfer_autotune": False, "moe_backend": args.backend},
         max_model_len=2048,
         max_num_seqs=8,
         max_num_batched_tokens=2048,
@@ -30,7 +34,7 @@ def main():
     )
     ids = list(out[0].outputs[0].token_ids)
     assert len(ids) == 4
-    print(json.dumps(dict(prompt=prompt, generated_ids=ids)), flush=True)
+    print(json.dumps(dict(backend=args.backend, prompt=prompt, generated_ids=ids)), flush=True)
 
 
 if __name__ == "__main__":
