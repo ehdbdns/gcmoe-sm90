@@ -1,0 +1,30 @@
+# Retry after default PyPI download stalled at about 7 KB/s.
+# Mirror URL served the same wheel hashes (sha256 440b88739120c65d96c5f15bbe496a3bd7c26392874d5af6061d38497f84c70c for cutlass cu12 libs).
+Looking in indexes: https://pypi.tuna.tsinghua.edu.cn/simple
+Collecting nvidia-cutlass-dsl==4.8.1
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/bd/ce/a590b929285faf0aa285c5ccee2b88e0b5259fb39a6326206e0f140ea3fc/nvidia_cutlass_dsl-4.8.1-py3-none-any.whl (10 kB)
+Collecting cuda-python==13.2.0
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/4a/da/b4dbe129f941afe1c24a09ba53521b78875626763d96414798a74763282f/cuda_python-13.2.0-py3-none-any.whl (8.1 kB)
+Collecting nvidia-cutlass-dsl-libs-base==4.8.1 (from nvidia-cutlass-dsl==4.8.1)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/28/97/d8212f685544dc7208d78186128dc8a454158b1817a76b34d25392b9f910/nvidia_cutlass_dsl_libs_base-4.8.1-cp312-cp312-manylinux_2_28_x86_64.whl (3.1 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.1/3.1 MB 11.7 MB/s eta 0:00:00
+Collecting nvidia-cutlass-dsl-libs-cu12==4.8.1 (from nvidia-cutlass-dsl==4.8.1)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/11/f4/a4f35a52b8a495b5dd3ad7b466567b3dbec656442811085ca1cb7d4a1d97/nvidia_cutlass_dsl_libs_cu12-4.8.1-cp312-cp312-manylinux_2_28_x86_64.whl (91.7 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 91.7/91.7 MB 40.4 MB/s eta 0:00:00
+Collecting cuda-bindings~=13.2.0 (from cuda-python==13.2.0)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/1f/92/f899f7bbb5617bb65ec52a6eac1e9a1447a86b916c4194f8a5001b8cde0c/cuda_bindings-13.2.0-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (6.3 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.3/6.3 MB 39.7 MB/s eta 0:00:00
+Collecting cuda-pathfinder~=1.1 (from cuda-python==13.2.0)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/62/8e/e6101ff068e7e78b362879ffc0c7cbfe68c9742943c9b034f009fe19f88f/cuda_pathfinder-1.9.1-py3-none-any.whl (63 kB)
+Collecting typing-extensions>=4.10.0 (from nvidia-cutlass-dsl-libs-base==4.8.1->nvidia-cutlass-dsl==4.8.1)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+Collecting protobuf>=4.21.12 (from nvidia-cutlass-dsl-libs-base==4.8.1->nvidia-cutlass-dsl==4.8.1)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/db/f3/3996583dd2906297a637af12114deddf7658af6e683fedb83be061983fb5/protobuf-7.36.2-cp310-abi3-manylinux2014_x86_64.whl (343 kB)
+Collecting nvidia-cutlass-dsl-libs-core==4.8.1 (from nvidia-cutlass-dsl-libs-base==4.8.1->nvidia-cutlass-dsl==4.8.1)
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/6c/03/1c59e3caf7c8b5cae3ae4d1753201c7e64d36cdf182fb882e070b0f14a55/nvidia_cutlass_dsl_libs_core-4.8.1-py3-none-any.whl (1.6 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.6/1.6 MB 90.5 MB/s eta 0:00:00
+Installing collected packages: typing-extensions, protobuf, cuda-pathfinder, cuda-bindings, nvidia-cutlass-dsl-libs-core, cuda-python, nvidia-cutlass-dsl-libs-base, nvidia-cutlass-dsl-libs-cu12, nvidia-cutlass-dsl
+Successfully installed cuda-bindings-13.2.0 cuda-pathfinder-1.9.1 cuda-python-13.2.0 nvidia-cutlass-dsl-4.8.1 nvidia-cutlass-dsl-libs-base-4.8.1 nvidia-cutlass-dsl-libs-core-4.8.1 nvidia-cutlass-dsl-libs-cu12-4.8.1 protobuf-7.36.2 typing-extensions-4.16.0
+
+[notice] A new release of pip is available: 24.2 -> 26.3
+[notice] To update, run: pip install --upgrade pip
