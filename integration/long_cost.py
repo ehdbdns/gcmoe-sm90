@@ -140,6 +140,9 @@ def register_long_rpc(worker_class, get_buffer, modules):
             free, total = torch.cuda.mem_get_info()
             result["device_memory_bytes"] = dict(free=free, total=total,
                                                   peak_reserved=torch.cuda.max_memory_reserved())
+        if phase == "measure" and os.getenv("GC_STEP_BOUNDARY") == "1":
+            from step_boundary import BoundaryClocks
+            self._boundary_clocks = BoundaryClocks(self.model_runner, tape.steps)
         return result
 
     @torch.inference_mode()
@@ -185,6 +188,9 @@ def register_long_rpc(worker_class, get_buffer, modules):
             audit["batch_order"] = ref.batch_hash.hexdigest()
             path = Path(directory) / f"rank{rank}.npz"
             extra = {}
+            if hasattr(self, '_boundary_clocks'):
+                extra['step_boundary'] = self._boundary_clocks.finish()
+                del self._boundary_clocks
             if buf.layout.matrix and buf.eco:
                 extra['auction'] = buf.auction_counts.index_select(0, idx).cpu().numpy()
             with path.open("xb") as f:

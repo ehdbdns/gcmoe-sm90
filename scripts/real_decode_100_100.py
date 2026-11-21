@@ -768,7 +768,7 @@ def main():
     fixed = {}
     if fixed_dir:
         # Capture controls before the model runner creates per-process IDs.
-        runtime_keys = ('MODEL', 'DATASET', 'WORLD', 'GPU_UTIL', 'MAX_BATCHED', 'MOE_BACKEND',
+        runtime_keys = ('GC_STEP_BOUNDARY', 'MODEL', 'DATASET', 'WORLD', 'GPU_UTIL', 'MAX_BATCHED', 'MOE_BACKEND',
                         'ALL2ALL_BACKEND', 'CUDAGRAPH_MODE', 'PYTHONHASHSEED', 'ENFORCE_EAGER',
                         'CUDA_VISIBLE_DEVICES', 'VLLM_USE_V2_MODEL_RUNNER', 'VLLM_ENABLE_V1_MULTIPROCESSING',
                         'VLLM_DISABLE_REQUEST_ID_RANDOMIZATION', 'VLLM_MULTI_STREAM_GEMM_TOKEN_THRESHOLD',
@@ -852,12 +852,19 @@ def main():
             if o.outputs and o.outputs[0].token_ids:
                 got.setdefault(o.request_id, []).extend(o.outputs[0].token_ids)
 
-    def time_window(n, blocks=None):
+    def time_window(n, blocks=None, host=None):
         _sync()                       # drain batches queued before the window
         t0 = time.perf_counter()
         last = t0
         for i in range(1, n + 1):
-            _collect(engine.step())
+            if host is None:
+                _collect(engine.step())
+            else:
+                t = time.perf_counter_ns()
+                outs = engine.step()
+                returned = time.perf_counter_ns()
+                _collect(outs)
+                host.append([t, returned, time.perf_counter_ns()])
             if blocks is not None and i < n and i % 10 == 0:
                 now = time.perf_counter()
                 blocks.append((now - last) * 100)
@@ -955,13 +962,35 @@ def main():
         before = [len(got[rid]) for rid in ids]
         blocks = []
         rec['on'] = True
-        elapsed = time_window(1000, blocks)
+        diagnose = phase == "measure" and os.getenv("GC_STEP_BOUNDARY") == "1"
+        if diagnose:
+            from contextlib import ExitStack
+            from unittest.mock import patch
+            host, calls = [], {}
+            def instrument(method, name):
+                spans = calls[name] = []
+                def timed(*args, **kwargs):
+                    t = time.perf_counter_ns()
+                    value = method(*args, **kwargs)
+                    spans.append([len(host), t, time.perf_counter_ns()])
+                    return value
+                return timed
+            client = engine.engine_core
+            scheduler = client.engine_core.scheduler
+            with ExitStack() as stack:
+                for obj, name in ((client, 'get_output'), (scheduler, 'schedule'),
+                                  (scheduler, 'update_from_output')):
+                    stack.enter_context(patch.object(obj, name, instrument(getattr(obj, name), name)))
+                elapsed = time_window(1000, blocks, host)
+        else:
+            elapsed = time_window(1000, blocks)
         rec['on'] = False
         if (rec['gen_tokens'] != [nseq]*1000 or rec['ctx_tokens'] != [0]*1000
                 or any(len(got[rid]) != n+1000 for rid,n in zip(ids,before))):
             raise ValueError(f'{phase}: expected 1000 full pure-decode steps for all requests')
         audit = engine.collective_rpc('_gc_moe_long_finish', args=(phase, str(Path(a.output).parent)))
-        return dict(ms_per_step=elapsed, ten_step_ms=blocks, initial=start, audit=audit)
+        return dict(ms_per_step=elapsed, ten_step_ms=blocks, initial=start, audit=audit,
+                    **({"host_boundary_ns": dict(steps=host, **calls)} if diagnose else {}))
 
     if long_cost:
         training = long_window('stats')

@@ -22,6 +22,11 @@ case ${GC_MOE_MATRIX_SIZE:-20} in
   *) exit 2 ;;
 esac
 arms+=(eco eco_smr)
+if [[ ${GC_STEP_BOUNDARY:-0} == 1 ]]; then
+  test "${GC_MOE_MATRIX_SIZE:-}" = 24
+  # Counterbalance the cost-arm order from BS256/512. Vanilla still publishes.
+  arms=(vanilla random rr eco eco_linear eco_smr)
+fi
 batches=(32 64 128 256)
 if [[ -n ${GC_MAIN24_SINGLE_BS:-} ]]; then
   test "${GC_MOE_MATRIX_SIZE:-20}" = 24
@@ -75,6 +80,9 @@ PY
   done
   (cd "$GC_MOE_FIXED_DIR" && sha256sum stats-rank*.pt measure-rank*.pt stats-demand.npz tokens.json placement.json *-layout.json) > "$group/workload.sha256"
   "$py" scripts/trace_layer/main20_report.py "$out" "${report_args[@]}" --bs "$bs"
+  if [[ ${GC_STEP_BOUNDARY:-0} == 1 ]]; then
+    "$py" scripts/trace_layer/cost_boundary_report.py "$group" > "$group/cost_boundary.csv"
+  fi
   # The group report has verified every arm's readback against its publisher.
   # Only release this job's private disposable payloads; preserve evidence on failure.
   if [[ ${GC_MAIN20_KEEP_KV:-0} != 1 ]]; then
