@@ -1,6 +1,6 @@
 # 【SM90】BS256 prefill 自对照诊断
 
-本轮只跑 vanilla 和 random 的 prefill，回执写入 REPLY_SM90_PREFIX_AA.md。[【SM90】执行任务书](../trace_executor_20261119/SM90_PREFIX_AA_TASK.md)
+本轮只跑两次 vanilla prefill 并检查 sampler 输入，回执写入 REPLY_SM90_PREFIX_HIDDEN_AA.md。[【SM90】执行任务书](../trace_executor_20261119/SM90_PREFIX_HIDDEN_AA.md)
 
 # 历史任务 · 修正 EPLB 后的 24 臂主表
 

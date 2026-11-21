@@ -913,13 +913,16 @@ def main():
         if not long_cost or matrix not in ("vanilla", "random") or recording_tokens:
             raise ValueError("prefill diagnostic requires a matrix reference consumer")
         reports = engine.collective_rpc('_gc_moe_prefix_diagnostic')
+        extra = {}
+        if os.getenv("GC_MOE_PREFIX_HIDDEN_AA") == "1":
+            extra["hidden_by_rank"] = [report.pop("hidden_samples") for report in reports]
         if len(reports) != ranks or any(report != reports[0] for report in reports):
             raise ValueError("prefill diagnostic differs across workers")
         if any(got[rid] != fixed['tokens'][rid][:n] for rid, n in zip(ids, reports[0]['positions'])):
             raise ValueError("prefill feedback differs from reference")
         with Path(a.output).open('x') as f:
             json.dump(dict(arm=matrix, prompt_hash=prompt_hash, prefill_steps=prefill_steps,
-                           **reports[0]), f)
+                           **reports[0], **extra), f)
         return
 
     # ---- 2. warm decode: EPLB learning window ----------------------------

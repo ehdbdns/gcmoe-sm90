@@ -102,6 +102,11 @@ def install(runner, directory, capacity=None):
         with (Path(directory) / 'tokens.json').open() as src:
             tokens = json.load(src)['tokens']
     reference = ReferenceTokens(tokens, runner.device, capacity, follow_native)
+    trace_hidden = os.environ.get("GC_MOE_PREFIX_HIDDEN_AA") == "1"
+    if trace_hidden:
+        if os.environ.get("GC_MOE_PREFIX_DIAG") != "1":
+            raise ValueError("prefix hidden audit requires prefill-only diagnostic")
+        reference.hidden_samples = []
     original = runner.sample
 
     def sample(hidden_states, input_batch, grammar_output):
@@ -113,6 +118,17 @@ def install(runner, directory, capacity=None):
             returned = original(hidden_states, input_batch, grammar_output)
         output, num_sampled, num_rejected = returned
         reference.batch_hash.update(input_batch.query_start_loc_np[:input_batch.num_reqs+1].tobytes())
+        if trace_hidden:
+            # logits_indices picks the last hidden row for each mixed-prefill
+            # request. Drop chunk rows which have no accepted sample.
+            rows = hidden_states.index_select(0, input_batch.logits_indices.long()).contiguous()
+            host = rows.view(torch.uint8).cpu().numpy()
+            accepted = num_sampled.tolist()
+            batch = []
+            for req, row, take in zip(input_batch.req_ids, host, accepted, strict=True):
+                if take:
+                    batch.append([reference.keys[req], hashlib.sha256(row).hexdigest()])
+            reference.hidden_samples.append(batch)
         reference.feed(input_batch.req_ids, output, num_sampled)
         return output, num_sampled, num_rejected
 

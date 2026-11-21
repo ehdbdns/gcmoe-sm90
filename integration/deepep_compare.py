@@ -2431,7 +2431,10 @@ def _install_worker_rpc() -> None:
                 raise ValueError(f'invalid prefill length for req{i}')
             for j in (actual[i, :length] != expected[i, :length]).nonzero().flatten().tolist():
                 mismatches.append([i, j, actual[i, j].item(), expected[i, j].item()])
-        return dict(positions=n, samples=sum(n), mismatches=mismatches, batch_order=ref.batch_hash.hexdigest())
+        result = dict(positions=n, samples=sum(n), mismatches=mismatches, batch_order=ref.batch_hash.hexdigest())
+        if hasattr(ref, "hidden_samples"):
+            result["hidden_samples"] = ref.hidden_samples
+        return result
 
     Worker._gc_moe_prefix_diagnostic = prefix_diagnostic
 
