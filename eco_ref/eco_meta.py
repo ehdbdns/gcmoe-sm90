@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 import sys
 
-import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, '..', 'source'))
@@ -17,15 +16,7 @@ sys.path.insert(0, os.path.join(_HERE, '..', 'source'))
 from gc_moe.eco.meta_sm90 import (  # noqa: E402
     COPIES_WORDS_PER_EXPERT, K_EMPTY, K_PASSIVE, build_eco_meta, read_copies,
 )
-from unit_ref import unit_section  # noqa: E402
-
-
-def build_eco_meta_sm100(phy, num_ranks: int, num_logical: int) -> np.ndarray:
-    """SM100 layout: the same core plus the `unit_section` tables."""
-    core = build_eco_meta(phy, num_ranks, num_logical)
-    section = unit_section(phy, num_ranks, num_logical)
-    return np.concatenate([core.astype(np.int64),
-                           section.astype(np.int64)]).astype(np.int32)
+from gc_moe.eco.meta_sm100 import build_eco_meta_sm100  # noqa: E402
 
 
 def install_into_buffer(buf, phy, num_ranks, num_logical):
