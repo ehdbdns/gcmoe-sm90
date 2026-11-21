@@ -1,0 +1,21 @@
+V4.1 five-arm matrix cleanup record
+cleanup_time: 2026-11-22T07:05:58+08:00
+workdir: /data0/home/admin/workspace/megamoe/v41-five-matrix-01
+
+Removed private copies/caches (absolute paths, checked to be inside workdir):
+  /data0/home/admin/workspace/megamoe/v41-five-matrix-01/overlay  (38,318,168 bytes)
+  /data0/home/admin/workspace/megamoe/v41-five-matrix-01/overlay.ready  (0 bytes)
+  /data0/home/admin/workspace/megamoe/v41-five-matrix-01/dg-cache  (2,373,948 bytes)
+  /data0/home/admin/workspace/megamoe/v41-five-matrix-01/eco-cache  (848,936 bytes)
+  no package-* directory existed
+
+Retained in the workdir (persistent /data0):
+  /data0/home/admin/workspace/megamoe/v41-five-matrix-01/bs{256,512,1024,2048}/{mega,gc,mega_rr,gc_rr,gc_eco}/  (result.json, model.log, start, end, exit-code, stats/measure rank NPZ)
+  /data0/home/admin/workspace/megamoe/v41-five-matrix-01/bs{256,512,1024,2048}/{stats,measure}-routes-{0..7}.pt  (Mega publisher route tapes)
+  /data0/home/admin/workspace/megamoe/v41-five-matrix-01/bs{256,512,1024,2048}/plan.npz, summary.json, metrics.csv, pairs.csv
+  /data0/home/admin/workspace/megamoe/v41-five-matrix-01/launcher.log, acquired.log, released.log, run.lock, revision
+  /data0/home/admin/workspace/megamoe/v41-five-matrix-01/attempt0-missing-integration/, /data0/home/admin/workspace/megamoe/v41-five-matrix-01/attempt1-missing-archive/  (pre-run setup failures, kept as evidence)
+  /data0/home/admin/workspace/megamoe/v41-five-matrix-01/delivery/
+
+Disk usage after cleanup:
+15G	/data0/home/admin/workspace/megamoe/v41-five-matrix-01

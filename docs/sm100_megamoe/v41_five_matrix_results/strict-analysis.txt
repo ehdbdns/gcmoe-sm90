@@ -1,0 +1,109 @@
+Strict validation analysis for the V4.1 five-arm matrix
+Generated from the retained result.json files and rank NPZ files.
+
+bs=256: completed=5/5, total_pairs=10, strict_pairs=0, failures=[]
+bs=512: completed=5/5, total_pairs=10, strict_pairs=0, failures=[]
+bs=1024: completed=5/5, total_pairs=10, strict_pairs=0, failures=[]
+bs=2048: completed=5/5, total_pairs=10, strict_pairs=0, failures=[]
+
+bs=256 digest checks:
+  mega     stats   controlled_replay=True gate_equal_to_mega=True ranks=8
+  mega     measure controlled_replay=True gate_equal_to_mega=True ranks=8
+  gc       stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc       measure controlled_replay=True gate_equal_to_mega=False ranks=8
+  mega_rr  stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  mega_rr  measure controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_rr    stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_rr    measure controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_eco   stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_eco   measure controlled_replay=True gate_equal_to_mega=False ranks=8
+
+bs=512 digest checks:
+  mega     stats   controlled_replay=True gate_equal_to_mega=True ranks=8
+  mega     measure controlled_replay=True gate_equal_to_mega=True ranks=8
+  gc       stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc       measure controlled_replay=True gate_equal_to_mega=False ranks=8
+  mega_rr  stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  mega_rr  measure controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_rr    stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_rr    measure controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_eco   stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_eco   measure controlled_replay=True gate_equal_to_mega=False ranks=8
+
+bs=1024 digest checks:
+  mega     stats   controlled_replay=True gate_equal_to_mega=True ranks=8
+  mega     measure controlled_replay=True gate_equal_to_mega=True ranks=8
+  gc       stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc       measure controlled_replay=True gate_equal_to_mega=False ranks=8
+  mega_rr  stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  mega_rr  measure controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_rr    stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_rr    measure controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_eco   stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_eco   measure controlled_replay=True gate_equal_to_mega=False ranks=8
+
+bs=2048 digest checks:
+  mega     stats   controlled_replay=True gate_equal_to_mega=True ranks=8
+  mega     measure controlled_replay=True gate_equal_to_mega=True ranks=8
+  gc       stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc       measure controlled_replay=True gate_equal_to_mega=False ranks=8
+  mega_rr  stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  mega_rr  measure controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_rr    stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_rr    measure controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_eco   stats   controlled_replay=True gate_equal_to_mega=False ranks=8
+  gc_eco   measure controlled_replay=True gate_equal_to_mega=False ranks=8
+
+bs=256 receive-count checks:
+  gc       measure logical_counts_equal_to_mega=True
+  mega_rr  measure logical_counts_equal_to_mega=True
+  gc_rr    measure logical_counts_equal_to_mega=True
+  gc_eco   measure logical_counts_equal_to_mega=True
+  gc       stats   physical_counts_equal_to_mega=True
+  EPLB     stats   physical_counts_equal_across_three_arms=True
+  gc_rr vs gc_eco stats physical_counts_equal=True
+  gc_rr vs gc_eco stats gate_equal=False
+  gc_rr vs gc_eco plan_sha_equal=True
+
+bs=512 receive-count checks:
+  gc       measure logical_counts_equal_to_mega=True
+  mega_rr  measure logical_counts_equal_to_mega=True
+  gc_rr    measure logical_counts_equal_to_mega=True
+  gc_eco   measure logical_counts_equal_to_mega=True
+  gc       stats   physical_counts_equal_to_mega=True
+  EPLB     stats   physical_counts_equal_across_three_arms=True
+  gc_rr vs gc_eco stats physical_counts_equal=True
+  gc_rr vs gc_eco stats gate_equal=False
+  gc_rr vs gc_eco plan_sha_equal=True
+
+bs=1024 receive-count checks:
+  gc       measure logical_counts_equal_to_mega=True
+  mega_rr  measure logical_counts_equal_to_mega=True
+  gc_rr    measure logical_counts_equal_to_mega=True
+  gc_eco   measure logical_counts_equal_to_mega=True
+  gc       stats   physical_counts_equal_to_mega=True
+  EPLB     stats   physical_counts_equal_across_three_arms=True
+  gc_rr vs gc_eco stats physical_counts_equal=True
+  gc_rr vs gc_eco stats gate_equal=False
+  gc_rr vs gc_eco plan_sha_equal=True
+
+bs=2048 receive-count checks:
+  gc       measure logical_counts_equal_to_mega=True
+  mega_rr  measure logical_counts_equal_to_mega=True
+  gc_rr    measure logical_counts_equal_to_mega=True
+  gc_eco   measure logical_counts_equal_to_mega=True
+  gc       stats   physical_counts_equal_to_mega=True
+  EPLB     stats   physical_counts_equal_across_three_arms=True
+  gc_rr vs gc_eco stats physical_counts_equal=True
+  gc_rr vs gc_eco stats gate_equal=False
+  gc_rr vs gc_eco plan_sha_equal=True
+
+Interpretation:
+- All 20 arm processes exited 0 and every BS has 5/5 completed arms with no harness failures.
+- controlled_replay is true for all 40 pairs: replay ids, replay weights and batch order digests are exact.
+- Measure-phase receive counts reproduce the Mega logical demand exactly for all four EPLB/non-EPLB arms and all four BS values.
+- native_token_equal and native_gate_equal are false for all 40 pairs; strict is therefore 0/40.
+- The first failing stage is the stats-window logical top-6/gate digest, already on all 8 ranks; it is not a measure-only placement issue.
+- gc_rr and gc_eco share the same backend, 448-slot initial placement, plan SHA, input tokens and stats replay bank, and their stats physical receive counts are identical, yet their stats gate digests differ. This is independent-cold-start numerical nondeterminism, not a replay/bookkeeping error.
+- Only whole-phase digests are retained, so the exact first divergent decode step cannot be localized from this delivery.
+- Per the task rule, no performance comparison is interpreted because no pair is strict.

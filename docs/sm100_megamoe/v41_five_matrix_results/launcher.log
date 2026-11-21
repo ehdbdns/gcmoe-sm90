@@ -1,0 +1,162 @@
+DeepInfer RR and physical load checks passed
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 446, in collective_rpc
+    return self.engine_core.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 459, in collective_rpc
+    return self.engine_core.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 1037, in collective_rpc
+    return self.model_executor.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 450, in collective_rpc
+    return future if non_block else future.result()
+                                    ^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 99, in result
+    return super().result()
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 103, in _wait_for_response
+    response = self.aggregate(self.get_response())
+                              ^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 439, in get_response
+    raise RuntimeError(
+RuntimeError: Worker failed with error 'No module named 'fixed_tokens'', please check the stack trace above for the root cause
+(MainProcess pid=2378119) INFO 11-22 03:10:51 [multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(Worker_TP0_EP0 pid=2405848) INFO 11-22 03:10:51 [multiproc_executor.py:838] Parent process exited, terminating worker queues
+(MainProcess pid=2378119) WARNING 11-22 03:10:56 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=2378119) WARNING 11-22 03:11:01 [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=8
+{'bs': 256, 'completed': [], 'strict_pairs': 0, 'total_pairs': 0, 'failures': ['mega: no completed result', 'gc: no completed result', 'mega_rr: no completed result', 'gc_rr: no completed result', 'gc_eco: no completed result']}
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 446, in collective_rpc
+    return self.engine_core.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 459, in collective_rpc
+    return self.engine_core.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 1037, in collective_rpc
+    return self.model_executor.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 450, in collective_rpc
+    return future if non_block else future.result()
+                                    ^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 99, in result
+    return super().result()
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 103, in _wait_for_response
+    response = self.aggregate(self.get_response())
+                              ^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 439, in get_response
+    raise RuntimeError(
+RuntimeError: Worker failed with error 'No module named 'fixed_tokens'', please check the stack trace above for the root cause
+(MainProcess pid=2748582) INFO 11-22 03:14:49 [multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(Worker_TP0_EP0 pid=2763437) INFO 11-22 03:14:49 [multiproc_executor.py:838] Parent process exited, terminating worker queues
+(MainProcess pid=2748582) WARNING 11-22 03:14:54 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=2748582) WARNING 11-22 03:14:59 [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=8
+{'bs': 512, 'completed': [], 'strict_pairs': 0, 'total_pairs': 0, 'failures': ['mega: no completed result', 'gc: no completed result', 'mega_rr: no completed result', 'gc_rr: no completed result', 'gc_eco: no completed result']}
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 446, in collective_rpc
+    return self.engine_core.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 459, in collective_rpc
+    return self.engine_core.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 1037, in collective_rpc
+    return self.model_executor.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 450, in collective_rpc
+    return future if non_block else future.result()
+                                    ^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 99, in result
+    return super().result()
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 103, in _wait_for_response
+    response = self.aggregate(self.get_response())
+                              ^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 439, in get_response
+    raise RuntimeError(
+RuntimeError: Worker failed with error 'No module named 'fixed_tokens'', please check the stack trace above for the root cause
+(MainProcess pid=3087114) INFO 11-22 03:18:22 [multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(Worker_TP0_EP0 pid=3104521) INFO 11-22 03:18:22 [multiproc_executor.py:838] Parent process exited, terminating worker queues
+(MainProcess pid=3087114) WARNING 11-22 03:18:27 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=3087114) WARNING 11-22 03:18:31 [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=8
+{'bs': 1024, 'completed': [], 'strict_pairs': 0, 'total_pairs': 0, 'failures': ['mega: no completed result', 'gc: no completed result', 'mega_rr: no completed result', 'gc_rr: no completed result', 'gc_eco: no completed result']}
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 446, in collective_rpc
+    return self.engine_core.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 459, in collective_rpc
+    return self.engine_core.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 1037, in collective_rpc
+    return self.model_executor.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 450, in collective_rpc
+    return future if non_block else future.result()
+                                    ^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 99, in result
+    return super().result()
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 103, in _wait_for_response
+    response = self.aggregate(self.get_response())
+                              ^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 439, in get_response
+    raise RuntimeError(
+RuntimeError: Worker failed with error 'No module named 'fixed_tokens'', please check the stack trace above for the root cause
+(MainProcess pid=3370074) INFO 11-22 03:22:07 [multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(Worker_TP0_EP0 pid=3377011) INFO 11-22 03:22:07 [multiproc_executor.py:838] Parent process exited, terminating worker queues
+(MainProcess pid=3370074) WARNING 11-22 03:22:12 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=3370074) WARNING 11-22 03:22:16 [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=8
+{'bs': 2048, 'completed': [], 'strict_pairs': 0, 'total_pairs': 0, 'failures': ['mega: no completed result', 'gc: no completed result', 'mega_rr: no completed result', 'gc_rr: no completed result', 'gc_eco: no completed result']}
+DeepInfer RR and physical load checks passed
+(Worker_TP0_EP0 pid=3755918) INFO 11-22 03:25:35 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP0_EP0 pid=3755918) INFO 11-22 03:25:35 [custom_all_reduce.py:576] Using the MNNVL Lamport all-gather kernel.
+(Worker_TP0_EP0 pid=3755918) INFO 11-22 03:25:37 [custom_all_reduce.py:672] Using the MNNVL Lamport reduce-scatter kernel.
+(Worker_TP0_EP0 pid=3755918) INFO 11-22 03:25:38 [kernel_warmup.py:255] Skipping FlashInfer autotune because it is disabled.
+(Worker_TP0_EP0 pid=3755918) INFO 11-22 03:25:38 [gpu_worker.py:955] Free memory on device (265.09/267.69 GiB) on startup. Desired GPU memory utilization is (0.8, 214.15 GiB). Actual usage is 39.88 GiB for consumed memory (weights + non-torch), 0.77 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=186134322176` (173.35 GiB) to fit into requested memory, or `--kv-cache-memory=240833616896` (224.29 GiB) to fully utilize gpu memory. Current kv cache memory in use is 173.5 GiB.
+(Worker_TP2_EP2 pid=3755920) INFO 11-22 03:25:38 [gpu_worker.py:955] Free memory on device (265.22/267.69 GiB) on startup. Desired GPU memory utilization is (0.8, 214.15 GiB). Actual usage is 39.88 GiB for consumed memory (weights + non-torch), 0.77 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=186134322176` (173.35 GiB) to fit into requested memory, or `--kv-cache-memory=240963902464` (224.42 GiB) to fully utilize gpu memory. Current kv cache memory in use is 173.5 GiB.
+(Worker_TP5_EP5 pid=3755923) INFO 11-22 03:25:38 [gpu_worker.py:955] Free memory on device (265.09/267.69 GiB) on startup. Desired GPU memory utilization is (0.8, 214.15 GiB). Actual usage is 39.88 GiB for consumed memory (weights + non-torch), 0.77 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=186134322176` (173.35 GiB) to fit into requested memory, or `--kv-cache-memory=240831519744` (224.29 GiB) to fully utilize gpu memory. Current kv cache memory in use is 173.5 GiB.
+(Worker_TP6_EP6 pid=3755924) INFO 11-22 03:25:38 [gpu_worker.py:955] Free memory on device (265.21/267.69 GiB) on startup. Desired GPU memory utilization is (0.8, 214.15 GiB). Actual usage is 39.88 GiB for consumed memory (weights + non-torch), 0.77 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=186134322176` (173.35 GiB) to fit into requested memory, or `--kv-cache-memory=240963705856` (224.41 GiB) to fully utilize gpu memory. Current kv cache memory in use is 173.5 GiB.
+(Worker_TP3_EP3 pid=3755921) INFO 11-22 03:25:38 [gpu_worker.py:955] Free memory on device (265.09/267.69 GiB) on startup. Desired GPU memory utilization is (0.8, 214.15 GiB). Actual usage is 39.88 GiB for consumed memory (weights + non-torch), 0.77 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=186134322176` (173.35 GiB) to fit into requested memory, or `--kv-cache-memory=240831781888` (224.29 GiB) to fully utilize gpu memory. Current kv cache memory in use is 173.5 GiB.
+(Worker_TP7_EP7 pid=3755925) INFO 11-22 03:25:38 [gpu_worker.py:955] Free memory on device (265.21/267.69 GiB) on startup. Desired GPU memory utilization is (0.8, 214.15 GiB). Actual usage is 39.88 GiB for consumed memory (weights + non-torch), 0.77 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=186134322176` (173.35 GiB) to fit into requested memory, or `--kv-cache-memory=240963705856` (224.41 GiB) to fully utilize gpu memory. Current kv cache memory in use is 173.5 GiB.
+(Worker_TP1_EP1 pid=3755919) INFO 11-22 03:25:38 [gpu_worker.py:955] Free memory on device (265.22/267.69 GiB) on startup. Desired GPU memory utilization is (0.8, 214.15 GiB). Actual usage is 39.88 GiB for consumed memory (weights + non-torch), 0.77 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=186134322176` (173.35 GiB) to fit into requested memory, or `--kv-cache-memory=240963771392` (224.41 GiB) to fully utilize gpu memory. Current kv cache memory in use is 173.5 GiB.
+(Worker_TP4_EP4 pid=3755922) INFO 11-22 03:25:38 [gpu_worker.py:955] Free memory on device (265.22/267.69 GiB) on startup. Desired GPU memory utilization is (0.8, 214.15 GiB). Actual usage is 39.88 GiB for consumed memory (weights + non-torch), 0.77 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=186134322176` (173.35 GiB) to fit into requested memory, or `--kv-cache-memory=240963771392` (224.41 GiB) to fully utilize gpu memory. Current kv cache memory in use is 173.5 GiB.
+(MainProcess pid=3749252) INFO 11-22 03:25:38 [core.py:380] init engine (profile, create kv cache, warmup model) took 21.25 s
+(MainProcess pid=3749252) INFO 11-22 03:25:38 [kv_cache_utils.py:772] kv cache group sizes [32, 32, 32, 32, 32, 128, 8]
+(MainProcess pid=3749252) INFO 11-22 03:25:38 [kv_cache_utils.py:773] kv lcm block sizes 128
+(MainProcess pid=3749252) INFO 11-22 03:25:41 [base.py:255] Multi-modal warmup completed in 0.066s
+Traceback (most recent call last):
+  File "/tmp/sm100-native-retry-20261121-1945/scripts/sm100/five_matrix.py", line 197, in <module>
+    main()
+  File "/tmp/sm100-native-retry-20261121-1945/scripts/sm100/five_matrix.py", line 118, in main
+    with np.load(archive) as f:
+         ^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/numpy/lib/_npyio_impl.py", line 454, in load
+    fid = stack.enter_context(open(os.fspath(file), "rb"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/sm100-native-retry-20261121-1945/docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/vanilla/rank0.npz'
+(MainProcess pid=3749252) INFO 11-22 03:25:41 [multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(Worker_TP0_EP0 pid=3755918) INFO 11-22 03:25:41 [multiproc_executor.py:838] Parent process exited, terminating worker queues
+(MainProcess pid=3749252) WARNING 11-22 03:25:46 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=3749252) WARNING 11-22 03:25:50 [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=8
+{'bs': 256, 'completed': [], 'strict_pairs': 0, 'total_pairs': 0, 'failures': ['mega: no completed result', 'gc: no completed result', 'mega_rr: no completed result', 'gc_rr: no completed result', 'gc_eco: no completed result']}
+DeepInfer RR and physical load checks passed
+{'bs': 256, 'completed': ['mega', 'gc', 'mega_rr', 'gc_rr', 'gc_eco'], 'strict_pairs': 0, 'total_pairs': 10, 'failures': []}
+{'bs': 512, 'completed': ['mega', 'gc', 'mega_rr', 'gc_rr', 'gc_eco'], 'strict_pairs': 0, 'total_pairs': 10, 'failures': []}
+{'bs': 1024, 'completed': ['mega', 'gc', 'mega_rr', 'gc_rr', 'gc_eco'], 'strict_pairs': 0, 'total_pairs': 10, 'failures': []}
+{'bs': 2048, 'completed': ['mega', 'gc', 'mega_rr', 'gc_rr', 'gc_eco'], 'strict_pairs': 0, 'total_pairs': 10, 'failures': []}
