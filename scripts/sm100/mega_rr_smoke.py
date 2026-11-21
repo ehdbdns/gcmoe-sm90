@@ -37,7 +37,7 @@ def copy_shared_input_scales(dest, sf, block_m):
     dest.index_copy_(0, address, sf)
 
 
-def worker(local_rank, world, checkpoint_dir, with_shared, eco_reference):
+def worker(local_rank, world, checkpoint_dir, with_shared, eco_reference, compare_gc):
     import deep_gemm
     from deep_gemm.utils import per_token_cast_to_fp8
     from deep_gemm.utils.dist import init_dist
@@ -92,6 +92,16 @@ def worker(local_rank, world, checkpoint_dir, with_shared, eco_reference):
         if not torch.equal(layout[0][route].long(), logical):
             raise ValueError("quota routing selected a different expert")
         cases.append(("eplb_eco_reference", layout[0], route))
+    if compare_gc:
+        from gc_moe import (fp8_fp4_gc_moe, get_block_m_for_gc_moe,
+                            get_symm_buffer_for_gc_moe, transform_weights_for_gc_moe)
+
+        gc_l1, gc_l2 = transform_weights_for_gc_moe(
+            checkpoint.shared(("w1", "w3"), inter, hidden),
+            checkpoint.shared(("w2",), hidden, inter))
+        gc_shared = dict(shared_l1_weights=gc_l1, shared_l2_weights=gc_l2)
+        cases.extend([("gc_eplb_rr", layout[0], slots),
+                      ("gc_eplb_eco_reference", layout[0], route)])
     control = None
     for name, physical, route in cases:
         shared = with_shared and name != "routed_control"
@@ -100,30 +110,40 @@ def worker(local_rank, world, checkpoint_dir, with_shared, eco_reference):
             raw = packed_weights(local, 2 * inter, hidden, 100), packed_weights(local, hidden, inter, 1000)
         else:
             raw = checkpoint.packed(local, ("w1", "w3"), inter, hidden), checkpoint.packed(local, ("w2",), hidden, inter)
-        l1, l2 = deep_gemm.transform_weights_for_mega_moe(*raw)
+        if name.startswith("gc_"):
+            transform, allocate = transform_weights_for_gc_moe, get_symm_buffer_for_gc_moe
+            block_size, launch = get_block_m_for_gc_moe, fp8_fp4_gc_moe
+            shared_kwargs = gc_shared
+        else:
+            transform, allocate = deep_gemm.transform_weights_for_mega_moe, deep_gemm.get_symm_buffer_for_mega_moe
+            block_size, launch = deep_gemm.get_block_m_for_mega_moe, deep_gemm.fp8_fp4_mega_moe
+            shared_kwargs = shared_args
+        l1, l2 = transform(*raw)
         del raw
-        buf = deep_gemm.get_symm_buffer_for_mega_moe(group, len(physical), tokens, topk, hidden, inter,
+        buf = allocate(group, len(physical), tokens, topk, hidden, inter,
                                                       num_shared_experts=int(shared), mma_type="fp8xfp4")
         buf.x[:tokens].copy_(x)
         buf.x_sf[:tokens].copy_(sf)
         if shared:
-            block_m = deep_gemm.get_block_m_for_mega_moe(size, len(physical), buf.num_max_tokens_per_rank,
+            block_m = block_size(size, len(physical), buf.num_max_tokens_per_rank,
                                                           tokens, topk, "fp8xfp4")
             copy_shared_input_scales(buf.shared_l1_acts_sf, sf, block_m)
         buf.topk_idx[:tokens].copy_(route)
         buf.topk_weights[:tokens].copy_(weights)
         y = torch.empty((tokens, hidden), dtype=torch.bfloat16, device="cuda")
         received = torch.zeros(len(local), dtype=torch.int32, device="cuda")
-        deep_gemm.fp8_fp4_mega_moe(y, l1, l2, buf, cumulative_local_expert_recv_stats=received,
-                                   **(shared_args if shared else {}))
+        launch(y, l1, l2, buf, cumulative_local_expert_recv_stats=received,
+                                   **(shared_kwargs if shared else {}))
         expected = torch.bincount(route.flatten(), minlength=len(physical))
         dist.all_reduce(expected, group=group)
-        if name == "eplb_eco_reference" and not torch.equal(expected, quota):
+        if name.endswith("eco_reference") and not torch.equal(expected, quota):
             raise ValueError("actual route histogram differs from ECO quota")
         delta = 0 if ref is None else (y != ref).sum().item()
         row = dict(arm=name, rank=rank, different_elements=delta,
                    valid_output=bool(torch.isfinite(y).all() and y.abs().max() > 0),
                    slot_count_match=torch.equal(expected.chunk(size)[rank], received.long()))
+        if ref is not None:
+            row["max_abs_diff_from_mega_identity"] = float((y.float() - ref.float()).abs().max())
         shared_changed = True
         if shared:
             row["changed_from_routed_only"] = int((y != control).sum().item())
@@ -149,9 +169,12 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--shared", action="store_true")
     parser.add_argument("--eco-reference", action="store_true")
+    parser.add_argument("--compare-gc", action="store_true")
     args = parser.parse_args()
+    if args.compare_gc and not args.eco_reference:
+        parser.error("--compare-gc requires --eco-reference")
     if args.eco_reference and not args.shared:
         parser.error("--eco-reference requires --shared")
     if args.shared and not args.checkpoint:
         parser.error("--shared requires --checkpoint")
-    torch.multiprocessing.spawn(worker, args=(8, args.checkpoint, args.shared, args.eco_reference), nprocs=8)
+    torch.multiprocessing.spawn(worker, args=(8, args.checkpoint, args.shared, args.eco_reference, args.compare_gc), nprocs=8)
