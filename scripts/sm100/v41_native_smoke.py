@@ -6,23 +6,17 @@ import torch
 from vllm import LLM, SamplingParams
 
 
-def moe_runtime(model):
-    """Read post-load module state, including fused weights on each worker."""
-    result = []
-    for name, module in model.named_modules():
-        if name.endswith(".ffn") and hasattr(module, "experts"):
-            experts = module.experts
-            result.append(dict(layer=name, expert_class=type(experts).__name__,
-                               sequence_parallel=getattr(module, "use_sequence_parallel", None),
-                               fused_shared=getattr(experts, "has_fused_shared_experts", None)))
-    return result
-
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--backend", choices=("auto", "deep_gemm_mega_moe"), default="auto")
+    parser.add_argument("--backend", choices=("auto", "deep_gemm_mega_moe", "gc_moe"), default="auto")
     parser.add_argument("--prefix-audit", action="store_true")
     args = parser.parse_args()
+    if args.backend == "gc_moe":
+        os.environ["GC_MOE_V41_ENGINE"] = "gc"
+    else:
+        os.environ.pop("GC_MOE_V41_ENGINE", None)
+    extension = ({"worker_extension_cls": "v41_gc_worker.MoeAuditWorker"}
+                 if args.prefix_audit or args.backend == "gc_moe" else {})
     assert torch.cuda.device_count() == 8
     assert all(torch.cuda.get_device_capability(i) == (10, 3) for i in range(8))
     model = LLM(
@@ -31,10 +25,11 @@ def main():
         enable_expert_parallel=True,
         enable_prefix_caching=False,
         enforce_eager=True,
-        kernel_config={"enable_flashinfer_autotune": False, "moe_backend": args.backend},
+        kernel_config={"enable_flashinfer_autotune": False, "moe_backend": "deep_gemm_mega_moe" if args.backend == "gc_moe" else args.backend},
         max_model_len=2048,
         max_num_seqs=8,
         max_num_batched_tokens=2048,
+        **extension,
         seed=0,
         dtype="bfloat16",
         async_scheduling=False,
@@ -42,7 +37,7 @@ def main():
     )
     prompt = {"prompt_token_ids": [100, 200, 300, 400]}
     if args.prefix_audit:
-        modules = model.apply_model(moe_runtime)
+        modules = model.collective_rpc("inspect_v41_moe")
         if len(modules) != 8 or any(len(rank) != 40 for rank in modules):
             raise RuntimeError(f"incomplete MoE coverage: {[len(rank) for rank in modules]}")
         print(json.dumps(dict(backend=args.backend, workers=modules)), flush=True)
