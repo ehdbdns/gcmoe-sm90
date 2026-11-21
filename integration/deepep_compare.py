@@ -2435,6 +2435,9 @@ def _install_worker_rpc() -> None:
             if os.getenv("GC_MOE_PREFIX_BLOCK_AA") == "1":
                 from prefix_module_probe import install as install_block_probe
                 install_block_probe(self.model_runner, self._gc_reference_tokens, _capturing_enabled)
+                if os.getenv("GC_MOE_PREFIX_SPARSE_AA") == "1":
+                    from prefix_sparse_probe import install as install_sparse_probe
+                    install_sparse_probe(self._gc_reference_tokens, _capturing_enabled)
         return True
 
     Worker._gc_moe_fixed_tokens = gc_moe_fixed_tokens
