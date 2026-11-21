@@ -1,0 +1,126 @@
+START backend=auto at 2026-11-21T21:50:31+08:00
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 1078, in collective_rpc
+    return self.call_utility("collective_rpc", method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 1008, in call_utility
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 456, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+Exception: Call to collective_rpc method failed: Can't pickle <function moe_runtime at 0x7efa9a7bba60>: it's not the same object as __main__.moe_runtime
+(MainProcess pid=2159468) DEBUG 11-21 21:53:40 [v1/utils.py:628] [shutdown] Process manager: start process_count=1 timeout=5.0s names=EngineCore
+(MainProcess pid=2159468) INFO 11-21 21:53:40 [v1/utils.py:638] [shutdown] Process manager: send sigterm to process EngineCore
+(EngineCore pid=2177774) INFO 11-21 21:53:40 [v1/engine/core.py:1409] [shutdown] EngineCore: trigger received signal=SIGTERM
+(EngineCore pid=2177774) DEBUG 11-21 21:53:40 [v1/engine/core.py:1519] EngineCore loop active.
+(EngineCore pid=2177774) INFO 11-21 21:53:40 [v1/engine/core.py:1558] [shutdown] EngineCore: start mode=abort timeout=0s
+(EngineCore pid=2177774) INFO 11-21 21:53:40 [v1/engine/core.py:1589] [shutdown] EngineCore: request processing complete; starting resource teardown
+(EngineCore pid=2177774) INFO 11-21 21:53:40 [v1/engine/core.py:1422] [shutdown] EngineCore: exiting busy loop
+(EngineCore pid=2177774) DEBUG 11-21 21:53:40 [v1/engine/core.py:796] [shutdown] EngineCore: tearing down local resources
+(EngineCore pid=2177774) DEBUG 11-21 21:53:40 [v1/executor/multiproc_executor.py:508] [shutdown] Executor: start worker_count=8
+(EngineCore pid=2177774) INFO 11-21 21:53:40 [v1/executor/multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(Worker_TP0_EP0 pid=2193333) INFO 11-21 21:53:40 [v1/executor/multiproc_executor.py:838] Parent process exited, terminating worker queues
+(Worker_TP2_EP2 pid=2193336) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP1_EP1 pid=2193334) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP3_EP3 pid=2193338) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP7_EP7 pid=2193344) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP0_EP0 pid=2193333) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP4_EP4 pid=2193339) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP6_EP6 pid=2193343) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP3_EP3 pid=2193338) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP7_EP7 pid=2193344) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP2_EP2 pid=2193336) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP1_EP1 pid=2193334) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP0_EP0 pid=2193333) DEBUG 11-21 21:53:40 [v1/executor/multiproc_executor.py:950] [shutdown] WorkerProc: exiting after shutdown request
+(Worker_TP6_EP6 pid=2193343) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP4_EP4 pid=2193339) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP0_EP0 pid=2193333) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP5_EP5 pid=2193340) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP5_EP5 pid=2193340) DEBUG 11-21 21:53:40 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP1_EP1 pid=2193334) DEBUG 11-21 21:53:42 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP3_EP3 pid=2193338) DEBUG 11-21 21:53:42 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP6_EP6 pid=2193343) DEBUG 11-21 21:53:42 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP2_EP2 pid=2193336) DEBUG 11-21 21:53:42 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP7_EP7 pid=2193344) DEBUG 11-21 21:53:42 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP0_EP0 pid=2193333) DEBUG 11-21 21:53:42 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP4_EP4 pid=2193339) DEBUG 11-21 21:53:42 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP5_EP5 pid=2193340) DEBUG 11-21 21:53:42 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(MainProcess pid=2159468) WARNING 11-21 21:53:45 [v1/utils.py:658] [shutdown] Process manager: force killing remaining processes count=1
+(MainProcess pid=2159468) WARNING 11-21 21:53:45 [v1/utils.py:663] [shutdown] Process manager: force killing remaining process EngineCore pid 2177774
+(EngineCore pid=2177774) WARNING 11-21 21:53:45 [v1/executor/multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=2159468) DEBUG 11-21 21:53:46 [v1/utils.py:670] [shutdown] Process manager: complete
+(MainProcess pid=2159468) DEBUG 11-21 21:53:46 [v1/engine/core_client.py:490] [shutdown] MPClient: background resource cleanup start
+(MainProcess pid=2159468) DEBUG 11-21 21:53:46 [v1/engine/core_client.py:547] [shutdown] MPClient: background resource cleanup complete
+(MainProcess pid=2159468) DEBUG 11-21 21:53:46 [contextlib.py:478] [shutdown] DeepseekV4Renderer
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 8 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 2 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+END backend=auto exit=1 at 2026-11-21T21:54:01+08:00
+START backend=deep_gemm_mega_moe at 2026-11-21T21:54:01+08:00
+    super().__init__(
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 140, in __init__
+    self.model_executor = executor_class(vllm_config)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 116, in __init__
+    super().__init__(vllm_config)
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/abstract.py", line 113, in __init__
+    self._init_executor()
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 214, in _init_executor
+    self.workers = WorkerProc.wait_for_ready(unready_workers)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 810, in wait_for_ready
+    raise e from None
+Exception: WorkerProc initialization failed due to an exception in a background process. See stack trace for root cause.
+(EngineCore pid=2588427) DEBUG 11-21 21:55:56 [v1/executor/multiproc_executor.py:508] [shutdown] Executor: start worker_count=0
+(EngineCore pid=2588427) DEBUG 11-21 21:55:56 [v1/executor/multiproc_executor.py:537] [shutdown] Executor: complete
+(MainProcess pid=2546059) DEBUG 11-21 21:55:57 [v1/engine/core_client.py:490] [shutdown] MPClient: background resource cleanup start
+(MainProcess pid=2546059) DEBUG 11-21 21:55:57 [v1/utils.py:628] [shutdown] Process manager: start process_count=1 timeout=5s names=EngineCore
+(MainProcess pid=2546059) INFO 11-21 21:55:57 [v1/utils.py:638] [shutdown] Process manager: send sigterm to process EngineCore
+(MainProcess pid=2546059) DEBUG 11-21 21:55:57 [v1/utils.py:670] [shutdown] Process manager: complete
+(MainProcess pid=2546059) DEBUG 11-21 21:55:57 [v1/engine/core_client.py:547] [shutdown] MPClient: background resource cleanup complete
+Traceback (most recent call last):
+  File "/tmp/sm100-native-retry-20261121-1945/scripts/sm100/v41_native_smoke.py", line 72, in <module>
+    main()
+  File "/tmp/sm100-native-retry-20261121-1945/scripts/sm100/v41_native_smoke.py", line 28, in main
+    model = LLM(
+            ^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/entrypoints/llm.py", line 344, in __init__
+    self.llm_engine = LLMEngine.from_engine_args(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 185, in from_engine_args
+    return cls(
+           ^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 111, in __init__
+    self.engine_core = EngineCoreClient.make_client(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 126, in make_client
+    return SyncMPClient(
+           ^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 917, in __init__
+    super().__init__(
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 674, in __init__
+    with launch_core_engines(
+         ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/contextlib.py", line 144, in __exit__
+    next(self.gen)
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/utils.py", line 1268, in launch_core_engines
+    wait_for_engine_startup(
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/utils.py", line 1348, in wait_for_engine_startup
+    raise RuntimeError(
+RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+(MainProcess pid=2546059) DEBUG 11-21 21:55:57 [contextlib.py:478] [shutdown] DeepseekV4Renderer
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+END backend=deep_gemm_mega_moe exit=1 at 2026-11-21T21:56:01+08:00
+2026-11-21T21:56:01+08:00
+FINISHED=2026-11-21T21:56:01+08:00 EXIT=1

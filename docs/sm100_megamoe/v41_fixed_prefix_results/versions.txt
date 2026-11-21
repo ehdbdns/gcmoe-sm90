@@ -1,0 +1,19 @@
+executor=SM100
+launcher=persistent-pty-session
+external_timeout=none
+repo=/tmp/sm100-native-retry-20261121-1945
+work=/data0/home/admin/workspace/megamoe/native-v41-s8u3defd
+start=2026-11-21T21:56:19+08:00
+source_commit=bb6b8fe5ab6e677d9b8739621fb1e44b66a8ba1d
+model=/data0/home/admin/workspace/megamoe/native-v41-KO1hTbTj/model
+backends=auto,deep_gemm_mega_moe
+retry_reason=original apply_model function serialization failure
+serialization_fallback=VLLM_ALLOW_INSECURE_SERIALIZATION=1
+harness_fix=import moe_runtime from v41_prefix_probe instead of __main__
+python=Python 3.12.7
+vllm=0.31.0
+torch=2.13.0+cu130
+torch_cuda=13.0
+flashinfer=0.7.0.post1
+transformers=5.17.0
+triton=3.7.1

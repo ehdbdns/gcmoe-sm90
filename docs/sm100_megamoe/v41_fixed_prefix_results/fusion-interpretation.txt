@@ -1,0 +1,16 @@
+backend=auto
+observed_expert_class=MoERunner
+layers_per_rank=40
+ranks=8
+sequence_parallel=false for 320/320 observed layers
+fused_shared=null for 320/320 observed layers
+actual_fused_layers=N/A
+reason=MoERunner wrapper does not expose has_fused_shared_experts/fused_shared; null is attribute absence, not evidence of zero fused layers
+
+backend=deep_gemm_mega_moe
+observed_expert_class=DeepseekV4MegaMoEExperts
+layers_per_rank=40
+ranks=8
+sequence_parallel=true for 320/320 observed layers
+fused_shared=true for 320/320 observed layers
+actual_fused_layers_per_rank=40

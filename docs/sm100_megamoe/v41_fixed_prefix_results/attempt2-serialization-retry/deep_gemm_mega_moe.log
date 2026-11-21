@@ -1,0 +1,462 @@
+(MainProcess pid=2546059) INFO 11-21 21:54:34 [entrypoints/.../utils/api_utils.py:286] non-default args: {'dtype': 'bfloat16', 'max_model_len': 2048, 'tensor_parallel_size': 8, 'enable_expert_parallel': True, 'enable_prefix_caching': False, 'gpu_memory_utilization': 0.8, 'max_num_batched_tokens': 2048, 'max_num_seqs': 8, 'disable_log_stats': True, 'enforce_eager': True, 'kernel_config': KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=[], fused_add_rms_norm=[], gelu_and_mul_sparse=[]), enable_flashinfer_autotune=False, enable_cutedsl_warmup=True, enable_jit_warmup=True, moe_backend='deep_gemm_mega_moe', sparse_indexer_topk_backend='auto', linear_backend='auto', linear_backend_per_quant=None), 'async_scheduling': False, 'model': '/data0/home/admin/workspace/megamoe/native-v41-KO1hTbTj/model'}
+(MainProcess pid=2546059) INFO 11-21 21:54:34 [transformers_utils/config.py:941] Detected quantization_config.scale_fmt=ue8m0; enabling UE8M0 for DeepGEMM.
+(MainProcess pid=2546059) DEBUG 11-21 21:54:34 [model_executor/models/registry.py:1055] Loaded model info for class vllm.models.deepseek_v41.DeepseekV41ForCausalLM from cache
+(MainProcess pid=2546059) DEBUG 11-21 21:54:34 [logging_utils/log_time.py:26] Registry inspect model class: Elapsed time 0.0047758 secs
+(MainProcess pid=2546059) INFO 11-21 21:54:34 [config/model.py:699] Resolved architecture: DeepseekV41ForCausalLM
+(MainProcess pid=2546059) INFO 11-21 21:54:34 [config/model.py:722] Defaulting to tokenizer_mode='deepseek_v41' for DeepseekV41ForCausalLM
+(MainProcess pid=2546059) INFO 11-21 21:54:34 [config/model.py:2109] Using max model len 2048
+(MainProcess pid=2546059) WARNING 11-21 21:54:34 [config/model.py:1069] Model does not support mm_device_do_normalize, forcing mm_device_do_normalize = False.
+(MainProcess pid=2546059) DEBUG 11-21 21:54:34 [config/model.py:1075] mm_device_do_normalize is disabled.
+(MainProcess pid=2546059) DEBUG 11-21 21:54:34 [utils/flashinfer.py:90] flashinfer-cubin package was not found
+(MainProcess pid=2546059) DEBUG 11-21 21:54:34 [utils/import_utils.py:70] Loading module triton_kernels from /data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/third_party/triton_kernels/__init__.py.
+(MainProcess pid=2546059) DEBUG 11-21 21:54:34 [compilation/decorators.py:222] Inferred dynamic dimensions for forward method of <class 'vllm.model_executor.models.qwen3_dflash.DFlashQwen3Model'>: ['input_ids', 'positions', 'input_embeds']
+(MainProcess pid=2546059) DEBUG 11-21 21:54:34 [compilation/decorators.py:222] Inferred dynamic dimensions for forward method of <class 'vllm.model_executor.models.deepseek_v2.DeepseekV2Model'>: ['input_ids', 'positions', 'intermediate_tensors', 'inputs_embeds']
+(MainProcess pid=2546059) DEBUG 11-21 21:54:34 [compilation/decorators.py:222] Inferred dynamic dimensions for forward method of <class 'vllm.model_executor.models.deepseek_mtp.DeepSeekMTP'>: ['input_ids', 'positions', 'hidden_states', 'intermediate_tensors', 'inputs_embeds']
+(MainProcess pid=2546059) DEBUG 11-21 21:54:34 [tokenizers/registry.py:90] Loading DeepseekV41Tokenizer for tokenizer_mode='deepseek_v41'
+(MainProcess pid=2546059) DEBUG 11-21 21:54:35 [config/model.py:2174] Generative models support chunked prefill.
+(MainProcess pid=2546059) DEBUG 11-21 21:54:35 [config/model.py:2229] Generative models support prefix caching.
+(MainProcess pid=2546059) DEBUG 11-21 21:54:35 [engine/arg_utils.py:2931] Enabling chunked prefill by default
+(MainProcess pid=2546059) DEBUG 11-21 21:54:35 [config/parallel.py:1031] Defaulting to use mp for distributed inference
+(MainProcess pid=2546059) INFO 11-21 21:54:37 [config/scheduler.py:308] Chunked prefill is enabled with max_num_batched_tokens=2048.
+(MainProcess pid=2546059) INFO 11-21 21:54:37 [config/vllm.py:1403] Resolved Engram configuration: EngramConfig(cpu_offload=True, embedding_across_dp=False, dp_shared_memory=False, use_thp=False)
+(MainProcess pid=2546059) WARNING 11-21 21:54:37 [config/vllm.py:1706] Enforce eager set, disabling torch.compile, CUDAGraphs, and JIT kernel warmup. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none and --kernel_config.enable_jit_warmup=False
+(MainProcess pid=2546059) INFO 11-21 21:54:37 [config/vllm.py:843] Auto-enabling VLLM_USE_BREAKABLE_CUDAGRAPH=1. Set VLLM_USE_BREAKABLE_CUDAGRAPH=0 to opt out.
+(MainProcess pid=2546059) DEBUG 11-21 21:54:37 [config/kernel.py:390] Setting platform-specific IR op priority defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native']), user-defined: IrOpPriorityConfig(rms_norm=[], fused_add_rms_norm=[], gelu_and_mul_sparse=[])
+(MainProcess pid=2546059) INFO 11-21 21:54:37 [config/kernel.py:408] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(MainProcess pid=2546059) INFO 11-21 21:54:37 [config/vllm.py:1968] Cudagraph is disabled under eager mode
+(MainProcess pid=2546059) INFO 11-21 21:54:38 [config/compilation.py:331] Enabled custom fusions: norm_quant, act_quant, allreduce_rms
+(MainProcess pid=2546059) DEBUG 11-21 21:54:38 [v1/engine/llm_engine.py:181] Enabling multiprocessing for LLMEngine.
+(MainProcess pid=2546059) DEBUG 11-21 21:54:38 [renderers/registry.py:60] Loading DeepseekV4Renderer for renderer_mode='deepseek_v41'
+(MainProcess pid=2546059) DEBUG 11-21 21:54:38 [utils/torch_utils.py:307] OMP_NUM_THREADS is not set; defaulting Torch threads to 1.
+(MainProcess pid=2546059) DEBUG 11-21 21:54:38 [v1/worker/.../logits_processor/loader.py:48] No logitsprocs plugins installed (group vllm.logits_processors).
+(MainProcess pid=2546059) WARNING 11-21 21:54:38 [utils/system_utils.py:152] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reasons: CUDA is initialized
+(MainProcess pid=2546059) DEBUG 11-21 21:54:38 [renderers/base.py:274] Warming up multi-modal processing...
+(MainProcess pid=2546059) INFO 11-21 21:54:38 [renderers/base.py:255] Multi-modal warmup completed in 0.059s
+(MainProcess pid=2546059) DEBUG 11-21 21:54:48 [v1/engine/utils.py:1318] Waiting for 1 local, 0 remote core engine proc(s) to connect.
+(MainProcess pid=2546059) DEBUG 11-21 21:54:58 [v1/engine/utils.py:1318] Waiting for 1 local, 0 remote core engine proc(s) to connect.
+(EngineCore pid=2588427) DEBUG 11-21 21:55:03 [v1/engine/core.py:1328] Waiting for init message from front-end.
+(MainProcess pid=2546059) DEBUG 11-21 21:55:03 [v1/engine/utils.py:1441] HELLO from local core engine process 0.
+(EngineCore pid=2588427) DEBUG 11-21 21:55:03 [v1/engine/core.py:1339] Received init message: EngineHandshakeMetadata(addresses=EngineZmqAddresses(inputs=['ipc:///tmp/003a8382-7d10-484b-ab06-6755984a7a42'], outputs=['ipc:///tmp/9f694cd9-5781-4bd0-9cab-ed7075328654'], coordinator_input=None, coordinator_output=None, frontend_stats_publish_address=None), parallel_config={})
+(EngineCore pid=2588427) DEBUG 11-21 21:55:03 [v1/engine/core.py:1133] Has DP Coordinator: False, stats publish address: None
+(EngineCore pid=2588427) DEBUG 11-21 21:55:03 [plugins/__init__.py:52] Available plugins for group vllm.general_plugins:
+(EngineCore pid=2588427) DEBUG 11-21 21:55:03 [plugins/__init__.py:54] - lora_filesystem_resolver -> vllm.plugins.lora_resolvers.filesystem_resolver:register_filesystem_resolver
+(EngineCore pid=2588427) DEBUG 11-21 21:55:03 [plugins/__init__.py:54] - lora_hf_hub_resolver -> vllm.plugins.lora_resolvers.hf_hub_resolver:register_hf_hub_resolver
+(EngineCore pid=2588427) DEBUG 11-21 21:55:03 [plugins/__init__.py:57] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+(EngineCore pid=2588427) INFO 11-21 21:55:03 [v1/engine/core.py:129] Initializing a V1 LLM engine (v0.31.0) with config: model='/data0/home/admin/workspace/megamoe/native-v41-KO1hTbTj/model', speculative_config=None, tokenizer='/data0/home/admin/workspace/megamoe/native-v41-KO1hTbTj/model', skip_tokenizer_init=False, tokenizer_mode=deepseek_v41, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=2048, download_dir=None, load_format=auto, tensor_parallel_size=8, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=deepseek_v4_fp8, quantization_config=None, enforce_eager=True, aux_output_config=AuxOutputConfig(enable_return_routed_experts=False, max_bytes=None), kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, per_request_spec_decode_metrics='none', kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=0, served_model_name=/data0/home/admin/workspace/megamoe/native-v41-KO1hTbTj/model, enable_prefix_caching=False, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.NONE: 0>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['+quant_fp8', 'all', '+quant_fp8'], 'ir_enable_torch_wrap': False, 'splitting_ops': [], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [409, 2048], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.NONE: 0>, 'cudagraph_num_of_warmups': 0, 'cudagraph_capture_sizes': [], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': True, 'enable_qk_norm_rope_fusion': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False, 'fuse_qk_norm_rope_kvcache': False}, 'max_cudagraph_capture_size': 0, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native']), enable_flashinfer_autotune=False, enable_cutedsl_warmup=True, enable_jit_warmup=False, moe_backend='deep_gemm_mega_moe', sparse_indexer_topk_backend='auto', linear_backend='auto', linear_backend_per_quant=None)
+(EngineCore pid=2588427) DEBUG 11-21 21:55:03 [v1/executor/multiproc_executor.py:1125] Set OMP_NUM_THREADS=32 for 8 worker process(es).
+(EngineCore pid=2588427) INFO 11-21 21:55:03 [v1/executor/multiproc_executor.py:153] DP group leader: node_rank=0, node_rank_within_dp=0, master_addr=127.0.0.1, mq_connect_ip=11.163.39.114 (local), world_size=8, local_world_size=8
+(EngineCore pid=2588427) DEBUG 11-21 21:55:03 [distributed/device_communicators/shm_broadcast.py:512] Binding to ipc:///tmp/17d26d4b-1da5-4804-a221-fe11af2717f4
+(EngineCore pid=2588427) DEBUG 11-21 21:55:03 [distributed/device_communicators/shm_broadcast.py:565] vLLM message queue communication handle: Handle(local_reader_ranks=[0, 1, 2, 3, 4, 5, 6, 7], buffer_handle=(8, 16777216, 10, 'psm_a9ed0c87'), local_subscribe_addr='ipc:///tmp/17d26d4b-1da5-4804-a221-fe11af2717f4', local_notify_addr='ipc:///tmp/a8c69e1e-c6a8-43ae-af26-e9ed9927b180', remote_subscribe_addr=None, remote_addr_ipv6=False)
+(MainProcess pid=2546059) DEBUG 11-21 21:55:13 [v1/engine/utils.py:1323] Waiting for 1 local, 0 remote core engine proc(s) to start.
+(VllmWorker-4 pid=2612013) DEBUG 11-21 21:55:13 [plugins/__init__.py:52] Available plugins for group vllm.general_plugins:
+(VllmWorker-4 pid=2612013) DEBUG 11-21 21:55:13 [plugins/__init__.py:54] - lora_filesystem_resolver -> vllm.plugins.lora_resolvers.filesystem_resolver:register_filesystem_resolver
+(VllmWorker-4 pid=2612013) DEBUG 11-21 21:55:13 [plugins/__init__.py:54] - lora_hf_hub_resolver -> vllm.plugins.lora_resolvers.hf_hub_resolver:register_hf_hub_resolver
+(VllmWorker-4 pid=2612013) DEBUG 11-21 21:55:13 [plugins/__init__.py:57] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+(VllmWorker-4 pid=2612013) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for rms_norm to ['vllm_c', 'native']
+(VllmWorker-4 pid=2612013) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.rms_norm set to ['vllm_c', 'native']
+(VllmWorker-4 pid=2612013) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for fused_add_rms_norm to ['vllm_c', 'native']
+(VllmWorker-4 pid=2612013) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.fused_add_rms_norm set to ['vllm_c', 'native']
+(VllmWorker-4 pid=2612013) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for gelu_and_mul_sparse to ['triton', 'native']
+(VllmWorker-4 pid=2612013) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.gelu_and_mul_sparse set to ['triton', 'native']
+(VllmWorker-6 pid=2612017) DEBUG 11-21 21:55:14 [plugins/__init__.py:52] Available plugins for group vllm.general_plugins:
+(VllmWorker-6 pid=2612017) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_filesystem_resolver -> vllm.plugins.lora_resolvers.filesystem_resolver:register_filesystem_resolver
+(VllmWorker-6 pid=2612017) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_hf_hub_resolver -> vllm.plugins.lora_resolvers.hf_hub_resolver:register_hf_hub_resolver
+(VllmWorker-6 pid=2612017) DEBUG 11-21 21:55:14 [plugins/__init__.py:57] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+(VllmWorker-7 pid=2612019) DEBUG 11-21 21:55:14 [plugins/__init__.py:52] Available plugins for group vllm.general_plugins:
+(VllmWorker-7 pid=2612019) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_filesystem_resolver -> vllm.plugins.lora_resolvers.filesystem_resolver:register_filesystem_resolver
+(VllmWorker-7 pid=2612019) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_hf_hub_resolver -> vllm.plugins.lora_resolvers.hf_hub_resolver:register_hf_hub_resolver
+(VllmWorker-7 pid=2612019) DEBUG 11-21 21:55:14 [plugins/__init__.py:57] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+(VllmWorker-3 pid=2612011) DEBUG 11-21 21:55:14 [plugins/__init__.py:52] Available plugins for group vllm.general_plugins:
+(VllmWorker-3 pid=2612011) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_filesystem_resolver -> vllm.plugins.lora_resolvers.filesystem_resolver:register_filesystem_resolver
+(VllmWorker-3 pid=2612011) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_hf_hub_resolver -> vllm.plugins.lora_resolvers.hf_hub_resolver:register_hf_hub_resolver
+(VllmWorker-3 pid=2612011) DEBUG 11-21 21:55:14 [plugins/__init__.py:57] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+(VllmWorker-0 pid=2612002) DEBUG 11-21 21:55:14 [plugins/__init__.py:52] Available plugins for group vllm.general_plugins:
+(VllmWorker-0 pid=2612002) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_filesystem_resolver -> vllm.plugins.lora_resolvers.filesystem_resolver:register_filesystem_resolver
+(VllmWorker-0 pid=2612002) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_hf_hub_resolver -> vllm.plugins.lora_resolvers.hf_hub_resolver:register_hf_hub_resolver
+(VllmWorker-0 pid=2612002) DEBUG 11-21 21:55:14 [plugins/__init__.py:57] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+(VllmWorker-1 pid=2612004) DEBUG 11-21 21:55:14 [plugins/__init__.py:52] Available plugins for group vllm.general_plugins:
+(VllmWorker-1 pid=2612004) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_filesystem_resolver -> vllm.plugins.lora_resolvers.filesystem_resolver:register_filesystem_resolver
+(VllmWorker-1 pid=2612004) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_hf_hub_resolver -> vllm.plugins.lora_resolvers.hf_hub_resolver:register_hf_hub_resolver
+(VllmWorker-1 pid=2612004) DEBUG 11-21 21:55:14 [plugins/__init__.py:57] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+(VllmWorker-2 pid=2612008) DEBUG 11-21 21:55:14 [plugins/__init__.py:52] Available plugins for group vllm.general_plugins:
+(VllmWorker-2 pid=2612008) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_filesystem_resolver -> vllm.plugins.lora_resolvers.filesystem_resolver:register_filesystem_resolver
+(VllmWorker-2 pid=2612008) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_hf_hub_resolver -> vllm.plugins.lora_resolvers.hf_hub_resolver:register_hf_hub_resolver
+(VllmWorker-2 pid=2612008) DEBUG 11-21 21:55:14 [plugins/__init__.py:57] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+(VllmWorker-6 pid=2612017) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for rms_norm to ['vllm_c', 'native']
+(VllmWorker-6 pid=2612017) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.rms_norm set to ['vllm_c', 'native']
+(VllmWorker-6 pid=2612017) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for fused_add_rms_norm to ['vllm_c', 'native']
+(VllmWorker-6 pid=2612017) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.fused_add_rms_norm set to ['vllm_c', 'native']
+(VllmWorker-6 pid=2612017) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for gelu_and_mul_sparse to ['triton', 'native']
+(VllmWorker-6 pid=2612017) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.gelu_and_mul_sparse set to ['triton', 'native']
+(VllmWorker-7 pid=2612019) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for rms_norm to ['vllm_c', 'native']
+(VllmWorker-7 pid=2612019) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.rms_norm set to ['vllm_c', 'native']
+(VllmWorker-7 pid=2612019) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for fused_add_rms_norm to ['vllm_c', 'native']
+(VllmWorker-7 pid=2612019) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.fused_add_rms_norm set to ['vllm_c', 'native']
+(VllmWorker-7 pid=2612019) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for gelu_and_mul_sparse to ['triton', 'native']
+(VllmWorker-7 pid=2612019) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.gelu_and_mul_sparse set to ['triton', 'native']
+(VllmWorker-3 pid=2612011) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for rms_norm to ['vllm_c', 'native']
+(VllmWorker-3 pid=2612011) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.rms_norm set to ['vllm_c', 'native']
+(VllmWorker-3 pid=2612011) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for fused_add_rms_norm to ['vllm_c', 'native']
+(VllmWorker-3 pid=2612011) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.fused_add_rms_norm set to ['vllm_c', 'native']
+(VllmWorker-3 pid=2612011) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for gelu_and_mul_sparse to ['triton', 'native']
+(VllmWorker-3 pid=2612011) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.gelu_and_mul_sparse set to ['triton', 'native']
+(VllmWorker-1 pid=2612004) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for rms_norm to ['vllm_c', 'native']
+(VllmWorker-1 pid=2612004) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.rms_norm set to ['vllm_c', 'native']
+(VllmWorker-1 pid=2612004) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for fused_add_rms_norm to ['vllm_c', 'native']
+(VllmWorker-1 pid=2612004) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.fused_add_rms_norm set to ['vllm_c', 'native']
+(VllmWorker-1 pid=2612004) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for gelu_and_mul_sparse to ['triton', 'native']
+(VllmWorker-1 pid=2612004) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.gelu_and_mul_sparse set to ['triton', 'native']
+(VllmWorker-5 pid=2612014) DEBUG 11-21 21:55:14 [plugins/__init__.py:52] Available plugins for group vllm.general_plugins:
+(VllmWorker-5 pid=2612014) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_filesystem_resolver -> vllm.plugins.lora_resolvers.filesystem_resolver:register_filesystem_resolver
+(VllmWorker-5 pid=2612014) DEBUG 11-21 21:55:14 [plugins/__init__.py:54] - lora_hf_hub_resolver -> vllm.plugins.lora_resolvers.hf_hub_resolver:register_hf_hub_resolver
+(VllmWorker-5 pid=2612014) DEBUG 11-21 21:55:14 [plugins/__init__.py:57] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+(VllmWorker-2 pid=2612008) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for rms_norm to ['vllm_c', 'native']
+(VllmWorker-2 pid=2612008) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.rms_norm set to ['vllm_c', 'native']
+(VllmWorker-2 pid=2612008) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for fused_add_rms_norm to ['vllm_c', 'native']
+(VllmWorker-2 pid=2612008) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.fused_add_rms_norm set to ['vllm_c', 'native']
+(VllmWorker-2 pid=2612008) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for gelu_and_mul_sparse to ['triton', 'native']
+(VllmWorker-2 pid=2612008) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.gelu_and_mul_sparse set to ['triton', 'native']
+(VllmWorker-0 pid=2612002) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for rms_norm to ['vllm_c', 'native']
+(VllmWorker-0 pid=2612002) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.rms_norm set to ['vllm_c', 'native']
+(VllmWorker-0 pid=2612002) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for fused_add_rms_norm to ['vllm_c', 'native']
+(VllmWorker-0 pid=2612002) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.fused_add_rms_norm set to ['vllm_c', 'native']
+(VllmWorker-0 pid=2612002) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for gelu_and_mul_sparse to ['triton', 'native']
+(VllmWorker-0 pid=2612002) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.gelu_and_mul_sparse set to ['triton', 'native']
+(VllmWorker-5 pid=2612014) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for rms_norm to ['vllm_c', 'native']
+(VllmWorker-5 pid=2612014) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.rms_norm set to ['vllm_c', 'native']
+(VllmWorker-5 pid=2612014) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for fused_add_rms_norm to ['vllm_c', 'native']
+(VllmWorker-5 pid=2612014) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.fused_add_rms_norm set to ['vllm_c', 'native']
+(VllmWorker-5 pid=2612014) DEBUG 11-21 21:55:14 [config/kernel.py:85] Setting IR op priority for gelu_and_mul_sparse to ['triton', 'native']
+(VllmWorker-5 pid=2612014) DEBUG 11-21 21:55:14 [ir/op.py:414] Priority for vllm.ir.gelu_and_mul_sparse set to ['triton', 'native']
+(Worker pid=2612002) DEBUG 11-21 21:55:21 [distributed/parallel_state.py:1781] world_size=8 rank=0 local_rank=0 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612002) INFO 11-21 21:55:21 [distributed/parallel_state.py:1825] world_size=8 rank=0 local_rank=0 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612013) DEBUG 11-21 21:55:23 [distributed/parallel_state.py:1781] world_size=8 rank=4 local_rank=4 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612013) INFO 11-21 21:55:23 [distributed/parallel_state.py:1825] world_size=8 rank=4 local_rank=4 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(MainProcess pid=2546059) DEBUG 11-21 21:55:23 [v1/engine/utils.py:1323] Waiting for 1 local, 0 remote core engine proc(s) to start.
+(Worker pid=2612011) DEBUG 11-21 21:55:24 [distributed/parallel_state.py:1781] world_size=8 rank=3 local_rank=3 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612011) INFO 11-21 21:55:24 [distributed/parallel_state.py:1825] world_size=8 rank=3 local_rank=3 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612017) DEBUG 11-21 21:55:24 [distributed/parallel_state.py:1781] world_size=8 rank=6 local_rank=6 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612017) INFO 11-21 21:55:24 [distributed/parallel_state.py:1825] world_size=8 rank=6 local_rank=6 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612004) DEBUG 11-21 21:55:24 [distributed/parallel_state.py:1781] world_size=8 rank=1 local_rank=1 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612004) INFO 11-21 21:55:24 [distributed/parallel_state.py:1825] world_size=8 rank=1 local_rank=1 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612019) DEBUG 11-21 21:55:25 [distributed/parallel_state.py:1781] world_size=8 rank=7 local_rank=7 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612019) INFO 11-21 21:55:25 [distributed/parallel_state.py:1825] world_size=8 rank=7 local_rank=7 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612014) DEBUG 11-21 21:55:25 [distributed/parallel_state.py:1781] world_size=8 rank=5 local_rank=5 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612014) INFO 11-21 21:55:25 [distributed/parallel_state.py:1825] world_size=8 rank=5 local_rank=5 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612008) DEBUG 11-21 21:55:25 [distributed/parallel_state.py:1781] world_size=8 rank=2 local_rank=2 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612008) INFO 11-21 21:55:25 [distributed/parallel_state.py:1825] world_size=8 rank=2 local_rank=2 distributed_init_method=file:///tmp/vllm_dist_5e9d554b357c448c9f9db80a8a4bdde6 backend=nccl
+(Worker pid=2612002) DEBUG 11-21 21:55:25 [distributed/parallel_state.py:1914] Detected 1 nodes in the distributed environment
+(Worker pid=2612017) DEBUG 11-21 21:55:25 [distributed/parallel_state.py:1914] Detected 1 nodes in the distributed environment
+(Worker pid=2612019) DEBUG 11-21 21:55:25 [distributed/parallel_state.py:1914] Detected 1 nodes in the distributed environment
+(Worker pid=2612008) DEBUG 11-21 21:55:25 [distributed/parallel_state.py:1914] Detected 1 nodes in the distributed environment
+(Worker pid=2612004) DEBUG 11-21 21:55:25 [distributed/parallel_state.py:1914] Detected 1 nodes in the distributed environment
+(Worker pid=2612014) DEBUG 11-21 21:55:25 [distributed/parallel_state.py:1914] Detected 1 nodes in the distributed environment
+(Worker pid=2612013) DEBUG 11-21 21:55:25 [distributed/parallel_state.py:1914] Detected 1 nodes in the distributed environment
+(Worker pid=2612011) DEBUG 11-21 21:55:25 [distributed/parallel_state.py:1914] Detected 1 nodes in the distributed environment
+(Worker pid=2612002) DEBUG 11-21 21:55:26 [utils/nccl.py:35] Found nccl from library libnccl.so.2
+(Worker pid=2612002) INFO 11-21 21:55:26 [distributed/device_communicators/pynccl.py:148] vLLM is using nccl==2.29.7
+(MainProcess pid=2546059) DEBUG 11-21 21:55:33 [v1/engine/utils.py:1323] Waiting for 1 local, 0 remote core engine proc(s) to start.
+(Worker pid=2612002) DEBUG 11-21 21:55:41 [distributed/device_communicators/flashinfer_all_reduce.py:168] Auto-selected flashinfer allreduce backend: mnnvl
+(Worker pid=2612011) DEBUG 11-21 21:55:41 [distributed/device_communicators/custom_all_reduce.py:91] Skipping P2P check and trusting the driver's P2P report.
+(Worker pid=2612008) DEBUG 11-21 21:55:41 [distributed/device_communicators/custom_all_reduce.py:91] Skipping P2P check and trusting the driver's P2P report.
+(Worker pid=2612004) DEBUG 11-21 21:55:41 [distributed/device_communicators/custom_all_reduce.py:91] Skipping P2P check and trusting the driver's P2P report.
+(Worker pid=2612013) DEBUG 11-21 21:55:41 [distributed/device_communicators/custom_all_reduce.py:91] Skipping P2P check and trusting the driver's P2P report.
+(Worker pid=2612017) DEBUG 11-21 21:55:41 [distributed/device_communicators/custom_all_reduce.py:91] Skipping P2P check and trusting the driver's P2P report.
+(Worker pid=2612002) DEBUG 11-21 21:55:41 [distributed/device_communicators/custom_all_reduce.py:91] Skipping P2P check and trusting the driver's P2P report.
+(Worker pid=2612014) DEBUG 11-21 21:55:41 [distributed/device_communicators/custom_all_reduce.py:91] Skipping P2P check and trusting the driver's P2P report.
+(Worker pid=2612019) DEBUG 11-21 21:55:41 [distributed/device_communicators/custom_all_reduce.py:91] Skipping P2P check and trusting the driver's P2P report.
+(Worker pid=2612002) INFO 11-21 21:55:41 [distributed/device_communicators/cuda_communicator.py:326] Using ['FLASHINFER', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'] all-reduce backends (in dispatch order) for group 'tp:0' out of potential backends: ['FLASHINFER_PCIE_IPC', 'FLASHINFER', 'NCCL_SYMM_MEM', 'QUICK_REDUCE', 'AITER_CUSTOM', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'].
+(Worker pid=2612002) DEBUG 11-21 21:55:41 [distributed/device_communicators/shm_broadcast.py:512] Binding to ipc:///tmp/6ff982e9-1cac-470a-aa73-0547b56f055e
+(Worker pid=2612002) DEBUG 11-21 21:55:41 [distributed/device_communicators/shm_broadcast.py:565] vLLM message queue communication handle: Handle(local_reader_ranks=[1, 2, 3, 4, 5, 6, 7], buffer_handle=(7, 4194304, 6, 'psm_ddb8ebbf'), local_subscribe_addr='ipc:///tmp/6ff982e9-1cac-470a-aa73-0547b56f055e', local_notify_addr='ipc:///tmp/b3834b7d-6c0a-4689-b3c5-00efc4a463b5', remote_subscribe_addr=None, remote_addr_ipv6=False)
+(Worker pid=2612004) DEBUG 11-21 21:55:41 [distributed/device_communicators/shm_broadcast.py:589] Connecting to ipc:///tmp/6ff982e9-1cac-470a-aa73-0547b56f055e
+(Worker pid=2612011) DEBUG 11-21 21:55:41 [distributed/device_communicators/shm_broadcast.py:589] Connecting to ipc:///tmp/6ff982e9-1cac-470a-aa73-0547b56f055e
+(Worker pid=2612013) DEBUG 11-21 21:55:41 [distributed/device_communicators/shm_broadcast.py:589] Connecting to ipc:///tmp/6ff982e9-1cac-470a-aa73-0547b56f055e
+(Worker pid=2612008) DEBUG 11-21 21:55:41 [distributed/device_communicators/shm_broadcast.py:589] Connecting to ipc:///tmp/6ff982e9-1cac-470a-aa73-0547b56f055e
+(Worker pid=2612017) DEBUG 11-21 21:55:41 [distributed/device_communicators/shm_broadcast.py:589] Connecting to ipc:///tmp/6ff982e9-1cac-470a-aa73-0547b56f055e
+(Worker pid=2612014) DEBUG 11-21 21:55:41 [distributed/device_communicators/shm_broadcast.py:589] Connecting to ipc:///tmp/6ff982e9-1cac-470a-aa73-0547b56f055e
+(Worker pid=2612019) DEBUG 11-21 21:55:41 [distributed/device_communicators/shm_broadcast.py:589] Connecting to ipc:///tmp/6ff982e9-1cac-470a-aa73-0547b56f055e
+(MainProcess pid=2546059) DEBUG 11-21 21:55:43 [v1/engine/utils.py:1323] Waiting for 1 local, 0 remote core engine proc(s) to start.
+(Worker pid=2612002) INFO 11-21 21:55:51 [distributed/device_communicators/cuda_communicator.py:326] Using ['PYNCCL'] all-reduce backends (in dispatch order) for group 'ep:0' out of potential backends: ['FLASHINFER_PCIE_IPC', 'FLASHINFER', 'NCCL_SYMM_MEM', 'QUICK_REDUCE', 'AITER_CUSTOM', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'].
+(Worker pid=2612002) INFO 11-21 21:55:51 [distributed/parallel_state.py:2269] rank 0 in world size 8 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, ETP rank 0, EP rank 0, EPLB rank N/A
+(Worker pid=2612002) INFO 11-21 21:55:51 [v1/worker/gpu_worker.py:479] Using V2 Model Runner
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] WorkerProc failed to start.
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] Traceback (most recent call last):
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 915, in worker_main
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     worker = WorkerProc(*args, **kwargs)
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 674, in __init__
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/worker_base.py", line 343, in init_device
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()  # type: ignore
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     ^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 490, in init_device
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.requested_memory = request_memory(init_snapshot, self.cache_config)
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/utils.py", line 548, in request_memory
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     raise ValueError(
+(Worker pid=2612011) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] ValueError: Free memory on device cuda:3 (179.36/267.69 GiB) on startup is less than desired GPU memory utilization (0.8, 214.15 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.
+(EngineCore pid=2588427) INFO 11-21 21:55:51 [v1/executor/multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] WorkerProc failed to start.
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] Traceback (most recent call last):
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 915, in worker_main
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     worker = WorkerProc(*args, **kwargs)
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 674, in __init__
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/worker_base.py", line 343, in init_device
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()  # type: ignore
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     ^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 490, in init_device
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.requested_memory = request_memory(init_snapshot, self.cache_config)
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/utils.py", line 548, in request_memory
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     raise ValueError(
+(Worker pid=2612002) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] ValueError: Free memory on device cuda:0 (188.44/267.69 GiB) on startup is less than desired GPU memory utilization (0.8, 214.15 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] WorkerProc failed to start.
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] Traceback (most recent call last):
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 915, in worker_main
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     worker = WorkerProc(*args, **kwargs)
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 674, in __init__
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/worker_base.py", line 343, in init_device
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()  # type: ignore
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     ^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 490, in init_device
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.requested_memory = request_memory(init_snapshot, self.cache_config)
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/utils.py", line 548, in request_memory
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     raise ValueError(
+(Worker pid=2612004) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] ValueError: Free memory on device cuda:1 (198.39/267.69 GiB) on startup is less than desired GPU memory utilization (0.8, 214.15 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] WorkerProc failed to start.
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] Traceback (most recent call last):
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 915, in worker_main
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     worker = WorkerProc(*args, **kwargs)
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 674, in __init__
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/worker_base.py", line 343, in init_device
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()  # type: ignore
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     ^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 490, in init_device
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.requested_memory = request_memory(init_snapshot, self.cache_config)
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/utils.py", line 548, in request_memory
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     raise ValueError(
+(Worker pid=2612008) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] ValueError: Free memory on device cuda:2 (181.96/267.69 GiB) on startup is less than desired GPU memory utilization (0.8, 214.15 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] WorkerProc failed to start.
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] Traceback (most recent call last):
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 915, in worker_main
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     worker = WorkerProc(*args, **kwargs)
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 674, in __init__
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/worker_base.py", line 343, in init_device
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()  # type: ignore
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     ^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 490, in init_device
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.requested_memory = request_memory(init_snapshot, self.cache_config)
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/utils.py", line 548, in request_memory
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     raise ValueError(
+(Worker pid=2612017) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] ValueError: Free memory on device cuda:6 (192.58/267.69 GiB) on startup is less than desired GPU memory utilization (0.8, 214.15 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] WorkerProc failed to start.
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] Traceback (most recent call last):
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 915, in worker_main
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     worker = WorkerProc(*args, **kwargs)
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 674, in __init__
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/worker_base.py", line 343, in init_device
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()  # type: ignore
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     ^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 490, in init_device
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.requested_memory = request_memory(init_snapshot, self.cache_config)
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/utils.py", line 548, in request_memory
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     raise ValueError(
+(Worker pid=2612014) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] ValueError: Free memory on device cuda:5 (187.64/267.69 GiB) on startup is less than desired GPU memory utilization (0.8, 214.15 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] WorkerProc failed to start.
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] Traceback (most recent call last):
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 915, in worker_main
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     worker = WorkerProc(*args, **kwargs)
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 674, in __init__
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/worker_base.py", line 343, in init_device
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()  # type: ignore
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     ^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 490, in init_device
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.requested_memory = request_memory(init_snapshot, self.cache_config)
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/utils.py", line 548, in request_memory
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     raise ValueError(
+(Worker pid=2612019) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] ValueError: Free memory on device cuda:7 (190.03/267.69 GiB) on startup is less than desired GPU memory utilization (0.8, 214.15 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] WorkerProc failed to start.
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] Traceback (most recent call last):
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 915, in worker_main
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     worker = WorkerProc(*args, **kwargs)
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 674, in __init__
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/worker_base.py", line 343, in init_device
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.worker.init_device()  # type: ignore
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     ^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 490, in init_device
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     self.requested_memory = request_memory(init_snapshot, self.cache_config)
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/worker/utils.py", line 548, in request_memory
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948]     raise ValueError(
+(Worker pid=2612013) ERROR 11-21 21:55:51 [v1/executor/multiproc_executor.py:948] ValueError: Free memory on device cuda:4 (180.73/267.69 GiB) on startup is less than desired GPU memory utilization (0.8, 214.15 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.
+[rank0]:[W1121 21:55:52.032787436 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+(MainProcess pid=2546059) DEBUG 11-21 21:55:53 [v1/engine/utils.py:1323] Waiting for 1 local, 0 remote core engine proc(s) to start.
+(EngineCore pid=2588427) WARNING 11-21 21:55:56 [v1/executor/multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=0
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433] EngineCore failed to start.
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433] Traceback (most recent call last):
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 1395, in run_engine_core
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]     engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]     return func(*args, **kwargs)
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 1151, in __init__
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]     super().__init__(
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 140, in __init__
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]     self.model_executor = executor_class(vllm_config)
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 116, in __init__
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]     super().__init__(vllm_config)
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]     return func(*args, **kwargs)
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/abstract.py", line 113, in __init__
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]     self._init_executor()
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 214, in _init_executor
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]     self.workers = WorkerProc.wait_for_ready(unready_workers)
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 810, in wait_for_ready
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433]     raise e from None
+(EngineCore pid=2588427) ERROR 11-21 21:55:56 [v1/engine/core.py:1433] Exception: WorkerProc initialization failed due to an exception in a background process. See stack trace for root cause.
+Process EngineCore:
+Traceback (most recent call last):
+  File "/usr/lib64/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/usr/lib64/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 1437, in run_engine_core
+    raise e
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 1395, in run_engine_core
+    engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 1151, in __init__
+    super().__init__(
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 140, in __init__
+    self.model_executor = executor_class(vllm_config)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 116, in __init__
+    super().__init__(vllm_config)
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/abstract.py", line 113, in __init__
+    self._init_executor()
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 214, in _init_executor
+    self.workers = WorkerProc.wait_for_ready(unready_workers)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 810, in wait_for_ready
+    raise e from None
+Exception: WorkerProc initialization failed due to an exception in a background process. See stack trace for root cause.
+(EngineCore pid=2588427) DEBUG 11-21 21:55:56 [v1/executor/multiproc_executor.py:508] [shutdown] Executor: start worker_count=0
+(EngineCore pid=2588427) DEBUG 11-21 21:55:56 [v1/executor/multiproc_executor.py:537] [shutdown] Executor: complete
+(MainProcess pid=2546059) DEBUG 11-21 21:55:57 [v1/engine/core_client.py:490] [shutdown] MPClient: background resource cleanup start
+(MainProcess pid=2546059) DEBUG 11-21 21:55:57 [v1/utils.py:628] [shutdown] Process manager: start process_count=1 timeout=5s names=EngineCore
+(MainProcess pid=2546059) INFO 11-21 21:55:57 [v1/utils.py:638] [shutdown] Process manager: send sigterm to process EngineCore
+(MainProcess pid=2546059) DEBUG 11-21 21:55:57 [v1/utils.py:670] [shutdown] Process manager: complete
+(MainProcess pid=2546059) DEBUG 11-21 21:55:57 [v1/engine/core_client.py:547] [shutdown] MPClient: background resource cleanup complete
+Traceback (most recent call last):
+  File "/tmp/sm100-native-retry-20261121-1945/scripts/sm100/v41_native_smoke.py", line 72, in <module>
+    main()
+  File "/tmp/sm100-native-retry-20261121-1945/scripts/sm100/v41_native_smoke.py", line 28, in main
+    model = LLM(
+            ^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/entrypoints/llm.py", line 344, in __init__
+    self.llm_engine = LLMEngine.from_engine_args(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 185, in from_engine_args
+    return cls(
+           ^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 111, in __init__
+    self.engine_core = EngineCoreClient.make_client(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 126, in make_client
+    return SyncMPClient(
+           ^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 917, in __init__
+    super().__init__(
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 674, in __init__
+    with launch_core_engines(
+         ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/contextlib.py", line 144, in __exit__
+    next(self.gen)
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/utils.py", line 1268, in launch_core_engines
+    wait_for_engine_startup(
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/utils.py", line 1348, in wait_for_engine_startup
+    raise RuntimeError(
+RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+(MainProcess pid=2546059) DEBUG 11-21 21:55:57 [contextlib.py:478] [shutdown] DeepseekV4Renderer
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '

@@ -1,0 +1,126 @@
+START backend=auto at 2026-11-21T21:42:18+08:00
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 1078, in collective_rpc
+    return self.call_utility("collective_rpc", method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 1006, in call_utility
+    self._send_input(EngineCoreRequestType.UTILITY, (0, call_id, method, args))
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 996, in _send_input
+    msg = (self.core_engine, request_type.value, *self.encoder.encode(request))
+                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/serial_utils.py", line 170, in encode
+    bufs[0] = self.encoder.encode(obj)
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/serial_utils.py", line 221, in enc_hook
+    raise TypeError(
+TypeError: Object of type <class 'function'> is not serializableSet VLLM_ALLOW_INSECURE_SERIALIZATION=1 to allow fallback to pickle-based serialization.
+(MainProcess pid=1450290) DEBUG 11-21 21:46:05 [v1/utils.py:628] [shutdown] Process manager: start process_count=1 timeout=5.0s names=EngineCore
+(MainProcess pid=1450290) INFO 11-21 21:46:05 [v1/utils.py:638] [shutdown] Process manager: send sigterm to process EngineCore
+(EngineCore pid=1466579) INFO 11-21 21:46:05 [v1/engine/core.py:1409] [shutdown] EngineCore: trigger received signal=SIGTERM
+(EngineCore pid=1466579) DEBUG 11-21 21:46:05 [v1/engine/core.py:1519] EngineCore loop active.
+(EngineCore pid=1466579) INFO 11-21 21:46:05 [v1/engine/core.py:1558] [shutdown] EngineCore: start mode=abort timeout=0s
+(EngineCore pid=1466579) INFO 11-21 21:46:05 [v1/engine/core.py:1589] [shutdown] EngineCore: request processing complete; starting resource teardown
+(EngineCore pid=1466579) INFO 11-21 21:46:05 [v1/engine/core.py:1422] [shutdown] EngineCore: exiting busy loop
+(EngineCore pid=1466579) DEBUG 11-21 21:46:05 [v1/engine/core.py:796] [shutdown] EngineCore: tearing down local resources
+(EngineCore pid=1466579) DEBUG 11-21 21:46:05 [v1/executor/multiproc_executor.py:508] [shutdown] Executor: start worker_count=8
+(EngineCore pid=1466579) INFO 11-21 21:46:05 [v1/executor/multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(Worker_TP0_EP0 pid=1484888) INFO 11-21 21:46:05 [v1/executor/multiproc_executor.py:838] Parent process exited, terminating worker queues
+(Worker_TP1_EP1 pid=1484891) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP3_EP3 pid=1484895) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP2_EP2 pid=1484894) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP7_EP7 pid=1484904) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP5_EP5 pid=1484900) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP6_EP6 pid=1484903) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP4_EP4 pid=1484898) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP1_EP1 pid=1484891) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP0_EP0 pid=1484888) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP3_EP3 pid=1484895) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP2_EP2 pid=1484894) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP7_EP7 pid=1484904) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP5_EP5 pid=1484900) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP6_EP6 pid=1484903) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP4_EP4 pid=1484898) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP0_EP0 pid=1484888) DEBUG 11-21 21:46:05 [v1/executor/multiproc_executor.py:950] [shutdown] WorkerProc: exiting after shutdown request
+(Worker_TP0_EP0 pid=1484888) DEBUG 11-21 21:46:05 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP4_EP4 pid=1484898) DEBUG 11-21 21:46:07 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP7_EP7 pid=1484904) DEBUG 11-21 21:46:07 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP6_EP6 pid=1484903) DEBUG 11-21 21:46:07 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP2_EP2 pid=1484894) DEBUG 11-21 21:46:07 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP1_EP1 pid=1484891) DEBUG 11-21 21:46:07 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP3_EP3 pid=1484895) DEBUG 11-21 21:46:07 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP0_EP0 pid=1484888) DEBUG 11-21 21:46:07 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP5_EP5 pid=1484900) DEBUG 11-21 21:46:07 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(MainProcess pid=1450290) WARNING 11-21 21:46:10 [v1/utils.py:658] [shutdown] Process manager: force killing remaining processes count=1
+(MainProcess pid=1450290) WARNING 11-21 21:46:10 [v1/utils.py:663] [shutdown] Process manager: force killing remaining process EngineCore pid 1466579
+(EngineCore pid=1466579) WARNING 11-21 21:46:10 [v1/executor/multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(EngineCore pid=1466579) DEBUG 11-21 21:46:11 [v1/executor/multiproc_executor.py:310] MultiprocWorkerMonitor: shutdown already initiated
+(MainProcess pid=1450290) DEBUG 11-21 21:46:11 [v1/utils.py:670] [shutdown] Process manager: complete
+(MainProcess pid=1450290) DEBUG 11-21 21:46:11 [v1/engine/core_client.py:490] [shutdown] MPClient: background resource cleanup start
+(MainProcess pid=1450290) DEBUG 11-21 21:46:11 [v1/engine/core_client.py:547] [shutdown] MPClient: background resource cleanup complete
+(MainProcess pid=1450290) DEBUG 11-21 21:46:11 [contextlib.py:478] [shutdown] DeepseekV4Renderer
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+END backend=auto exit=1 at 2026-11-21T21:46:18+08:00
+START backend=deep_gemm_mega_moe at 2026-11-21T21:46:18+08:00
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 1078, in collective_rpc
+    return self.call_utility("collective_rpc", method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 1006, in call_utility
+    self._send_input(EngineCoreRequestType.UTILITY, (0, call_id, method, args))
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/engine/core_client.py", line 996, in _send_input
+    msg = (self.core_engine, request_type.value, *self.encoder.encode(request))
+                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/serial_utils.py", line 170, in encode
+    bufs[0] = self.encoder.encode(obj)
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/serial_utils.py", line 221, in enc_hook
+    raise TypeError(
+TypeError: Object of type <class 'function'> is not serializableSet VLLM_ALLOW_INSECURE_SERIALIZATION=1 to allow fallback to pickle-based serialization.
+(MainProcess pid=1801139) DEBUG 11-21 21:49:35 [v1/utils.py:628] [shutdown] Process manager: start process_count=1 timeout=5.0s names=EngineCore
+(MainProcess pid=1801139) INFO 11-21 21:49:35 [v1/utils.py:638] [shutdown] Process manager: send sigterm to process EngineCore
+(EngineCore pid=1844603) INFO 11-21 21:49:35 [v1/engine/core.py:1409] [shutdown] EngineCore: trigger received signal=SIGTERM
+(EngineCore pid=1844603) DEBUG 11-21 21:49:35 [v1/engine/core.py:1519] EngineCore loop active.
+(EngineCore pid=1844603) INFO 11-21 21:49:35 [v1/engine/core.py:1558] [shutdown] EngineCore: start mode=abort timeout=0s
+(EngineCore pid=1844603) INFO 11-21 21:49:35 [v1/engine/core.py:1589] [shutdown] EngineCore: request processing complete; starting resource teardown
+(EngineCore pid=1844603) INFO 11-21 21:49:35 [v1/engine/core.py:1422] [shutdown] EngineCore: exiting busy loop
+(EngineCore pid=1844603) DEBUG 11-21 21:49:35 [v1/engine/core.py:796] [shutdown] EngineCore: tearing down local resources
+(EngineCore pid=1844603) DEBUG 11-21 21:49:35 [v1/executor/multiproc_executor.py:508] [shutdown] Executor: start worker_count=8
+(EngineCore pid=1844603) INFO 11-21 21:49:35 [v1/executor/multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(Worker_TP2_EP2 pid=1859977) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP6_EP6 pid=1859985) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP5_EP5 pid=1859983) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP0_EP0 pid=1859972) INFO 11-21 21:49:35 [v1/executor/multiproc_executor.py:838] Parent process exited, terminating worker queues
+(Worker_TP7_EP7 pid=1859987) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP4_EP4 pid=1859981) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP3_EP3 pid=1859979) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP1_EP1 pid=1859974) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP6_EP6 pid=1859985) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP5_EP5 pid=1859983) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP2_EP2 pid=1859977) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP0_EP0 pid=1859972) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP7_EP7 pid=1859987) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP4_EP4 pid=1859981) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP3_EP3 pid=1859979) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP1_EP1 pid=1859974) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP0_EP0 pid=1859972) DEBUG 11-21 21:49:35 [v1/executor/multiproc_executor.py:950] [shutdown] WorkerProc: exiting after shutdown request
+(Worker_TP0_EP0 pid=1859972) DEBUG 11-21 21:49:35 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP7_EP7 pid=1859987) DEBUG 11-21 21:49:35 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP4_EP4 pid=1859981) DEBUG 11-21 21:49:35 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP5_EP5 pid=1859983) DEBUG 11-21 21:49:36 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP2_EP2 pid=1859977) DEBUG 11-21 21:49:36 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP0_EP0 pid=1859972) DEBUG 11-21 21:49:36 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP6_EP6 pid=1859985) DEBUG 11-21 21:49:36 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP1_EP1 pid=1859974) DEBUG 11-21 21:49:36 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP3_EP3 pid=1859979) DEBUG 11-21 21:49:36 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(EngineCore pid=1844603) DEBUG 11-21 21:49:39 [v1/executor/multiproc_executor.py:310] MultiprocWorkerMonitor: shutdown already initiated
+(MainProcess pid=1801139) WARNING 11-21 21:49:40 [v1/utils.py:658] [shutdown] Process manager: force killing remaining processes count=1
+(MainProcess pid=1801139) WARNING 11-21 21:49:40 [v1/utils.py:663] [shutdown] Process manager: force killing remaining process EngineCore pid 1844603
+(EngineCore pid=1844603) WARNING 11-21 21:49:40 [v1/executor/multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=1801139) DEBUG 11-21 21:49:40 [v1/utils.py:670] [shutdown] Process manager: complete
+(MainProcess pid=1801139) DEBUG 11-21 21:49:40 [v1/engine/core_client.py:490] [shutdown] MPClient: background resource cleanup start
+(MainProcess pid=1801139) DEBUG 11-21 21:49:40 [v1/engine/core_client.py:547] [shutdown] MPClient: background resource cleanup complete
+(MainProcess pid=1801139) DEBUG 11-21 21:49:40 [contextlib.py:478] [shutdown] DeepseekV4Renderer
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+END backend=deep_gemm_mega_moe exit=1 at 2026-11-21T21:49:48+08:00
+2026-11-21T21:49:48+08:00
+FINISHED=2026-11-21T21:50:00+08:00 EXIT=1
