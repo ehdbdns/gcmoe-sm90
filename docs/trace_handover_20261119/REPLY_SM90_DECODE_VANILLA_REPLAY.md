@@ -98,6 +98,15 @@ ValueError: stats: 7 native top-1 mismatches; first relative offset 278,
   更像是**低概率、位置不固定**的数值抖动（4/256k 与 7/256k）。
   这符合 `atomicAdd` 累加顺序或 ring buffer 覆盖时序带来的微小差异被 top-1 放大。
 
+## 4b. 根因已定位（后续任务书 `SM90_STABLE_DECODE_AA`）
+
+**decode 的 sparse indexer top-k 是另一个入口**（`SparseIndexerTopk` / `get_indexer_topk`），
+`GC_MOE_STABLE_PREFILL_TOPK=1` 只稳定化了 prefill 分支，**没有覆盖 decode**。
+开启 `GC_MOE_STABLE_DECODE_TOPK=1` 后，同一份"发布 + 消费"链路
+**1000 步零失配通过**（详见 `REPLY_SM90_STABLE_DECODE_AA.md`）。
+新参考与本节使用的参考相比，恰好只有 req176/req180/req159 三个请求不同（857 / 274,511 位置），
+且 req176 的首处差异正是本节的 position 322 —— 与本节失败点逐位吻合。
+
 ## 5. 建议的下一步（未执行，等任务书）
 
 1. **同一消费者连续跑两次**（相同 SHA、相同参考、相同放置），看失配位置是否可复现：
