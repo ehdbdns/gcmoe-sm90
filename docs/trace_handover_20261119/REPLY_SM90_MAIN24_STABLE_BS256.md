@@ -154,6 +154,10 @@ eco_linear/eco 17.1–17.7 s、`[1,4,2,5,6,3]` eco_smr 27.7 s）；
 3. 是否需要在 random 臂上以 `GC_MOE_MATRIX_PREFIX_CHECK=0`（新参考已发布、只做计时）方式继续，
    或先定位 req176 的 4 处分歧再决定。
 
+> **更正（见 `REPLY_SM90_DECODE_VANILLA_REPLAY.md`）**：下面对"放置改变导致漂移"的推断
+> 已被后续实验**否定**——用 vanilla 自身放置做纯消费者回放，仍在 req176 失配（7 处，
+> position 322），换回 vanilla 并未减小分歧。根因在**共享 decode / 回放路径**。
+
 ## 8. 该失败的性质（与历史主表对照）
 
 **观察到的事实**（不是推测）：
