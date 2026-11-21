@@ -2232,6 +2232,9 @@ def _install_worker_rpc() -> None:
     if os.environ.get('GC_MOE_STRICT_STATE_DIR'):
         from stream_checkpoint import install_cache_names
         install_cache_names()
+        if os.getenv("GC_MOE_STABLE_DECODE_TOPK") == "1":
+            from stable_prefill_topk import install_decode
+            install_decode()
         if os.getenv("GC_MOE_STABLE_PREFILL_TOPK") == "1":
             from stable_prefill_topk import install as install_stable_prefill_topk
             install_stable_prefill_topk()

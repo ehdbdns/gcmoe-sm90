@@ -947,7 +947,13 @@ def main():
 
     if long_cost:
         training = long_window('stats')
-        if os.getenv("GC_MOE_VANILLA_STATS_REPLAY") == "1":
+        if (os.getenv("GC_MOE_VANILLA_STATS_REPLAY") == "1"
+                or os.getenv("GC_MOE_DECODE_STATS_AA") == "1"):
+            if recording_tokens:
+                with (Path(fixed_dir) / "tokens.json").open("x") as f:
+                    json.dump(dict(prompt_hash=prompt_hash, tokens=got), f, separators=(",", ":"))
+            elif os.getenv("GC_MOE_DECODE_STATS_AA") == "1" and got != fixed["tokens"]:
+                raise ValueError("statistics-window feedback differs from its publisher")
             with Path(a.output).open("x") as f:
                 json.dump(dict(arm=matrix, phase="stats", prompt_hash=prompt_hash,
                                prefill_steps=prefill_steps, stats=training), f)

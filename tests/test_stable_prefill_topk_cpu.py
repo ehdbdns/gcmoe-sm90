@@ -4,7 +4,7 @@ import sys
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "integration"))
-from stable_prefill_topk import select
+from stable_prefill_topk import select, select_decode
 
 
 def test_rows():
@@ -16,6 +16,14 @@ def test_rows():
     for k in (1, 5, 19, 23):
         out = torch.empty((12, k), dtype=torch.int32)
         select(scores, starts, ends, out, len(out), *scores.stride(), k)
+        decoded = torch.empty_like(out)
+        select_decode(scores, ends, decoded, k)
+        for r, length in enumerate(ends.tolist()):
+            row = scores[r, :length].tolist()
+            ids = list(range(length))
+            if length > k:
+                ids = sorted(ids, key=lambda i: (-row[i], i))[:k]
+            assert decoded[r].tolist() == ids + [-1] * (k - len(ids))
         for r in range(len(out)):
             row = scores[r, starts[r]:ends[r]].tolist()
             ids = list(range(len(row)))
