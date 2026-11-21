@@ -6,9 +6,22 @@ import torch
 from vllm import LLM, SamplingParams
 
 
+def moe_runtime(model):
+    """Read post-load module state, including fused weights on each worker."""
+    result = []
+    for name, module in model.named_modules():
+        if name.endswith(".ffn") and hasattr(module, "experts"):
+            experts = module.experts
+            result.append(dict(layer=name, expert_class=type(experts).__name__,
+                               sequence_parallel=getattr(module, "use_sequence_parallel", None),
+                               fused_shared=getattr(experts, "has_fused_shared_experts", None)))
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", choices=("auto", "deep_gemm_mega_moe"), default="auto")
+    parser.add_argument("--prefix-audit", action="store_true")
     args = parser.parse_args()
     assert torch.cuda.device_count() == 8
     assert all(torch.cuda.get_device_capability(i) == (10, 3) for i in range(8))
@@ -28,6 +41,24 @@ def main():
         gpu_memory_utilization=0.8,
     )
     prompt = {"prompt_token_ids": [100, 200, 300, 400]}
+    if args.prefix_audit:
+        modules = model.apply_model(moe_runtime)
+        if len(modules) != 8 or any(len(rank) != 40 for rank in modules):
+            raise RuntimeError(f"incomplete MoE coverage: {[len(rank) for rank in modules]}")
+        print(json.dumps(dict(backend=args.backend, workers=modules)), flush=True)
+        tokens = list(prompt["prompt_token_ids"])
+        # Keep the first-step workload identical. Later calls use exactly the
+        # same prefix in both engines, independent of their previous prediction.
+        for ref_id in (200, 19, 200, 18):
+            predicted = model.generate([{"prompt_token_ids": list(tokens)}],
+                                       SamplingParams(temperature=0, max_tokens=1, logprobs=10))
+            output = predicted[0].outputs[0]
+            scores = sorted(((int(idx), float(v.logprob)) for idx, v in output.logprobs[0].items()),
+                            key=lambda row: -row[1])
+            print(json.dumps(dict(backend=args.backend, prefix=list(tokens), top=scores,
+                                  generated=int(output.token_ids[0]))), flush=True)
+            tokens.append(ref_id)
+        return
     out = model.generate(
         [prompt],
         SamplingParams(temperature=0, max_tokens=4, ignore_eos=True),
