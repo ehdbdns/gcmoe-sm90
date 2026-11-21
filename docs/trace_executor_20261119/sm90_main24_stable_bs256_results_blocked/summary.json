@@ -1,0 +1,50 @@
+{
+ "new_reference": {
+  "path": "/tmp/gcmoe-main24-bs256-c2LF5VbC/replay/tokens.json",
+  "sha256": "880da497abce4830742fb3d060cf52bc7db575b8b71c475de246731c16d536b8",
+  "prompt_hash": "254af9d8a2752eab68f6419f085c1973e22e582a3f50a3c99a9853efeffdaec8"
+ },
+ "old_reference": {
+  "path": "/tmp/gcmoe-main24-bs256-LIk16dRh/replay/tokens.json",
+  "sha256": "ad68503c07f9c213c7ddeda92593f54b65fe65515b10dd8247ae7f1c714b1f15"
+ },
+ "requests": 256,
+ "requests_bit_identical_to_old": 101,
+ "positions_compared": 530511,
+ "positions_differing_from_old": 300965,
+ "first_divergence_position_min": 0,
+ "vanilla": {
+  "stats_ms": 90.36216648668051,
+  "measured_ms": 91.14292866224423,
+  "output_hash": "088aed8c91fc4c67bc8d65cce5fe21076170a114cac3149b162df8697bcfc7ad",
+  "prefill_steps": 117,
+  "rearranged": false,
+  "free_bytes_stats": 24598872064,
+  "free_bytes_measured": 24330436608,
+  "peak_reserved_bytes": 66339209216,
+  "total_bytes": 102085492736,
+  "kv_bytes": 21474836480,
+  "kv_tokens": 1530922
+ },
+ "random_failure": {
+  "phase": "stats",
+  "rank": "all 8",
+  "req": "req176",
+  "position": 664,
+  "relative_offset": 620,
+  "native": 3975,
+  "reference": 8842,
+  "mismatches": 4,
+  "capture_workspace": "/tmp/gcmoe-aligned-CFpU0sve",
+  "decode_steps_logged": 1000,
+  "log_mean_iteration_ms": 79.69
+ },
+ "first_divergence": {
+  "req": "req80",
+  "position": 0,
+  "new": 671,
+  "old": 2581
+ },
+ "streams_identical_to_old": 101,
+ "streams_diverging": 155
+}

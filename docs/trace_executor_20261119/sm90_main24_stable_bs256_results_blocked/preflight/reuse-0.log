@@ -1,0 +1,21 @@
+[rank4]:[W1121 18:32:04.111777684 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank0]:[W1121 18:32:04.111778197 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank1]:[W1121 18:32:04.111798162 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank2]:[W1121 18:32:04.111849542 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank3]:[W1121 18:32:04.111963858 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank6]:[W1121 18:32:04.112158335 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank7]:[W1121 18:32:04.112360245 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank5]:[W1121 18:32:04.112589704 ProcessGroupNCCL.cpp:973] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[rank0]:[W1121 18:32:06.532058764 ProcessGroupNCCL.cpp:5276] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+[cap] eager warm done
+STREAM_CHECK rank=0 sha256=78a0158c98563df6d33edd8e7fd133c309622e4a9ef9c0c73d36e2655e65b042STREAM_CHECK rank=1 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5bSTREAM_CHECK rank=3 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5bSTREAM_CHECK rank=2 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+
+
+
+STREAM_CHECK rank=5 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+STREAM_CHECK rank=6 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5bSTREAM_CHECK rank=4 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+
+STREAM_CHECK rank=7 sha256=b9ae2a4b34297ca9779700d018302d43f62e3a133d320befb8f048932ac36b5b
+[cap] replay ok finite=True quota_sum=816
+ECO_CAPTURE OK
+[rank0]:[W1121 18:32:21.326239385 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
