@@ -1,0 +1,34 @@
+Container inspection (read-only, no network, no GPU, no model launch):
+
+rtpllm-migration:dsv4_20261012_200340
+  id: sha256:82f91edbf116a42f2dadac24137b379c7481fa45860edaab285bf043015a4472
+  python: 3.10.9 at /opt/conda310/bin/python
+  torch: 2.11.0
+  rtp-llm: missing
+  vllm: missing
+  deep-gemm: missing
+  flashinfer-python: missing
+  transformers: missing
+  rtp-kernel: missing
+  V4.1 source modules found only when historical source was bind-mounted
+  read-only at /src:
+    rtp_llm FOUND /src/rtp_llm/__init__.py
+    rtp_llm.models.deepseek_v41 FOUND /src/rtp_llm/models/deepseek_v41.py
+    rtp_llm.models_py.model_desc.deepseek_v41_model FOUND
+      /src/rtp_llm/models_py/model_desc/deepseek_v41_model.py
+
+hub.docker.alibaba-inc.com/isearch/rtp_llm_sm10x_cuda13:0.2.0_0.2.0_2026_11_19_18_17_c66488999
+  python: 3.10.9 at /opt/conda310/bin/python
+  rtp-llm: 0.2.0
+  vllm: missing
+  torch: 2.11.0+cu130
+  deep-gemm: 2.8.0+6d6aaad.cu132
+  flashinfer-python: 0.6.18.post1
+  transformers: 4.51.2
+  rtp-kernel: 0.1.0+bdafb874.cu132
+  v41 files: none under site-packages/rtp_llm
+  v41 registration matches: none
+
+Conclusion: the newest SM10x image recognizes V4, not the exact V4.1 model
+architecture. The dsv4 migration image is a runtime base but has no installed
+RTP-LLM; it needs reviewed V4.1 source/build artifacts.

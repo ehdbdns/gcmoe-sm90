@@ -1,0 +1,45 @@
+RTP checkout: /data0/data3/wjh528431/work/RTP-LLM
+RTP HEAD: c207b52b2ddce5acf964514968717a748053973b
+
+Exact task command output (cwd=RTP checkout):
+rg: rtp_llm: IO error for operation on rtp_llm: No such file or directory (os error 2)
+rg: rtp_llm/models_py/modules/factory/fused_moe: IO error for operation on rtp_llm/models_py/modules/factory/fused_moe: No such file or directory (os error 2)
+
+Reason: this checkout has no top-level rtp_llm/ directory. Its Python sources
+are under githubopensource/rtp_llm and internal_source/rtp_llm.
+
+Expanded inspection, line references only (external source bodies omitted):
+
+[current checkout, exact DeepseekV41ForCausalLM / deepseek_v41 search]
+matches: 0
+
+[current checkout, nearest registered V4 entry]
+githubopensource/rtp_llm/model_factory_register.py:204  deepseek_v4
+githubopensource/rtp_llm/model_factory_register.py:207  deepseek_v4_mtp
+githubopensource/rtp_llm/model_factory_register.py:210  deepseek_v4_dspark
+githubopensource/rtp_llm/models/deepseek_v4.py:1173  DeepseekV4ForCausalLM
+githubopensource/rtp_llm/models/deepseek_v4.py:1174  DeepseekV4ForCausalLMNextN
+
+[current checkout, MegaMoE entry points]
+githubopensource/rtp_llm/models_py/modules/factory/fused_moe/impl/cuda/executors/mega_moe.py:166  class MegaMoeExecutor
+githubopensource/rtp_llm/models_py/modules/factory/fused_moe/impl/cuda/executors/mega_moe_se.py:54  class MegaMoeSEExecutor
+githubopensource/rtp_llm/models_py/modules/factory/fused_moe/impl/cuda/strategy/fp8_fp4.py:55  strategy_name="mega_moe_se"
+Full first-65 path:line list is in mega_moe_matches.txt.
+
+[historical admin-readable checkout with exact V4.1 entry]
+Path: /data0/data3/wjh528431/work/dsv41-mega-gate-20261012/internal/github-opensource
+Source revision recorded by that run: a5f09e3c4fd3de584f88541586e89780e11c5844
+rtp_llm/model_factory_register.py:207  model_type deepseek_v41 -> DeepseekV41ForCausalLM
+rtp_llm/model_factory_register.py:209  model_type deepseek_v41_dspark
+rtp_llm/models/deepseek_v41.py:22  class DeepSeekV41Weight
+rtp_llm/models/deepseek_v41.py:126  class DeepSeekV41
+rtp_llm/models/deepseek_v41.py:194  class DeepSeekV41DSparkWeight
+rtp_llm/models/deepseek_v41.py:216  class DeepSeekV41DSpark
+rtp_llm/models/deepseek_v41.py:261  register_model("deepseek_v41", ...)
+rtp_llm/models/deepseek_v41.py:262  register_model("deepseek_v41_dspark", ...)
+rtp_llm/models_py/model_desc/deepseek_v41_model.py:45  class DeepSeekV41Model
+rtp_llm/models_py/model_desc/deepseek_v41_dspark_model.py:7  class DeepSeekV41DSparkModel
+
+Conclusion: the exact DeepseekV41ForCausalLM registration is absent from the
+current RTP checkout c207b52, but is present in an admin-readable historical
+checkout. The historical source was not modified or executed.

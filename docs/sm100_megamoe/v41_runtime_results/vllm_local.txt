@@ -1,0 +1,27 @@
+Local vLLM checkout: /data0/data3/wjh528431/work/vllm
+Git revision: 36f397281295f5b58852a7eaf429b90348161079
+Worktree status: main, behind origin/main by 2265 commits (read only)
+Package metadata version: 0.1.dev1+g36f397281.precompiled
+
+V4.1 recognition evidence (line references only):
+vllm/model_executor/models/registry.py:371  DeepseekV41ForCausalLM
+vllm/model_executor/models/registry.py:372  vllm.models.deepseek_v41
+vllm/model_executor/models/registry.py:373  DeepseekV41ForCausalLM
+vllm/models/deepseek_v41/__init__.py:11  AMD class import
+vllm/models/deepseek_v41/__init__.py:14  NVIDIA class import
+vllm/models/deepseek_v41/nvidia/model.py:1537  DeepseekV41LLMForCausalLM
+vllm/models/deepseek_v41/nvidia/vl_model.py:117  DeepseekV41ForCausalLM
+vllm/transformers_utils/configs/deepseek_v41.py:8  config
+vllm/transformers_utils/configs/__init__.py:33  config export
+
+Model checkpoint evidence:
+/mnt/hf3fs/3fs/models/DeepSeek-V4.1-Flash/config.json
+model_type=deepseek_v41
+architectures=["DeepseekV41ForCausalLM"]
+
+Venv status:
+/data0/data3/wjh528431/work/vllm/.venv/bin/python ->
+/home/wjh528431/.local/share/uv/python/cpython-3.12-linux-x86_64-gnu/bin/python3.12
+Target missing in this namespace; the venv is not directly runnable as-is.
+
+No local vLLM wheel was found under the searched admin/wjh528431 trees.
