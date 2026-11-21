@@ -5,9 +5,9 @@
 > 完整移植到 SM90 CuTe DSL，并在 vLLM 上跑通 **五臂**：
 > 原生（无副本）/ random+rr / eplb+rr / eplb+eco / eplb+eco+SM-reuse。
 
-## 最新严格对照主表 · 8×H20 · BS256
+## 最新严格对照主表 · 8×H20 · BS256 与 BS512
 
-DeepSeek-V4.1-Flash，TP=EP=8，M64，六臂均开启 stream 和稳定的 prefill、decode top-k。每臂一次运行，前 1000 步统计，后 1000 步测量。15/15 对通过严格校验，每对正式窗口的 256,000 个原生 token 均一致。端到端和完整 MoE 耗时单位为 ms/步，预测误差单位为百分点。[逐对校验](docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/pairs.csv) · [完整精度与列名](docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/main_table.csv)
+DeepSeek-V4.1-Flash，TP=EP=8，M64，六臂均开启 stream 和稳定的 prefill、decode top-k。每臂一次运行，前 1000 步统计，后 1000 步测量。BS256 的 15/15 对通过严格校验，每对正式窗口的 256,000 个原生 token 均一致。端到端和完整 MoE 耗时单位为 ms/步，预测误差单位为百分点。[逐对校验](docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/pairs.csv) · [完整精度与列名](docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/main_table.csv)
 
 | BS | 臂 | 端到端 | 相对 vanilla | 完整 MoE | token IR | 总 M 块 | 峰值 M 块 | 活跃物理槽 | M 块 IR | routed 误差 | graph 误差 | 拍卖成交数 |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -17,8 +17,16 @@ DeepSeek-V4.1-Flash，TP=EP=8，M64，六臂均开启 stream 和稳定的 prefil
 | 256 | eco_linear | 90.052 | -4.80% | 35.643 | 1.057 | 371.66 | 49.06 | 315.26 | 1.056 | 0.1276 | 0.2127 | 186,670 |
 | 256 | eco | 90.512 | -4.31% | 35.600 | 1.060 | 371.66 | 49.05 | 315.34 | 1.056 | 0.0738 | 0.2181 | 187,082 |
 | 256 | eco_smr | 88.757 | -6.17% | 34.083 | 1.060 | 371.66 | 49.05 | 315.34 | 1.056 | 0.1689 | 0.2181 | 187,082 |
+| 512 | vanilla | 166.466 | +0.00% | 72.016 | 1.394 | 564.21 | 89.45 | 334.72 | 1.268 | 0.0642 | 2.0637 | — |
+| 512 | random | 173.951 | +4.50% | 76.855 | 1.481 | 608.55 | 98.60 | 390.95 | 1.296 | 0.0752 | 2.3127 | — |
+| 512 | rr | 156.381 | -6.06% | 60.270 | 1.061 | 595.89 | 78.65 | 398.72 | 1.056 | 0.0514 | 0.3625 | — |
+| 512 | eco_linear | 153.026 | -8.07% | 58.805 | 1.031 | 564.21 | 73.13 | 369.85 | 1.037 | 0.0790 | 0.1409 | 226,425 |
+| 512 | eco | 153.886 | -7.56% | 58.722 | 1.033 | 564.21 | 73.18 | 369.72 | 1.038 | 0.0461 | 0.1443 | 226,980 |
+| 512 | eco_smr | 149.543 | -10.17% | 55.638 | 1.033 | 564.21 | 73.18 | 369.72 | 1.038 | 0.0825 | 0.1461 | 226,980 |
 
 BS256 实测最快的是 `eco_smr`，相对 vanilla 的端到端耗时下降 6.17%，完整 MoE 耗时下降 15.67%。在 `eco_linear` 与 `eco` 的单独对照中，逐 valid 价格的 routed 预测误差从 0.1276 降至 0.0738 个百分点，完整 MoE 耗时下降 0.12%，端到端耗时上升 0.51%。本轮每臂测量一次。两种 fine 价格臂均接受 187,082 次出价，各有 40,000 次层调用，每次均有成交。[拍卖数据](docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/auction.csv) · [回执](docs/trace_handover_20261119/REPLY_SM90_MAIN24_STABLE_DECODE_BS256.md)
+
+BS512 六臂的 15/15 对通过严格校验，每对正式窗口的 512,000 个原生 token 全部一致。每臂各测一次。eco_smr 相对 vanilla 的端到端耗时下降 10.17%，完整 MoE 下降 22.74%。fine cost 相对线性 cost 的完整 MoE 下降 0.14%，端到端上升 0.56%。BS512 使用两个固定数据文件，BS256 使用一个，跨档变化还受输入组成影响。[主表 CSV](docs/trace_executor_20261119/sm90_main24_stable_decode_bs512_results/delivery/bs512/main_table.csv) · [逐对校验](docs/trace_executor_20261119/sm90_main24_stable_decode_bs512_results/delivery/bs512/pairs.csv) · [拍卖数据](docs/trace_executor_20261119/sm90_main24_stable_decode_bs512_results/delivery/bs512/auction.csv)
 
 ## 历史主表 · 8×H20，四档 BS × 六臂
 

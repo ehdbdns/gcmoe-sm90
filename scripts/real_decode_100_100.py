@@ -153,6 +153,24 @@ def load_prompts(n, lo, hi):
     return picked
 
 
+def select_decode_prompts(n, lo, hi):
+    reference = os.environ.get('GC_REPEAT_BS512_PROMPT_SHA256')
+    if not reference:
+        return load_prompts(n, lo, hi)
+    if n not in (1024, 2048):
+        raise ValueError('BS512 repetition requires 1024 or 2048 requests')
+    base = load_prompts(512, lo, hi)
+    digest = hashlib.sha256(json.dumps(base, separators=(',', ':')).encode()).hexdigest()
+    if digest != reference:
+        raise ValueError(f'BS512 prompt reference mismatch: {digest}')
+    prompts = base * (n // 512)
+    overhead = int(os.environ.get('GC_KV_OVERHEAD', 0))
+    budget = int(os.environ.get('GC_KV_BUDGET', 0))
+    if budget and sum(len(p) + overhead for p in prompts) > budget:
+        raise ValueError('Repeated BS512 workload exceeds the configured KV token budget')
+    return prompts
+
+
 def _compilation_config():
     from vllm.config.compilation import CUDAGraphMode
     mode = os.environ.get('CUDAGRAPH_MODE', 'FULL_DECODE_ONLY')
@@ -688,7 +706,7 @@ def main():
     kv_pool = int(os.environ.get('GC_KV_BUDGET', '1150000'))
     if matrix and nseq > 256 and int(os.environ.get('GC_KV_BUDGET', '0')) <= 0:
         raise ValueError('set GC_KV_BUDGET to the calibrated token budget for this matrix batch')
-    prompts = load_prompts(nseq, a.prefill_lo, a.prefill_hi)
+    prompts = select_decode_prompts(nseq, a.prefill_lo, a.prefill_hi)
     flush = int(os.environ.get('GC_MEASURE_FLUSH', '5'))
     tail_warmup = 2 if a.timing_tail_steps else 0
     extra_steps = flush + tail_warmup + a.timing_tail_steps if a.timing_tail_steps else 0
@@ -700,7 +718,7 @@ def main():
         os.environ['GC_KV_OVERHEAD'] = str(overhead)
         if sum(len(p) + overhead for p in prompts) <= kv_pool:
             break
-        prompts = load_prompts(nseq, a.prefill_lo, a.prefill_hi)
+        prompts = select_decode_prompts(nseq, a.prefill_lo, a.prefill_hi)
     max_len = max(len(p) for p in prompts)
     print(f'[data] {nseq} prompts ({a.seqs_per_rank}/rank x {ranks}), '
           f'len {min(map(len,prompts))}..{max_len}', flush=True)
