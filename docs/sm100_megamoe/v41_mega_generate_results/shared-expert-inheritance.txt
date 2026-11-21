@@ -1,0 +1,9 @@
+Runtime inheritance check in the same venv used by the run
+=========================================================
+
+_init_mega_moe_experts: v41_override=False inherited_from_v4=True
+forward: v41_override=False inherited_from_v4=True
+finalize_mega_moe_weights: v41_override=False inherited_from_v4=True
+mro= vllm.models.deepseek_v41.nvidia.model.DeepseekV4MoE -> vllm.models.deepseek_v4.nvidia.model.DeepseekV4MoE -> torch.nn.modules.module.Module -> builtins.object
+experts_class= vllm.models.deepseek_v4.nvidia.model.DeepseekV4MegaMoEExperts
+shared_mlp_class= vllm.models.deepseek_v4.nvidia.model.DeepseekV4MLP

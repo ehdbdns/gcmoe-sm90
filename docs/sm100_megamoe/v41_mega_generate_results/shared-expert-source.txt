@@ -1,0 +1,87 @@
+Extracted from the installed vLLM 0.31.0 sources used by this run.
+Line numbers refer to the files below.
+
+File: vllm/models/deepseek_v4/nvidia/model.py
+
+376  @staticmethod
+377  def _deep_gemm_supports_shared_experts(deep_gemm) -> bool:
+383      try:
+384          buffer_params = signature(deep_gemm.get_symm_buffer_for_mega_moe).parameters
+385          kernel_params = signature(deep_gemm.fp8_fp4_mega_moe).parameters
+388      return (
+389          hasattr(deep_gemm, "get_block_m_for_mega_moe")
+390          and hasattr(deep_gemm, "transform_weights_for_mega_moe")
+391          and "num_shared_experts" in buffer_params
+392          and "shared_l1_weights" in kernel_params
+393          and "shared_l2_weights" in kernel_params
+394      )
+
+474  transformed_l1, transformed_l2 = deep_gemm.transform_weights_for_mega_moe(
+475      (gate_up_weight, gate_up_scale),
+476      (down_weight, down_scale),
+477  )
+483  gate_up.weight.data = transformed_l1[0]
+484  self._transformed_shared_l1_weights = (
+485      gate_up.weight.data,
+486      transformed_l1[1],
+487  )
+488  self._transformed_shared_l2_weights = transformed_l2
+
+595  @property
+596  def has_fused_shared_experts(self) -> bool:
+597      return self._transformed_shared_l1_weights is not None
+
+736  if self.has_fused_shared_experts:
+737      shared_x_sf = symm_buffer.shared_l1_acts_sf
+738      shared_block_m = deep_gemm.get_block_m_for_mega_moe(...)
+
+762  if self.has_fused_shared_experts:
+763      deep_gemm.fp8_fp4_mega_moe(
+764          y,
+765          self._transformed_l1_weights,
+766          self._transformed_l2_weights,
+767          symm_buffer,
+768          shared_l1_weights=self._transformed_shared_l1_weights,
+769          shared_l2_weights=self._transformed_shared_l2_weights,
+770          activation_clamp=activation_clamp,
+771          fast_math=fast_math,
+772      )
+773  else:
+774      deep_gemm.fp8_fp4_mega_moe(
+775          y,
+776          self._transformed_l1_weights,
+777          self._transformed_l2_weights,
+778          symm_buffer,
+779          activation_clamp=activation_clamp,
+780          fast_math=fast_math,
+781      )
+
+950  # Native DeepGEMM fusion requires each EP rank to own the complete
+951  # shared MLP. Sequence parallel replicates those weights while sharding
+952  # tokens. TP=1 is also naturally replicated. With PP+TP the shared MLP
+953  # remains tensor-sharded, so retain the serial path. The FlashInfer
+954  # megakernel has no shared-expert fusion, so it keeps the serial path.
+955  fuse_shared_experts = bool(
+956      self.shared_experts is not None
+957      and not envs.VLLM_DISABLE_DSV4_MEGAMOE_SHARED_EXPERT_FUSION
+958      and (self.use_sequence_parallel or self.tp_size == 1)
+959      and not self.use_fi_mega_moe
+960  )
+975  expert_kwargs: dict[str, typing.Any] = dict(
+976      num_experts=self.n_physical_experts,
+977      num_local_experts=self.n_local_physical_experts,
+978      experts_start_idx=self.physical_expert_start,
+979      num_logical_experts=self.n_logical_experts,
+980      top_k=self.n_activated_experts,
+981      hidden_size=config.hidden_size,
+982      intermediate_size=config.moe_intermediate_size,
+983      num_shared_experts=(self.n_shared_experts if fuse_shared_experts else 0),
+984      prefix=f"{prefix}.experts",
+985  )
+
+1120 if (
+1121     self.shared_experts is not None
+1122     and not self.experts.has_fused_shared_experts
+1123 ):
+1124     shared_output = self.shared_experts(hidden_states)
+1125     final_hidden_states += shared_output

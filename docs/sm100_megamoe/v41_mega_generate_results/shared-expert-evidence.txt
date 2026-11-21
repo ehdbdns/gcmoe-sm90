@@ -1,0 +1,76 @@
+Shared-expert fusion evidence
+=============================
+
+Conclusion: ENABLED for this run. The model's shared MLP is passed to the
+DeepGEMM MegaMoE kernel as shared_l1_weights/shared_l2_weights rather than
+executed as a separate serial MLP.
+
+Important scope note: model-full.log does not print the runtime boolean
+has_fused_shared_experts and contains no explicit "shared expert fused" line.
+The conclusion below is an evidence chain from checkpoint config, the exact
+loaded source, the loaded DeepGEMM API, and the absence of every known
+disable-warning path. It is not a claim that a runtime boolean was logged.
+
+1. Checkpoint configuration
+   config.json text_config.n_shared_experts = 1.
+
+2. Topology and backend select the native fusion branch
+   The run used TP=8, EP=8, PP=1, and moe_backend=deep_gemm_mega_moe.
+   DeepseekV4.1 imports and subclasses the V4 MoE implementation. Runtime
+   introspection confirms that the V4.1 subclass does not override
+   _init_mega_moe_experts, forward, or finalize_mega_moe_weights; all three are
+   inherited from the V4 source. In that loaded V4 source,
+   _init_mega_moe_experts computes:
+
+     fuse_shared_experts = bool(
+         self.shared_experts is not None
+         and not envs.VLLM_DISABLE_DSV4_MEGAMOE_SHARED_EXPERT_FUSION
+         and (self.use_sequence_parallel or self.tp_size == 1)
+         and not self.use_fi_mega_moe
+     )
+
+   Each condition holds:
+   - shared_experts is present (n_shared_experts=1)
+   - VLLM_DISABLE_DSV4_MEGAMOE_SHARED_EXPERT_FUSION evaluates to False
+   - TP=8 with EP and PP=1 selects sequence parallel
+   - backend is deep_gemm_mega_moe, not a FlashInfer MegaMoE backend
+
+   The constructor therefore receives num_shared_experts=1 instead of 0.
+
+3. The loaded DeepGEMM API supports the shared-expert path
+   Runtime import resolved to:
+   /data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/third_party/deep_gemm
+
+   Verified signatures include:
+   - get_symm_buffer_for_mega_moe(..., num_shared_experts: int = 0, ...)
+   - fp8_fp4_mega_moe(..., shared_l1_weights=None, shared_l2_weights=None, ...)
+   - transform_weights_for_mega_moe(...)
+   - get_block_m_for_mega_moe(...)
+
+   Thus _deep_gemm_supports_shared_experts() is satisfied.
+
+4. Finalization takes the fused assignment path
+   finalize_weights() calls _finalize_shared_expert_weights() when
+   num_shared_experts is nonzero. On success that function transforms the
+   shared L1/L2 weights and assigns _transformed_shared_l1_weights (lines
+   474-488 of the loaded V4 source). has_fused_shared_experts then returns
+   true because that attribute is not None.
+
+5. Forward passes the shared weights to the same MegaMoE launch
+   In DeepseekV4MegaMoEExperts.forward, the has_fused_shared_experts branch
+   calls fp8_fp4_mega_moe(..., shared_l1_weights=..., shared_l2_weights=...).
+   The serial fallback shared_output += path is skipped when this property is
+   true.
+
+6. No disable warning occurred
+   The complete log contains zero occurrences of:
+   "Disabling native MegaMoE shared-expert fusion".
+   Those warnings are emitted by every known pre-fusion fallback: unsupported
+   API, missing scale layout, or unexpected weight/scale shape.
+
+Source fingerprints:
+   deepseek_v41 model.py sha256 f3b109e980d12652e024fd9b20396e11d9810544c0f4a285fccb6206ce8a3bc8
+   deepseek_v4  model.py sha256 5d5a74e339cd110def9b5e37a56fa602a42cdece98811013fb69700a0274a224
+
+Supporting excerpts: shared-expert-source.txt
+Inheritance check: shared-expert-inheritance.txt

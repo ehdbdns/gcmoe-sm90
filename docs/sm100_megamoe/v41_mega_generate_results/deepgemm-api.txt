@@ -1,0 +1,21 @@
+DeepGEMM API observed in the runtime venv
+==========================================
+
+module_name=vllm.third_party.deep_gemm
+module_file=/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/third_party/deep_gemm/__init__.py
+
+get_symm_buffer_for_mega_moe.present=True
+get_symm_buffer_for_mega_moe.signature=(group: torch.distributed.distributed_c10d.ProcessGroup, num_experts: int, num_max_tokens_per_rank: int, num_topk: int, hidden: int, intermediate_hidden: int, num_shared_experts: int = 0, use_fp8_dispatch: Optional[bool] = None, mma_type: str = 'fp8xfp4', activation: str = 'swiglu') -> vllm.third_party.deep_gemm.mega.SymmBuffer
+get_symm_buffer_for_mega_moe.params=['group', 'num_experts', 'num_max_tokens_per_rank', 'num_topk', 'hidden', 'intermediate_hidden', 'num_shared_experts', 'use_fp8_dispatch', 'mma_type', 'activation']
+
+fp8_fp4_mega_moe.present=True
+fp8_fp4_mega_moe.signature=(y: torch.Tensor, l1_weights: Tuple[torch.Tensor, torch.Tensor], l2_weights: Tuple[torch.Tensor, torch.Tensor], sym_buffer: vllm.third_party.deep_gemm.mega.SymmBuffer, shared_l1_weights: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, shared_l2_weights: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None, recipe: Tuple[int, int, int] = (1, 1, 32), activation: str = 'swiglu', activation_clamp: Optional[float] = None, fast_math: bool = True, activation_alpha: float = 1.0, activation_beta: float = 0.0)
+fp8_fp4_mega_moe.params=['y', 'l1_weights', 'l2_weights', 'sym_buffer', 'shared_l1_weights', 'shared_l2_weights', 'cumulative_local_expert_recv_stats', 'recipe', 'activation', 'activation_clamp', 'fast_math', 'activation_alpha', 'activation_beta']
+
+transform_weights_for_mega_moe.present=True
+transform_weights_for_mega_moe.signature=(l1_weights: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], l2_weights: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], activation: str = 'swiglu') -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]
+transform_weights_for_mega_moe.params=['l1_weights', 'l2_weights', 'activation']
+
+get_block_m_for_mega_moe.present=True
+get_block_m_for_mega_moe.signature=<unavailable: no signature found for builtin <built-in method get_block_m_for_mega_moe of pybind11_builtins.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1 object at 0x7fb75103b890>>
+

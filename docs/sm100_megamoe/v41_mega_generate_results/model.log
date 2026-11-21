@@ -1,0 +1,63 @@
+START=2026-11-21T21:29:10+08:00
+(Worker_TP7_EP7 pid=261309) DEBUG 11-21 21:33:19 [distributed/device_communicators/shm_broadcast.py:210] Poller received notify event
+(Worker_TP5_EP5 pid=261304) DEBUG 11-21 21:33:19 [distributed/device_communicators/shm_broadcast.py:210] Poller received notify event
+(Worker_TP1_EP1 pid=261297) DEBUG 11-21 21:33:19 [distributed/device_communicators/shm_broadcast.py:210] Poller received notify event
+(Worker_TP0_EP0 pid=261295) DEBUG 11-21 21:33:19 [distributed/device_communicators/shm_broadcast.py:210] Poller received notify event
+(EngineCore pid=252840) DEBUG 11-21 21:33:19 [distributed/device_communicators/shm_broadcast.py:210] Poller received notify event
+(EngineCore pid=252840) DEBUG 11-21 21:33:19 [v1/engine/core.py:1507] EngineCore waiting for work.
+(EngineCore pid=252840) DEBUG 11-21 21:33:19 [v1/engine/core.py:1507] EngineCore waiting for work.
+(MainProcess pid=243999) DEBUG 11-21 21:33:19 [renderers/base.py:345] Warming up chat template processing...
+(MainProcess pid=243999) DEBUG 11-21 21:33:19 [renderers/base.py:351] Chat template warmup completed in 0.001s
+Rendering prompts:   0%|          | 0/1 [00:00<?, ?it/s]Rendering prompts: 100%|██████████| 1/1 [00:00<00:00, 2335.36it/s]
+Processed prompts:   0%|          | 0/1 [00:00<?, ?it/s, est. speed input: 0.00 toks/s, output: 0.00 toks/s](EngineCore pid=252840) DEBUG 11-21 21:33:19 [v1/engine/core.py:1519] EngineCore loop active.
+Processed prompts: 100%|██████████| 1/1 [00:00<00:00,  3.01it/s, est. speed input: 12.06 toks/s, output: 12.06 toks/s]Processed prompts: 100%|██████████| 1/1 [00:00<00:00,  3.01it/s, est. speed input: 12.06 toks/s, output: 12.06 toks/s]Processed prompts: 100%|██████████| 1/1 [00:00<00:00,  3.01it/s, est. speed input: 12.06 toks/s, output: 12.06 toks/s]
+{"backend": "deep_gemm_mega_moe", "prompt": {"prompt_token_ids": [100, 200, 300, 400]}, "generated_ids": [75, 200, 18, 200]}
+(EngineCore pid=252840) DEBUG 11-21 21:33:20 [v1/engine/core.py:1507] EngineCore waiting for work.
+(MainProcess pid=243999) DEBUG 11-21 21:33:20 [v1/engine/core_client.py:490] [shutdown] MPClient: background resource cleanup start
+(MainProcess pid=243999) DEBUG 11-21 21:33:20 [v1/utils.py:628] [shutdown] Process manager: start process_count=1 timeout=5s names=EngineCore
+(MainProcess pid=243999) INFO 11-21 21:33:20 [v1/utils.py:638] [shutdown] Process manager: send sigterm to process EngineCore
+(EngineCore pid=252840) INFO 11-21 21:33:20 [v1/engine/core.py:1409] [shutdown] EngineCore: trigger received signal=SIGTERM
+(EngineCore pid=252840) DEBUG 11-21 21:33:20 [v1/engine/core.py:1519] EngineCore loop active.
+(EngineCore pid=252840) INFO 11-21 21:33:20 [v1/engine/core.py:1558] [shutdown] EngineCore: start mode=abort timeout=0s
+(EngineCore pid=252840) INFO 11-21 21:33:20 [v1/engine/core.py:1589] [shutdown] EngineCore: request processing complete; starting resource teardown
+(EngineCore pid=252840) INFO 11-21 21:33:20 [v1/engine/core.py:1422] [shutdown] EngineCore: exiting busy loop
+(EngineCore pid=252840) DEBUG 11-21 21:33:20 [v1/engine/core.py:796] [shutdown] EngineCore: tearing down local resources
+(EngineCore pid=252840) DEBUG 11-21 21:33:20 [v1/executor/multiproc_executor.py:508] [shutdown] Executor: start worker_count=8
+(EngineCore pid=252840) INFO 11-21 21:33:20 [v1/executor/multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(Worker_TP0_EP0 pid=261295) INFO 11-21 21:33:20 [v1/executor/multiproc_executor.py:838] Parent process exited, terminating worker queues
+(Worker_TP2_EP2 pid=261299) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP3_EP3 pid=261301) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP1_EP1 pid=261297) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP4_EP4 pid=261303) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP5_EP5 pid=261304) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP7_EP7 pid=261309) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP6_EP6 pid=261307) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP0_EP0 pid=261295) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP2_EP2 pid=261299) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP3_EP3 pid=261301) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP1_EP1 pid=261297) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP5_EP5 pid=261304) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP7_EP7 pid=261309) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP4_EP4 pid=261303) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP6_EP6 pid=261307) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP0_EP0 pid=261295) DEBUG 11-21 21:33:20 [v1/executor/multiproc_executor.py:950] [shutdown] WorkerProc: exiting after shutdown request
+(Worker_TP0_EP0 pid=261295) DEBUG 11-21 21:33:20 [distributed/device_communicators/shm_broadcast.py:187] Canceling waiting reads on SHM Buffer
+(Worker_TP3_EP3 pid=261301) DEBUG 11-21 21:33:21 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP2_EP2 pid=261299) DEBUG 11-21 21:33:21 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP0_EP0 pid=261295) DEBUG 11-21 21:33:21 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP1_EP1 pid=261297) DEBUG 11-21 21:33:21 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP7_EP7 pid=261309) DEBUG 11-21 21:33:21 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP5_EP5 pid=261304) DEBUG 11-21 21:33:21 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP4_EP4 pid=261303) DEBUG 11-21 21:33:21 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(Worker_TP6_EP6 pid=261307) DEBUG 11-21 21:33:21 [v1/worker/gpu/model_runner.py:2333] Cleaned up model weights, KV caches, and workspace
+(MainProcess pid=243999) WARNING 11-21 21:33:25 [v1/utils.py:658] [shutdown] Process manager: force killing remaining processes count=1
+(EngineCore pid=252840) WARNING 11-21 21:33:25 [v1/executor/multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=243999) WARNING 11-21 21:33:25 [v1/utils.py:663] [shutdown] Process manager: force killing remaining process EngineCore pid 252840
+(EngineCore pid=252840) DEBUG 11-21 21:33:25 [v1/executor/multiproc_executor.py:310] MultiprocWorkerMonitor: shutdown already initiated
+(MainProcess pid=243999) DEBUG 11-21 21:33:25 [v1/utils.py:670] [shutdown] Process manager: complete
+(MainProcess pid=243999) DEBUG 11-21 21:33:25 [v1/engine/core_client.py:547] [shutdown] MPClient: background resource cleanup complete
+(MainProcess pid=243999) DEBUG 11-21 21:33:25 [contextlib.py:478] [shutdown] DeepseekV4Renderer
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+END=2026-11-21T21:33:40+08:00 EXIT=0
+FINISHED=2026-11-21T21:33:50+08:00 EXIT=0
