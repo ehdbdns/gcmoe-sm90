@@ -593,7 +593,7 @@ def prepare_role_binaries(config, y: torch.Tensor,
     key = _capture_key(config, sym_buffer, context, y, l1_weights, l2_weights,
                        shared_l1_weights, shared_l2_weights, stats,
                        nvlink_timeout_secs, role_resources, combine_resources,
-                       compiler_identity) + ((eco_logical,) if eco else ())
+                       compiler_identity) + (getattr(sym_buffer, "clock_offset", None),) + ((eco_logical,) if eco else ())
     prepared = _CACHE.get(key)
     if prepared is None:
         with COMPILE_LOCK:
@@ -635,7 +635,8 @@ def prepare_role_binaries(config, y: torch.Tensor,
                         nvlink_timeout_secs=nvlink_timeout_secs,
                         role_config=role_configs[index],
                         combine_geometry=combine_geometry if role == 3 else None,
-                        eco_logical_experts=eco_logical, eco_trace=eco and _eco_trace_enabled())
+                        eco_logical_experts=eco_logical, eco_trace=eco and _eco_trace_enabled(),
+                        clock_offset=getattr(sym_buffer, "clock_offset", None))
                     role_kernels.append(role_kernel)
                 binary_key = _binary_key(
                     compiler_identity, tuple(role_kernels), role_resources,
@@ -730,9 +731,14 @@ def prepare_role_binaries(config, y: torch.Tensor,
             if torch.cuda.is_current_stream_capturing():
                 raise RuntimeError('run ECO GC MoE once outside graph capture first')
             peers = _ECO_PEER_TABLES[key] = torch.tensor(key[1], dtype=torch.int64, device=sym_buffer.buffer.device)
+        audit = getattr(sym_buffer, "eco_auction_audit", None)
+        if audit is not None and (audit.device != device or audit.dtype != torch.int32
+                                  or not audit.is_contiguous()
+                                  or audit.numel() < sym_buffer.num_experts // sym_buffer.group.size() + 32):
+            raise ValueError("invalid ECO plan audit buffer")
         arguments += ((ctypes.c_void_p(eco_meta.data_ptr()), ctypes.c_void_p(sym_buffer.buffer.data_ptr()),
                        ctypes.c_void_p(eco_state.data_ptr() if eco_state is not None else 0),
-                       ctypes.c_void_p(0), ctypes.c_void_p(peers.data_ptr()),
+                       ctypes.c_void_p(audit.data_ptr() if audit is not None else 0), ctypes.c_void_p(peers.data_ptr()),
                        ctypes.c_uint32(sym_buffer.rank_idx), ctypes.c_uint32(config.tokens)),)
     return list(prepared.binaries), arguments
 

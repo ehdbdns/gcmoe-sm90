@@ -97,6 +97,7 @@ def compile_eco_plan(num_physical: int, num_ranks: int, num_logical: int, eco_ba
         'OFF_ECO_TRACE': eco_base + ECO_SIGNAL_OFFSETS['eco_trace'],
         'OFF_ECO_TRACE_RING': eco_base + ECO_SIGNAL_OFFSETS['eco_trace_ring'],
         'ECO_TRACE': int(trace),
+        'ECO_MATRIX_AUDIT': int(os.environ.get('GC_SM100_MATRIX_CLOCKS') == '1'),
     }
     defines.update(zip(('UNIT_BM', 'UNIT_WB', 'UNIT_WA', 'UNIT_NR', 'UNIT_NRC', 'UNIT_HOP2'), unit))
     flags = [f'-D{k}={v}u' if k.startswith('OFF_') else f'-D{k}={v}' for k, v in sorted(defines.items())]

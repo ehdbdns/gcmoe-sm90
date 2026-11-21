@@ -1,3 +1,6 @@
+#ifndef ECO_MATRIX_AUDIT
+#define ECO_MATRIX_AUDIT 0
+#endif
 // ECO plan role of GC MoE: one CTA per rank computes the identical split plan of every rank while the dispatch role
 // pulls the single-copy experts' tokens and the compute role runs their GEMMs. Bit-exact mirror of
 // `gc_moe/eco/unit_ref.py`.
@@ -116,7 +119,7 @@ eco_plan_kernel(const int* meta, uint8_t* buffer, uint16_t* state, int* stats, c
     // Debug (stats != nullptr): cycles since kernel entry at milestones, stats[kP / kR + 16 ...]
     const long long t_entry = clock64();
     const auto milestone = [&](const uint32_t& slot) {
-        if (stats != nullptr)
+        if (stats != nullptr and !ECO_MATRIX_AUDIT)
             atomicAdd(stats + kP / kR + slot, static_cast<int>((clock64() - t_entry) / 16));
     };
     auto* signals = reinterpret_cast<uint32_t*>(buffer);

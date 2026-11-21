@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 import types
+import os
 
 import torch
 import torch.distributed as dist
@@ -52,9 +53,14 @@ class GCSymmBuffer:
                                      self.num_max_tokens_per_rank, num_topk,
                                      hidden, intermediate_hidden, ring_tokens,
                                      sf_ring_tokens, num_shared_experts, eco=eco)
+        self.clock_offset = None
+        size = self.layout.nbytes
+        if os.environ.get("GC_SM100_MATRIX_CLOCKS") == "1" and base is None:
+            self.clock_offset = align(size, 16) + align(num_experts // group.size() * 4, 8)
+            size = self.clock_offset + 32
         if base is None:
             allocator = torch if group.size() == 1 else symm_mem
-            self.buffer = allocator.empty(self.layout.nbytes, dtype=torch.int8, device='cuda')
+            self.buffer = allocator.empty(size, dtype=torch.int8, device='cuda')
             self.handle = (types.SimpleNamespace(buffer_ptrs=[self.buffer.data_ptr()])
                            if group.size() == 1 else symm_mem.rendezvous(self.buffer, group=group))
             peer_addresses = tuple(int(ptr) for ptr in self.handle.buffer_ptrs)

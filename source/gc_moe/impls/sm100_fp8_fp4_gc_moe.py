@@ -263,7 +263,7 @@ class GCMoERoleKernel:
                  has_stats: bool = False,
                  nvlink_timeout_secs: int = DEFAULT_NVLINK_BARRIER_TIMEOUT_SECS,
                  *, role_config, combine_geometry: tuple[int, int, int, int] | None = None,
-                 eco_logical_experts: int = 0, eco_trace: bool = False):
+                 eco_logical_experts: int = 0, eco_trace: bool = False, clock_offset=None):
         if role_config.role != role or role_config.block_m != block_m:
             raise ValueError('kernel role/block M differs from its host configuration')
         math_stages = role_config.num_stages
@@ -279,6 +279,7 @@ class GCMoERoleKernel:
             raise ValueError('GC math pipeline needs 2..32 TMA stages')
         if not 0 < nvlink_timeout_secs <= 2_147_483_647:
             raise ValueError('NVLink barrier timeout must fit positive INT_MAX seconds')
+        self.clock_offset = clock_offset
         self.role = role
         # ECO online split: `topk_idx` holds logical experts, every one of the `num_ranks * local_experts`
         # physical slots serves one logical expert (EcoMeta), single-copy slots go first on every rank and
@@ -835,6 +836,10 @@ class GCMoERoleKernel:
         block, _, _ = cute.arch.block_idx()
         physical_warp = cute.arch.make_warp_uniform(cute.arch.warp_idx())
         lane = tid % 32
+
+        if cutlass.const_expr(self.clock_offset is not None and self.role != 3):
+            if tid == 0:
+                red_global_min_u64(signals.iterator + self.clock_offset // 4, read_globaltimer())
 
         if cutlass.const_expr(self.role == 1):
             if cutlass.const_expr(self.eco_trace):
@@ -1595,6 +1600,9 @@ class GCMoERoleKernel:
                             k_block = Uint32(k_iter)
                             cute.arch.mbarrier_wait(data_full + data_stage,
                                                     data_phase)
+                            if cutlass.const_expr(self.clock_offset is not None):
+                                if k_block == 0 and is_shared == 0 and elect_one_sync():
+                                    red_global_min_u64(signals.iterator + self.clock_offset // 4 + 2, read_globaltimer())
                             # Keep descriptor layout bits fixed and
                             # advance only the 16-byte SMEM address field.
                             weight_desc_start = Uint32(
@@ -2042,6 +2050,9 @@ class GCMoERoleKernel:
                                                 dst, words[0], words[1],
                                                 words[2], words[3])
                         sync_aligned(256, 2)
+                    if cutlass.const_expr(self.clock_offset is not None):
+                        if task_phase == Uint32(GCBlockPhase.Linear2) and physical_warp == 4 and elect_one_sync():
+                            red_global_max_u64(signals.iterator + self.clock_offset // 4 + 4, read_globaltimer())
                     is_w1_release = task_phase == Uint32(GCBlockPhase.Linear1)
                     if cutlass.const_expr(self.shared_experts > 0):
                         is_w1_release = is_w1_release or \
@@ -2110,6 +2121,10 @@ class GCMoERoleKernel:
                 self._role3_combine(signals, rank_idx, num_tokens, y_out,
                                     block, physical_warp, lane,
                                     combine_smem, combine_bars)
+                if cutlass.const_expr(self.clock_offset is not None):
+                    if elect_one_sync():
+                        tma_store_wait_0()
+                        red_global_max_u64(signals.iterator + self.clock_offset // 4 + 6, read_globaltimer())
             if cutlass.const_expr(self.eco_trace):
                 if elect_one_sync():
                     self._eco_trace(signals, 15, 2)

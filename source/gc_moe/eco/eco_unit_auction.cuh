@@ -248,6 +248,7 @@
             const int lim = static_cast<int>(kMaxV - static_cast<uint32_t>((ki >> 40) & kMaxV)), cur = Ts[rv] + S;
             if (cur >= lim or (cur - kSlack) * static_cast<int>(kR) > tot)
                 continue;
+            if (ECO_MATRIX_AUDIT && stats != nullptr) atomicAdd(stats, 1);
             won = true;
             mv(s0, s1, (ai >> 30) & 1);
             if (r1 != rv)
@@ -387,6 +388,7 @@
             const int lim = static_cast<int>(kMaxV - static_cast<uint32_t>((ki >> 40) & kMaxV)), cur = Ts[rv] + S;
             if (cur >= lim or (cur - kSlack) * static_cast<int>(kR) > tot)
                 continue;
+            if (ECO_MATRIX_AUDIT && stats != nullptr) atomicAdd(stats, 1);
             won = true;
             mv(s0, s1, (gadd[i] >> 30) & 1);
         }
