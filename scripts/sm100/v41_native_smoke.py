@@ -12,7 +12,10 @@ def main():
     parser.add_argument("--prefix-audit", action="store_true")
     parser.add_argument("--eplb-decode", action="store_true")
     parser.add_argument("--deepinfer-rr", action="store_true")
+    parser.add_argument("--placement-file")
     args = parser.parse_args()
+    if args.placement_file and not args.deepinfer_rr:
+        parser.error("--placement-file requires --deepinfer-rr")
     if args.deepinfer_rr and not args.eplb_decode:
         parser.error("--deepinfer-rr requires --eplb-decode")
     if args.deepinfer_rr:
@@ -41,7 +44,8 @@ def main():
         max_num_batched_tokens=2048,
         **extension,
         **({"enable_eplb": True, "eplb_config": {"num_redundant_experts": 64,
-                                                 "step_interval": 3000}}
+                                                 "step_interval": 3000,
+                                                 **({"use_async": False} if args.placement_file else {})}}
            if args.eplb_decode else {}),
         seed=0,
         dtype="bfloat16",
@@ -67,6 +71,11 @@ def main():
                                   generated=int(output.token_ids[0]))), flush=True)
             tokens.append(ref_id)
         return
+    if args.placement_file:
+        moved = model.collective_rpc("install_v41_placement", args=(os.path.abspath(args.placement_file),))
+        if len(moved) != 8 or any(rank != moved[0] for rank in moved):
+            raise RuntimeError("Workers installed different placement plans")
+        print(json.dumps(dict(placement=moved[0])), flush=True)
     if args.deepinfer_rr:
         before = model.collective_rpc("inspect_rr_calls")
     out = model.generate(

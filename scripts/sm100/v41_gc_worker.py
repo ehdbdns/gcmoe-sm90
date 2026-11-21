@@ -6,6 +6,10 @@ _rr_calls = 0
 
 
 class MoeAuditWorker:
+    def install_v41_placement(self, filename):
+        from v41_placement import install
+        return install(self, filename)
+
     def inspect_rr_calls(self):
         return _rr_calls
 
