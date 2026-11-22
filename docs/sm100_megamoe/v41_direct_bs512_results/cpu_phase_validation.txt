@@ -1,0 +1,38 @@
+SM100 CPU-only validation
+checked_at=2026-11-22T19:26:00+08:00
+task_path=docs/sm100_megamoe/V41_CPU_PHASES.md
+task_sha256=09ec0eef7738f8ecbd7a531ca6b7aebdeb8e144a688c13c4d1da17a128b3bc07
+source_commit=44c63e8ccbc1298a35e83d942b50484345fcde6e
+script_path=scripts/sm100/old_pair_phases.py
+script_sha256=c596e6faca18d096bb182046450fac17725604f1c4d593a88fa984f983326eab
+python=/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/bin/python
+python_version=Python 3.12.7
+archive=/data0/home/admin/workspace/megamoe/v41-five-matrix-01
+output=docs/sm100_megamoe/v41_old_pair_phases.csv
+output_sha256=1ec2016ddc1a953eb3330a85aebb3ab56e8d963d17b766ae16871bb4a79cf1ce
+command=CUDA_VISIBLE_DEVICES="" "$python" scripts/sm100/old_pair_phases.py "$archive" > "$output"
+
+regeneration=EXACT_MATCH
+regenerated_sha256=1ec2016ddc1a953eb3330a85aebb3ab56e8d963d17b766ae16871bb4a79cf1ce
+
+Structural checks performed by the task script:
+- measure clock shape is exactly (1000 steps, 40 layers, 8 ranks, 4 edges)
+- receive-count shape is exactly (1000, 40, 8, 48)
+- every count is nonnegative and every rank/layer receives bs * 6 tokens per step
+- critical rank is selected from the full local span for each step/layer
+- all three intervals use that same critical rank
+- critical edges are positive and monotone within every step/layer
+- Mega and GC physical receive counts are identical at each BS
+
+moe_ms cross-check against the original per-BS metrics.csv (moe_graph_ms):
+BS  arm   phase_ms          metrics_ms        delta_s
+256 mega  20.354808160000   20.354808160000   0.000e+00
+256 gc    84.212796672000   84.212796672000   1.421e-14
+512 mega  21.718032192000   21.718032192000  -3.553e-15
+512 gc    85.630066016000   85.630066016000   0.000e+00
+1024 mega 21.299718112000   21.299718112000   3.553e-15
+1024 gc   81.288583808000   81.288583808000   0.000e+00
+2048 mega 21.217384256000   21.217384256000   3.553e-15
+2048 gc   87.355860736000   87.355860736000   0.000e+00
+
+result=all checks passed; no CUDA device was visible; no model was launched
