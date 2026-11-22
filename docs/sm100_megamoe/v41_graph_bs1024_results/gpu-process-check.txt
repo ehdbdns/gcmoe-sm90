@@ -1,0 +1,19 @@
+V4.1-Flash BS1024 graph-replay run: stop and GPU release check
+stop_request_time: 2026-11-22T15:15:20+08:00
+released_log_last: 2026-11-22T15:15:24+08:00
+
+Terminated PIDs (this run only):
+  launcher shell: 312375
+  run_five.sh:   312394
+  five_matrix:   1905166 (bs1024/mega_rr, interrupted)
+  vLLM workers:  1911103 1911104 1911106 1911108 1911111 1911112 1911113 1911114
+
+Post-stop check time: 2026-11-22T15:16:18+08:00
+nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory:
+(empty = no compute apps)
+fuser /dev/nvidia0..7:
+(empty = no open device handles)
+live run_five/five_matrix/five_worker:
+none
+
+Note: <defunct> VLLM worker zombies from this run may remain with PPID 1; they hold no GPU memory.
