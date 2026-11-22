@@ -112,6 +112,7 @@ class SM90GCMoERoleKernel:
         # [ECO-SM90] role 5 is the plan CTA. `eco_logical_experts > 0` turns
         # ECO on; the plan role only exists when it is on.
         self.eco = int(getattr(config, 'eco_logical_experts', 0)) > 0
+        self.split_exchange = self.eco and layout.split_exchange
         self.eco_logical = int(getattr(config, 'eco_logical_experts', 0))
         self.eco_wb = int(getattr(config, 'eco_wb', 0))
         self.eco_wa = int(getattr(config, 'eco_wa', 0))
@@ -134,6 +135,8 @@ class SM90GCMoERoleKernel:
         # plan handshake can be isolated from the split.
         self.eco_nosplit = _os.environ.get('GC_MOE_ECO_NOSPLIT') == '1'
         # [ECO-MEAS] cost-decomposition gates (compile-time, no runtime branch)
+        if self.split_exchange and self.eco_nosplit:
+            raise ValueError('split exchange requires replica pulls to wait for plan readiness')
         self.eco_null_plan = bool(getattr(config, 'eco_null_plan', False))
         self.eco_no_auction = bool(getattr(config, 'eco_no_auction', False))
         # [SM-REUSE] Role 6: a helper compute kernel that lives in the
@@ -1328,6 +1331,8 @@ class SM90GCMoERoleKernel:
                 self._eco_publish_count_state(base, slab, e, epoch)
             cute.arch.sync_threads()
             fence_sys()
+            if cutlass.const_expr(self.split_exchange):
+                self._send_replica_indices(base, peers, rank, tokens, epoch)
             if tid == 0:
                 # [ECO-DBUF] No "counts consumed" token any more: the panel is
                 # double buffered, so there is nothing for the next call to
@@ -1455,6 +1460,8 @@ class SM90GCMoERoleKernel:
                                             Uint32(self._eco_s(slab, self.eco_T_off, Uint32(_r))))
         cute.arch.sync_threads()
         fence_sys()
+        if cutlass.const_expr(self.split_exchange):
+            self._send_replica_indices(base, peers, rank, tokens, epoch)
         if tid == 0:
             self._eco_trace(base, 5)   # [ECO-MEAS] quota + warm state published
             self._eco_tl_write(base, epoch, 7, read_globaltimer())     # plan_end
@@ -1993,6 +2000,57 @@ class SM90GCMoERoleKernel:
         sync_aligned(480, 2)
 
     @cute.jit
+    def _eco_has_replica(self, base: Uint64, expert: Uint32):
+        second = self._eco_copy(base, expert, 1)
+        return second < Uint32(0x7FFF)
+
+    @cute.jit
+    def _send_replica_indices(self, base: Uint64, peers: cute.Pointer, rank: Uint32,
+                              tokens: Uint32, epoch: Uint32):
+        tid, _, _ = cute.arch.thread_idx()
+        table = cute.make_tensor(peers, cute.make_layout((self.ranks,)))
+        # Dispatch has saved the exact source ordinals (including warmup).
+        if tid == 0:
+            wait_epoch(self._field(base, 'header', Uint32) + 1, epoch, True)
+            self._fine(base, epoch, 18, rank, Uint32(0), Uint32(0), Uint32(0))
+        cute.arch.sync_threads()
+        gen = (epoch & Uint32(1)) * Uint32(self.ranks * self.physical)
+        for route in cutlass.range(tid, tokens * self.topk, self.threads):
+            raw = cell(base, Uint64(self.off_topk_idx) + Uint64(route) * 8, Int64)[0]
+            if raw >= 0 and raw < Int64(self.eco_logical):
+                expert = Uint32(raw)
+                if self._eco_has_replica(base, expert):
+                    first = self._eco_slot_of(base, expert, 0)
+                    if cutlass.const_expr(self.fixed_route_order):
+                        ordinal = cell(base, Uint64(self.off_used_route_ordinal) + Uint64(route) * 4, Uint32)[0]
+                    else:
+                        ordinal = cell(base, Uint64(self.off_replica_ordinal) + Uint64(route) * 4, Uint32)[0]
+                    pos = Uint32(ordinal)
+                    for src in cutlass.range_constexpr(self.ranks):
+                        if src < rank:
+                            pos += self._field(base, 'eco_counts', Uint32)[gen + src * self.physical + first]
+                    for k in cutlass.range_constexpr(self.eco_max_copies):
+                        slot = self._eco_copy(base, expert, k)
+                        if slot < Uint32(0x7FFF):
+                            lo = self._field(base, 'eco_quota_start', Uint32)[slot]
+                            count = self._field(base, 'eco_quota', Uint32)[slot]
+                            if pos >= lo and pos < lo + count:
+                                addr = (Uint64(self.off_source_index)
+                                        + ((Uint64(slot % Uint32(self.local)) * self.ranks + rank)
+                                           * self.capacity + ordinal) * 4)
+                                dst_index = cell(Uint64(table[slot // self.local]), addr, Uint32)
+                                dst_index[0] = Uint32(route)
+        fence_sys()
+        cute.arch.sync_threads()
+        if tid == 0:
+            st_release_u32(self._field(base, 'eco_ready', Uint32) + 2, epoch + Uint32(1), True)
+        if tid < self.ranks:
+            wait_epoch(self._field(Uint64(table[tid]), 'eco_ready', Uint32) + 2, epoch + Uint32(1), True)
+        cute.arch.sync_threads()
+        if tid == 0:
+            self._fine(base, epoch, 19, rank, Uint32(0), Uint32(0), Uint32(0))
+
+    @cute.jit
     def _eco_publish_count(self, base: Uint64, peers: cute.Pointer, rank: Uint32,
                            shard: Uint32):
         """[ECO-SM90] Broadcast slot `shard`'s canonical count to EVERY rank.
@@ -2398,16 +2456,30 @@ class SM90GCMoERoleKernel:
                         used[0] = slot
                     # NOTE: `range_constexpr` unrolls in Python, so it cannot
                     # contain `continue`; the two skip conditions are nested.
-                    for k in cutlass.range_constexpr(self.eco_max_copies):
-                        raw = self._eco_copy(base, e, k)
-                        # 0x7FFF: unused entry; bit 15: passive copy
-                        if raw != Uint32(0x7FFF) and (raw & Uint32(0x8000)) == Uint32(0):
-                            s = raw & Uint32(0x7FFF)
-                            dst = Uint64(peer_table[s // self.local])
+                    if cutlass.const_expr(self.split_exchange):
+                        first = self._eco_slot_of(base, e, 0)
+                        # Metadata packs active copies first; the next entry is
+                        # either another active slot, passive, or the sentinel.
+                        if not self._eco_has_replica(base, e):
                             addr = (Uint64(self.off_source_index)
-                                    + ((Uint64(s % Uint32(self.local)) * self.ranks + rank)
+                                    + ((Uint64(first % Uint32(self.local)) * self.ranks + rank)
                                        * self.capacity + slot) * 4)
-                            cell(dst, addr, Uint32)[0] = Uint32(route)
+                            dst_index = cell(Uint64(peer_table[first // self.local]), addr, Uint32)
+                            dst_index[0] = Uint32(route)
+                        elif cutlass.const_expr(not self.fixed_route_order):
+                            saved = cell(base, Uint64(self.off_replica_ordinal) + Uint64(route) * 4, Uint32)
+                            saved[0] = slot
+                    else:
+                        for k in cutlass.range_constexpr(self.eco_max_copies):
+                            raw = self._eco_copy(base, e, k)
+                            # 0x7FFF: unused entry; bit 15: passive copy
+                            if raw != Uint32(0x7FFF) and (raw & Uint32(0x8000)) == Uint32(0):
+                                s = raw & Uint32(0x7FFF)
+                                dst = Uint64(peer_table[s // self.local])
+                                addr = (Uint64(self.off_source_index)
+                                        + ((Uint64(s % Uint32(self.local)) * self.ranks + rank)
+                                           * self.capacity + slot) * 4)
+                                cell(dst, addr, Uint32)[0] = Uint32(route)
             elif expert_id >= 0 and expert_id < self.ranks * self.local:
                 expert_u = Uint32(expert_id)
                 slot = atom_add_u32(self._field(base, 'send_count', Uint32) + expert_u, Uint32(1))

@@ -1,5 +1,6 @@
 """Compare this trace replay with the published BS256 run of the same arm."""
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -18,7 +19,15 @@ def same(name, a, b):
 for key in ('prompt_hash', 'output_hash', 'prefill_steps', 'steps', 'layers', 'batch',
             'stream', 'cost', 'rearranged'):
     same(key, before[key], after[key])
+trial = os.environ.get('SM90_ECO_TRIAL')
+switches = {'split': 'GC_MOE_SM90_SPLIT_EXCHANGE', 'dispatch': 'GC_MOE_SM90_PLAN_DISPATCH'}
+if trial:
+    same('known trial', trial in ('baseline', *switches), True)
+    for variant, key in switches.items():
+        same(key, after['controls'].get(key), '1' if trial == variant else None)
 for key in set(before['controls']) | set(after['controls']):
+    if trial and key in switches.values():
+        continue
     if key not in {'GC_MOE_FIXED_DIR', 'GC_MOE_STRICT_STATE_DIR', 'GC_MOE_EXEC_ROOT',
                    'GC_MOE_SRC', 'GC_MOE_CHECKPOINT_ROOT'} and not key.startswith('GC_MOE_FINE_'):
         same(key, before['controls'].get(key), after['controls'].get(key))
@@ -34,6 +43,9 @@ for phase in ('stats', 'measured'):
                     same(f'{phase}/{field}/rank{a["rank"]}/{key}', a[key], b[key])
 for rank in range(8):
     with np.load(old/f'rank{rank}.npz') as a, np.load(new/f'rank{rank}.npz') as b:
+        if trial:
+            np.testing.assert_array_equal(a['auction'], b['auction'])
+            np.testing.assert_array_equal(a['clocks'][:, 5], b['clocks'][:, 5])
         for key in ('counts', 'epochs', 'native'):
             if not np.array_equal(a[key], b[key]):
                 raise ValueError(f'{arm}: rank{rank} {key} differs from historical array')
@@ -48,7 +60,15 @@ if len(sys.argv) == 5:
         same('step', c['step'], 2)
         same('alignment', c['alignment'], 'Kineto baseTimeNanoseconds')
         layers.add(layer)
+        if trial:
+            detail = load(path.with_name(path.name.replace('.counts.json', '.detail.json')))
+            for rank in detail['ranks']:
+                same('replica exchange spans', len(rank['replica_exchange']), int(trial == 'split'))
         for row in c['ranks']:
+            if trial:
+                expected = (20, 72, 72, 1) if trial == 'dispatch' else (24, 71, 71, 1)
+                same('launch grids', tuple(row['raw_kernels'][k]['grid']
+                     for k in ('dispatch', 'shared', 'routed', 'plan')), expected)
             with np.load(old/f'rank{row["rank"]}.npz') as a:
                 idx = 2 * 40 + layer
                 same('sample epoch', c['epoch'], int(a['epochs'].reshape(-1)[idx]))

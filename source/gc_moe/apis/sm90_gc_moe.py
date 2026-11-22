@@ -47,6 +47,7 @@ class ValidatedCall:
     # [SM-REUSE] SM count of the DISPATCH green partition (role 6 inherits it).
     dispatch_partition_sms: int = 0
     eco_cost_mode: int = field(default_factory=_cost_mode)
+    plan_dispatch: bool = field(default_factory=lambda: os.getenv("GC_MOE_SM90_PLAN_DISPATCH") == "1")
 
 
 def validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,

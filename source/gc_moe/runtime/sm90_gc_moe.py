@@ -239,6 +239,8 @@ class _ChildGraph:
                 # [SM-REUSE] role 6 must live in the DISPATCH green context
                 # (contexts[0]) so it inherits those 6 SMs once pull is done.
                 _ctx_idx = 0 if (index == 0 or binary.role == 6) else 1
+                if binary.role == 5 and owner.plan_dispatch:
+                    _ctx_idx = 2
                 params.kernel.ctx = owner.contexts[_ctx_idx]
                 params.kernel.gridDimX = binary.grid
                 params.kernel.gridDimY = params.kernel.gridDimZ = 1
@@ -304,7 +306,7 @@ class GreenContextPair:
 
     @_runtime_locked
     def __init__(self, device_index: int | None = None,
-                 requested_dispatch_sms: int | None = None):
+                 requested_dispatch_sms: int | None = None, *, plan_dispatch=False):
         if _RUNTIME_STATE != 'open':
             raise RuntimeError(f"kernel runtime is {_RUNTIME_STATE}")
         torch.cuda.init()
@@ -327,6 +329,8 @@ class GreenContextPair:
         # process; the Green split is device-wide and never changes.
         os.environ.setdefault('GC_MOE_SM90_DISPATCH_PARTITION_SMS',
                               str(self.dispatch_sms))
+        self.plan_dispatch = plan_dispatch
+        self.dispatch_parent = None
         parts = (communication, compute)
         if self.compute_sms < 32 or self.compute_sms % 2 or \
                 self.dispatch_sms <= 1 or self.compute_sms + self.dispatch_sms != total:
@@ -342,6 +346,18 @@ class GreenContextPair:
         self._state = 'open'
         _LIVE_PAIRS[id(self)] = self
         try:
+            if plan_dispatch:
+                # CUDA only permits a second split after the first resource
+                # has been materialized as a green context and queried again.
+                self.dispatch_parent = green_resources.make_green(self.device, communication, None)
+                parent = _ok(cu.cuGreenCtxGetDevResource(self.dispatch_parent, green_resources._SM))
+                flag = cu.CUdevSmResourceSplitByCount_flags.CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING
+                plan, groups, dispatch = _ok(cu.cuDevSmResourceSplitByCount(1, parent, flag, 1))
+                if groups != 1 or plan[0].sm.smCount != 1 or dispatch.sm.smCount + 1 != self.dispatch_sms:
+                    raise RuntimeError('CUDA cannot isolate one SM from the dispatch partition')
+                self.dispatch_sms = dispatch.sm.smCount
+                parts = (dispatch, compute, plan[0])
+                print(f'SM90 ECO partitions: dispatch={self.dispatch_sms} plan=1 compute={self.compute_sms}', flush=True)
             for part in parts:
                 green = green_resources.make_green(self.device, part, workqueue)
                 self.green.append(green)
@@ -475,6 +491,9 @@ class GreenContextPair:
                 _ok(cu.cuStreamDestroy(stream))
             for green in reversed(self.green):
                 _ok(cu.cuGreenCtxDestroy(green))
+            if self.dispatch_parent is not None:
+                _ok(cu.cuGreenCtxDestroy(self.dispatch_parent))
+                self.dispatch_parent = None
             self.retirement.clear()
             self.streams.clear()
             self.contexts.clear()
@@ -529,7 +548,7 @@ atexit.register(_close_runtime)
 
 class _ThreadContexts:
     def __init__(self):
-        self.contexts: dict[int, GreenContextPair] = {}
+        self.contexts: dict[tuple[int, bool], GreenContextPair] = {}
 
     def __del__(self):
         # Thread-local destruction runs in the owning thread. Callers must
@@ -544,15 +563,15 @@ class _ThreadContexts:
                 _pin_failed_pair(pair)
 
 
-def get_context() -> GreenContextPair:
+def get_context(*, plan_dispatch=False) -> GreenContextPair:
     current = _ok(cu.cuCtxGetCurrent())
     holder = getattr(_THREAD_LOCAL, 'holder', None)
     if holder is None:
         holder = _THREAD_LOCAL.holder = _ThreadContexts()
     contexts = holder.contexts
-    key = int(current)
+    key = (int(current), plan_dispatch)
     if key not in contexts or contexts[key]._state == 'closed':
-        contexts[key] = GreenContextPair()
+        contexts[key] = GreenContextPair(plan_dispatch=plan_dispatch)
     elif contexts[key]._state != 'open':
         raise RuntimeError(f"cached Green context pair is {contexts[key]._state}")
     return contexts[key]

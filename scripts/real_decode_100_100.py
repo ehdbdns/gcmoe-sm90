@@ -663,7 +663,7 @@ def main():
         if (any(os.getenv(k) != '1' for k in required)
                 or not os.getenv('GC_MOE_FIXED_DIR') or not os.getenv('GC_MOE_STRICT_STATE_DIR')
                 or a.profile_out or a.profile_aligned_step or a.timing_tail_steps or a.fine_layers
-                or os.getenv('GC_MOE_FINE_TRACE') != '0' or os.getenv('GC_MEASURE_FLUSH') != '0'
+                or os.getenv('GC_MOE_FINE_TRACE') != ('1' if os.getenv('GC_BS256_TRACE_DIR') else '0') or os.getenv('GC_MEASURE_FLUSH') != '0'
                 or (a.seqs_per_rank not in ((4,8,16,32,64,128,256) if matrix else (32,)) or (a.warm_steps, a.measure_steps) != (1000,1000))):
             ap.error('long cost study requires the fixed, unprofiled 1000+1000 EP8 configuration')
     if a.timing_tail_steps < 0 or (a.timing_tail_steps and
@@ -852,12 +852,15 @@ def main():
             if o.outputs and o.outputs[0].token_ids:
                 got.setdefault(o.request_id, []).extend(o.outputs[0].token_ids)
 
-    def time_window(n, blocks=None, host=None):
+    def time_window(n, blocks=None, host=None, capture=False):
         _sync()                       # drain batches queued before the window
         t0 = time.perf_counter()
         last = t0
         for i in range(1, n + 1):
-            if host is None:
+            if capture and i == 3:
+                from trace_layer.bs256_capture import capture_step
+                _collect(capture_step(engine, matrix))
+            elif host is None:
                 _collect(engine.step())
             else:
                 t = time.perf_counter_ns()
@@ -986,7 +989,7 @@ def main():
                     calls["exclusive_host"] = install(stack, engine, host)
                 elapsed = time_window(1000, blocks, host)
         else:
-            elapsed = time_window(1000, blocks)
+            elapsed = time_window(1000, blocks, capture=phase == "measure" and os.getenv("GC_BS256_TRACE_DIR"))
         rec['on'] = False
         if (rec['gen_tokens'] != [nseq]*1000 or rec['ctx_tokens'] != [0]*1000
                 or any(len(got[rid]) != n+1000 for rid,n in zip(ids,before))):

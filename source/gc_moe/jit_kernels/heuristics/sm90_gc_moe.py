@@ -80,7 +80,7 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
     # is not enough -- the plan CTA is only scheduled on a completely free SM
     # (2 CTAs per SM co-residency starved it), hence one whole SM.
     routed_grid = compute_sms * workers
-    if getattr(config, 'eco_logical_experts', 0):
+    if getattr(config, 'eco_logical_experts', 0) and not getattr(config, 'plan_dispatch', False):
         # [ECO-SM142] The routed role is PERSISTENT: `workers` CTAs per SM
         # co-reside and grid-stride over the M blocks, so `grid == CTAs`, and
         # CTAs per SM == workers. The old value `compute_sms - 1` silently

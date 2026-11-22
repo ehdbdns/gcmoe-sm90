@@ -221,7 +221,7 @@ def prepare_role_binaries(config, y, w1, w2, buffer, stats=None, context=None,
     if torch.cuda.get_device_capability(y.device) != (9, 0):
         raise ValueError('SM90 CuTe GC requires compute capability 9.0')
     if context is None:
-        context = get_context()
+        context = get_context(plan_dispatch=bool(config.eco_logical_experts and config.plan_dispatch))
     # A prepared entry holds immutable configuration and cubins, never live
     # CUDA addresses. Resident JIT code does not need filesystem scans on each
     # call. CuTe resolves its compiler environment at initialization; identity
@@ -253,7 +253,7 @@ def prepare_role_binaries(config, y, w1, w2, buffer, stats=None, context=None,
 
 def launch_sm90_gc_moe(config, y, w1, w2, buffer, stats,
                        shared_l1_weights=None, shared_l2_weights=None):
-    context = get_context()
+    context = get_context(plan_dispatch=bool(config.eco_logical_experts and config.plan_dispatch))
     binaries, arguments = prepare_role_binaries(
         config, y, w1, w2, buffer, stats, context,
         shared_l1_weights, shared_l2_weights)

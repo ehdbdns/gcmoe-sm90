@@ -46,7 +46,7 @@ def main():
     torch.cuda.init()
     torch.cuda.set_device(0)
     torch.zeros(1, device='cuda')
-    ctx = get_context()
+    ctx = get_context(plan_dispatch=eco and config.plan_dispatch)
     schedule = get_sm90_role_config(config, ctx)
     print('schedule', schedule, flush=True)
     specs = _role_specs(config, layout, schedule, step_profile and matrix != "vanilla")

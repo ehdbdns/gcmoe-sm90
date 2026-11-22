@@ -226,6 +226,7 @@ def rank_detail(row, fine, epoch):
                 last_push=max(pushes.values(), key=lambda tile: tile['end_us'], default=None),
                 tile_counts=dict(Counter(item['phase'] for item in tile_rows)),
                 active_compute_ctas=active_ctas(tile_rows),
+                replica_exchange=[span(a, b) for a, b in pair_records(rows, 18, 19, lambda rec: rec[2])],
                 pull_slots=ordered_slots, replica_plan_waits=plan_waits,
                 tiles=tile_rows, l2_pushes=list(pushes.values()), claim_events=claim_events,
                 block_releases=list(releases.values()))
@@ -254,6 +255,9 @@ def overlay(trace, details):
                 events.append(dict(ph='X', name=name, cat=key, pid=r, tid=offset + item['cta'],
                                    ts=anchors[r] + item['start_us'],
                                    dur=item['end_us'] - item['start_us'], args=item))
+        for item in rank['replica_exchange']:
+            events.append(dict(ph='X', name='replica index exchange incl. peer wait', pid=r, tid=650,
+                               ts=anchors[r] + item['start_us'], dur=item['end_us'] - item['start_us']))
         if rank['block_releases']:
             events.append(dict(ph='M', name='thread_name', pid=r, tid=600,
                                args={'name': 'Ready M blocks'}))
@@ -313,7 +317,7 @@ def analyze(capture_dir, deliver_dir, require_streamed_blocks=False, require_bat
         coarse = json.loads((deliver_dir / f'{stem}.perfetto.json').read_text())
         spans = [event for event in coarse['traceEvents'] if event.get('ph') == 'X']
         by_rank = {row['rank']: row for row in counts['ranks']}
-        require(len(spans) == RANKS * 7
+        require(len(spans) == RANKS * (6 if manifest.get("arm") == "rr" else 7)
                 and len({(event['args']['rank'], event['name']) for event in spans}) == len(spans)
                 and all(event['args']['epoch'] == epoch
                         and event['args']['step'] == counts['step']
