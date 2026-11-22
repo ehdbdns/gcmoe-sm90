@@ -1,0 +1,66 @@
+V41 host-submit CPU validation
+generated=2026-11-22T22:07:04+0800
+
+task_sha256=81dc17db0b3e02753b74979c866d9a227e10a6f7801b598204672c1e69c222ef
+execution_source_commit=b0c1b848234913550469235b5bae7f5ae951c335
+gpu_used=false model_started=false
+raw_evidence=source-raw-evidence.sha256 files=32 verification=32/32 SHA_OK before report and after report
+
+WINDOW GEOMETRY
+segment_rows=274995 data_rows=274995 (274996 lines including header)
+windows=640 expected=640 (2 arms x 8 ranks x 40 windows)
+layers_per_arm_rank=0..39
+inter_layer_intervals=624 expected=624 (2 arms x 8 ranks x 39)
+launches_seen_values=[40] for 624/624 intervals
+ambiguous_submitter_windows=0
+
+CORE IDENTITIES
+layer_1_39_segment_sum_vs_adjacent_launch_max_abs_error_us=0.001453
+layer_1_39_identity_worst_case=gc rank5 layer39
+selected_first_max_category_sum_vs_new_delta_max_abs_error_us=0.001952
+selected_first_max_category_identities=16/16 within 0.01 us
+dense_gemm_gap_not_submitted_plus_pending_identity_max_abs_error_us=0.000000
+
+CALL ALIGNMENT
+segment_key_sequences=7/8 target pairs aligned for all checked layers 0..target
+startup_only_mismatch=gc target L8 layer0 (1238 vs 1237 segments)
+selected_first_max_windows_actual_call_sequences=16/16 aligned by (category,name,enclosing_cpu_op)
+duplicate_matching=per-key occurrence on the same submitting pid/tid
+call_exclusive_time=a real call instance aggregates all nested leaf segments before early/late differencing
+
+SYNCHRONIZATION AUDIT
+cudaDeviceSynchronize=16 records, exactly one per arm/rank and only in layer0
+cudaStreamSynchronize=0
+cudaEventSynchronize=0
+cudaStreamWaitEvent=768 records, max=7.102539 us, records_over_10_us=0
+selected_L20_stream_wait_max_us=1.936523
+record_function_or_five_worker_audit_markers=0 across 202692 retained events
+
+SELECTED EXTREME RANK PAIRS
+mega L08 early=5 late=4
+mega L20 early=6 late=4
+mega L32 early=0 late=4
+mega L39 early=0 late=4
+gc L08 early=7 late=2
+gc L20 early=0 late=2
+gc L32 early=4 late=2
+gc L39 early=5 late=2
+
+FILES
+host_segments.csv.gz sha256=5acfd05129d69942b347788e01e8989b89d1ce13834db72b284ec565a5d17883
+cumulative_submission_diffs.csv sha256=d6300ebe05ce67f30cff49a3f49bec68be49f4ad89af78b86b9c6e4e1a8bee35
+expansion_windows.csv sha256=f892a0bb8202daf2a778d1569131492b19eebf08457ac59cc71ef8b7dd279d8d
+contributions.csv sha256=646ec5d45577ce0deb92017e502bb5836ef369b1c984ab853040eaac03f1804c
+call_evidence.csv sha256=5a74fd6e5e6c1471f1d21d4009f9527c05502be98ca7c4a5f583f1181564dc7e
+key_intervals.csv sha256=c799d675a5145ee24ce2a2bb21267cf356ac5a8abac41635cee5569786a805d7
+launch_gap_evidence.csv sha256=0c9ec3cd8a06d0d324d0fc8a71497787e2beaae66147c184f7ca6998112ca39b
+sequence_alignment.txt sha256=dec623276305caef8bead8d231bb0590bbbcfa30b2fafc48041a6e95378311ea
+
+ROW COUNTS
+cumulative_submission_diffs.csv=206 data rows
+expansion_windows.csv=8 data rows
+contributions.csv=224 data rows
+call_evidence.csv=160 data rows
+key_intervals.csv=4 data rows
+launch_gap_evidence.csv=4 data rows
+errors=none

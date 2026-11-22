@@ -1,0 +1,12 @@
+set -euo pipefail
+raw=/data0/home/admin/workspace/megamoe/v41-phase-bs512-ku9Hv473
+cd /tmp/sm100-native-retry-20261121-1945
+(cd "$raw" && sha256sum --quiet -c \
+  /tmp/sm100-native-retry-20261121-1945/docs/sm100_megamoe/v41_native_phase_results/raw-evidence.sha256)
+python3 scripts/sm100/native_host_submit.py \
+  "$raw/bs512" docs/sm100_megamoe/v41_entry_skew_results/intervals.csv \
+  docs/sm100_megamoe/v41_host_submit_results/host_segments.csv.gz
+/usr/bin/time -v python3 scripts/sm100/native_host_submit_report.py \
+  docs/sm100_megamoe/v41_host_submit_results/host_segments.csv.gz \
+  docs/sm100_megamoe/v41_entry_skew_results/intervals.csv \
+  "$raw/bs512" docs/sm100_megamoe/v41_host_submit_results
