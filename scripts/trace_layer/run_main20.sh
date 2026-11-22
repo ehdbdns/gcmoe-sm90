@@ -33,6 +33,10 @@ if [[ -n ${GC_MAIN24_SINGLE_BS:-} ]]; then
   case "$GC_MAIN24_SINGLE_BS" in 256|512|1024|2048) ;; *) exit 2 ;; esac
   batches=("$GC_MAIN24_SINGLE_BS")
 fi
+if [[ ${GC_COST_HOST_PROBE:-0} == 1 ]]; then
+  test "${GC_STEP_BOUNDARY:-}" = 1 && test "${GC_MAIN24_SINGLE_BS:-}" = 1024 || exit 2
+  arms=(vanilla eco_linear eco)
+fi
 export GC_MOE_MATRIX_PREFIX_CHECK=1
 for bs in "${batches[@]}"; do
   export GC_MOE_MATRIX_BS="$bs"
@@ -48,6 +52,10 @@ required = 2*8*int(os.environ["GC_MOE_KV_BYTES"]) + 2*8*40000*int(sys.argv[2])*6
 if shutil.disk_usage(sys.argv[1]).free < required:
     raise SystemExit(f"Need {required / 1024**3:.1f} free GiB on the checkpoint filesystem")
 PY
+  if [[ ${GC_COST_HOST_PROBE:-0} == 1 ]]; then
+    ref=docs/trace_executor_20261119/sm90_main24_stable_decode_bs1024_results/delivery/bs1024
+    cp "$ref/placement.json" "$GC_MOE_FIXED_DIR/placement.json"
+  fi
   for arm in "${arms[@]}"; do
     export GC_MOE_MATRIX_ARM="$arm"
     dst="$group/$arm"
@@ -79,7 +87,11 @@ PY
     if [[ $arm == rr ]]; then cp "$GC_MOE_FIXED_DIR/placement.json" "$group/"; fi
   done
   (cd "$GC_MOE_FIXED_DIR" && sha256sum stats-rank*.pt measure-rank*.pt stats-demand.npz tokens.json placement.json *-layout.json) > "$group/workload.sha256"
-  "$py" scripts/trace_layer/main20_report.py "$out" "${report_args[@]}" --bs "$bs"
+  if [[ ${GC_COST_HOST_PROBE:-0} == 1 ]]; then
+    "$py" scripts/trace_layer/cost_host_report.py "$group" "$ref"
+  else
+    "$py" scripts/trace_layer/main20_report.py "$out" "${report_args[@]}" --bs "$bs"
+  fi
   if [[ ${GC_STEP_BOUNDARY:-0} == 1 ]]; then
     "$py" scripts/trace_layer/cost_boundary_report.py "$group" > "$group/cost_boundary.csv"
   fi

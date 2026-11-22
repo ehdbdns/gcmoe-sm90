@@ -981,6 +981,9 @@ def main():
                 for obj, name in ((client, 'get_output'), (scheduler, 'schedule'),
                                   (scheduler, 'update_from_output')):
                     stack.enter_context(patch.object(obj, name, instrument(getattr(obj, name), name)))
+                if os.getenv("GC_COST_HOST_PROBE") == "1":
+                    from cost_host_probe import install
+                    calls["exclusive_host"] = install(stack, engine, host)
                 elapsed = time_window(1000, blocks, host)
         else:
             elapsed = time_window(1000, blocks)
