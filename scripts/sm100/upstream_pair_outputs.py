@@ -1,5 +1,7 @@
 """Reuse each expert's output allocation for eager warmup and graph capture."""
 
+import os
+
 import torch
 
 
@@ -9,6 +11,7 @@ class OutputAllocation:
         self.output = None
         self.input = None
         self.spec = None
+        self.debug_calls = 0
 
     def begin(self):
         self.seen = False
@@ -29,6 +32,14 @@ class OutputAllocation:
             kwargs.get("device", source.device),
             kwargs.get("layout", source.layout),
         )
+        if os.environ.get("SM100_REUSE_DEBUG") and self.debug_calls < 4:
+            self.debug_calls += 1
+            print(
+                f"REUSE mode={id(self):x} output={self.output is not None} "
+                f"match={candidate == self.spec} reused={self.reused} "
+                f"source={id(source):x}",
+                flush=True,
+            )
         if self.output is not None and not self.reused and candidate == self.spec:
             self.reused = True
             return self.output
