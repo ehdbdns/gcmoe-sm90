@@ -1,0 +1,12 @@
+postprocess=SM100 V41 BS512 dense submit
+first_pass_command=PYTHONPATH=scripts/sm100 python -u scripts/sm100/native_phase_perfetto.py <run>/bs512
+first_pass_exit=1
+first_pass_error=rank 0: unstable clock alignment 4502618961800.102 us
+cause=clock-before Kineto anchor kernel was exported as ts=0,dur=0; its GPU globaltimer reading remained valid
+fallback_scope=analysis only: retain both device readings as the measured window and map with the single valid clock-after Kineto anchor
+measurement_semantics_changed=false
+diff=analyzer-fallback.diff
+rerun_perfetto_exit=0
+rerun_skew_check_exit=0
+clock_alignment_check=16/16 before-device readings map inside their before-session profiler span
+note=alignment_drift_us is null for the fallback because a two-anchor drift cannot be independently measured

@@ -1,0 +1,14 @@
+docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/vanilla/rank0.npz: OK
+DeepInfer RR and physical load checks passed
+Traceback (most recent call last):
+  File "/data0/home/admin/workspace/megamoe/v41-dense-submit-5u4m9Asy/code/scripts/sm100/native_phase_perfetto.py", line 113, in <module>
+    build(Path(sys.argv[1]))
+  File "/data0/home/admin/workspace/megamoe/v41-dense-submit-5u4m9Asy/code/scripts/sm100/native_phase_perfetto.py", line 91, in build
+    for layer, events, row in rank_trace(folder, r, base, step, anchors_only):
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/v41-dense-submit-5u4m9Asy/code/scripts/sm100/native_phase_perfetto.py", line 44, in rank_trace
+    require(abs(drift) <= 2 * uncertainty + 5, f"rank {rank}: unstable clock alignment {drift} us")
+  File "/data0/home/admin/workspace/megamoe/v41-dense-submit-5u4m9Asy/code/scripts/sm100/native_phase_perfetto.py", line 22, in require
+    raise ValueError(message)
+ValueError: rank 0: unstable clock alignment 4502618961800.102 us
+run_five_status=1

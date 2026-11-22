@@ -1,0 +1,97 @@
+diff --git a/scripts/sm100/native_phase_perfetto.py b/scripts/sm100/native_phase_perfetto.py
+index b7ae881..05cef84 100644
+--- a/scripts/sm100/native_phase_perfetto.py
++++ b/scripts/sm100/native_phase_perfetto.py
+@@ -23,7 +23,7 @@ def require(condition, message):
+ 
+ 
+ def rank_trace(folder, rank, epoch_ns, step=2, anchors_only=False):
+-    kineto, device, widths, kernels = [], [], [], []
++    samples, kernels = [], []
+     stems = ("clock-before", "clock-after") if anchors_only else ("profile",)
+     for stem in stems:
+         raw = json.loads((folder / f"{stem}-rank{rank}.json").read_text())
+@@ -33,18 +33,54 @@ def rank_trace(folder, rank, epoch_ns, step=2, anchors_only=False):
+         clock_file = stem if anchors_only else "anchor"
+         readings = np.load(folder / f"{clock_file}-rank{rank}.npy").tolist()
+         require(len(marks) == len(readings) == (1 if anchors_only else 2), "missing Kineto calibration")
+-        kineto.extend(offset + e["ts"] + e["dur"] / 2 for e in marks)
+-        device.extend(readings)
+-        widths.extend(e["dur"] / 2 for e in marks)
++        for mark, reading in zip(marks, readings, strict=True):
++            samples.append(dict(stem=stem, kineto=offset + mark["ts"] + mark["dur"] / 2,
++                                device=int(reading), width=mark["dur"] / 2,
++                                mark_ts=mark["ts"], mark_dur=mark["dur"]))
+         if not anchors_only:
+             kernels = spans
+-    require(device[1] > device[0] and kineto[1] > kineto[0], "unordered Kineto calibration")
+-    drift = (kineto[1] - kineto[0]) - (device[1] - device[0]) / 1000
++    device_bounds = min(s["device"] for s in samples), max(s["device"] for s in samples)
++    require(device_bounds[1] > device_bounds[0], "unordered Kineto calibration")
++    method = "two_anchor"
++    note = "before and after Kineto anchors both carry explicit event time"
++    if anchors_only:
++        valid = [s for s in samples if s["mark_ts"] > 0 and s["mark_dur"] > 0]
++        if len(samples) == 2 and len(valid) == 1:
++            # PyTorch exported the before-session kernel as ts=0,dur=0.  Its GPU
++            # globaltimer reading is still valid, but its Kineto timestamp is not.
++            # Keep both device readings as the measured window and map device time
++            # with the sole valid (after) anchor.  This changes no device clock or
++            # model timing; it only avoids a bogus cross-anchor drift estimate.
++            method = "single_anchor_fallback"
++            invalid = [s["stem"] for s in samples if s not in valid]
++            note = (f"{','.join(invalid)} Kineto event is ts=0,dur=0; "
++                    f"using {valid[0]['stem']} anchor without cross-anchor drift")
++            kineto, device, widths = [valid[0]["kineto"]], [valid[0]["device"]], [valid[0]["width"]]
++            drift = None
++        else:
++            kineto = [s["kineto"] for s in samples]
++            device = [s["device"] for s in samples]
++            widths = [s["width"] for s in samples]
++            require(device[1] > device[0] and kineto[1] > kineto[0], "unordered Kineto calibration")
++            drift = (kineto[1] - kineto[0]) - (device[1] - device[0]) / 1000
++            require(abs(drift) <= 2 * max(widths) + 5,
++                    f"rank {rank}: unstable clock alignment {drift} us")
++    else:
++        kineto = [s["kineto"] for s in samples]
++        device = [s["device"] for s in samples]
++        widths = [s["width"] for s in samples]
++        require(device[1] > device[0] and kineto[1] > kineto[0], "unordered Kineto calibration")
++        drift = (kineto[1] - kineto[0]) - (device[1] - device[0]) / 1000
++        require(abs(drift) <= 2 * max(widths) + 5,
++                f"rank {rank}: unstable clock alignment {drift} us")
+     uncertainty = max(widths)
+-    require(abs(drift) <= 2 * uncertainty + 5, f"rank {rank}: unstable clock alignment {drift} us")
+ 
+-    def aligned(t):
+-        return kineto[0] + (t - device[0]) / 1000 + drift * (t - device[0]) / (device[1] - device[0])
++    if method == "single_anchor_fallback":
++        def aligned(t):
++            return kineto[0] + (t - device[0]) / 1000
++    else:
++        def aligned(t):
++            return kineto[0] + (t - device[0]) / 1000 + drift * (t - device[0]) / (device[1] - device[0])
+ 
+     with np.load(folder / f"measure-rank{rank}.npz") as f:
+         stamps, counts = f["clocks"][step], f["counts"][step]
+@@ -53,7 +89,7 @@ def rank_trace(folder, rank, epoch_ns, step=2, anchors_only=False):
+     for layer in LAYERS:
+         clocks = stamps[layer].tolist()
+         start, end = clocks[0], clocks[3]
+-        require(device[0] <= start < end <= device[1], "clocks outside profiled step")
++        require(device_bounds[0] <= start < end <= device_bounds[1], "clocks outside profiled step")
+         events = []
+         for lane, (name, a, b) in enumerate(PHASES, 1):
+             require(start <= clocks[a] <= clocks[b] <= end, f"rank {rank}, layer {layer}: {name}")
+@@ -70,7 +106,10 @@ def rank_trace(folder, rank, epoch_ns, step=2, anchors_only=False):
+         require(anchors_only or raw_count, f"rank {rank} layer {layer}: missing Kineto kernel")
+         yield layer, events, dict(rank=rank, slot_rows=counts[layer].tolist(),
+                                   tokens=int(counts[layer].sum()), device_clocks_ns=clocks,
+-                                  alignment_half_width_us=uncertainty, alignment_drift_us=drift)
++                                  alignment_half_width_us=uncertainty, alignment_drift_us=drift,
++                                  alignment_method=method, alignment_note=note,
++                                  alignment_anchor_host_ns=kineto, alignment_anchor_device_ns=device,
++                                  alignment_device_window_ns=list(device_bounds))
+ 
+ 
+ def build(root):

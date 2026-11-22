@@ -1,0 +1,39 @@
+SM100 V41 BS512 dense-submit validation
+
+[mega]
+  exit: True
+  arm_bs_workload: True
+  acquisition: True
+  dense_schedule: True
+  dense_8_ranks: True
+  dense_validated: True
+  layer_graphs_40: True
+  block_m_16: True
+  rr_zero: True
+  measure_npz: {'counts': (7, 40, 48), 'host_submit_mono_ns': (7, 40), 'clocks': (7, 40, 19)}
+[gc]
+  exit: True
+  arm_bs_workload: True
+  acquisition: True
+  dense_schedule: True
+  dense_8_ranks: True
+  dense_validated: True
+  layer_graphs_40: True
+  block_m_16: True
+  rr_zero: True
+  measure_npz: {'counts': (7, 40, 48), 'host_submit_mono_ns': (7, 40), 'clocks': (7, 40, 19)}
+
+perfetto_counts: 2 arms x 6 steps x 5 layers = 60; all have 8 ranks and 3072 routed tokens
+channels: step1 has Kineto kernels; steps2-6 contain device phase envelopes only
+overview_traces: 2 arms x 6 steps x 5 layers = 60
+
+dense_gap_rows: 32; per-arm/rank: {'mega': [0, 1, 2, 3, 4, 5, 6, 7], 'gc': [0, 1, 2, 3, 4, 5, 6, 7]}
+archived_matches: 4/4 exact quant+gemm names and shape; [('gc', '0', '1024', 'true', 'true'), ('gc', '2', '5120', 'true', 'true'), ('mega', '6', '1024', 'true', 'true'), ('mega', '4', '5120', 'true', 'true')]
+
+clock_alignment_rows: 16; all before-device readings map inside before profiler session: True
+mega anchor half width us range: 0.48..0.912
+gc anchor half width us range: 0.432..0.9285
+
+raw_evidence_manifest_entries: 112
+
+result: PASS
