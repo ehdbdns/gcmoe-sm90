@@ -1,0 +1,8 @@
+base_venv=/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv
+private_dsl_env=/data0/home/admin/workspace/megamoe/v41-upstream-pair-u8W1iH1v/dsl-env
+private_dsl=4.8.1
+previous_shared_dsl=4.7.1
+common=vllm 0.31.0, torch 2.13.0+cu130, flashinfer 0.7.0.post1, nccl 2.29.7
+mega_backend=vllm.third_party.deep_gemm.mega (vLLM vendored)
+gc_backend=gc_moe.gc (upstream 7902831)
+difference=upstream GC replaced repo source/gc_moe; private DSL 4.8.1 replaced shared 4.7.1; pinned clean upstream

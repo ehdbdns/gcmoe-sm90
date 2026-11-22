@@ -1,0 +1,41 @@
+/data0/home/admin/workspace/megamoe/native-v41-KO1hTbTj/model/model.safetensors.index.json: OK
+(Worker_TP0_EP0 pid=3438499) ERROR 11-22 16:17:36 [multiproc_executor.py:1058] 
+Traceback (most recent call last):
+  File "/tmp/sm100-native-retry-20261121-1945/scripts/sm100/native_pair.py", line 123, in <module>
+    main(a.root, a.arm)
+  File "/tmp/sm100-native-retry-20261121-1945/scripts/sm100/native_pair.py", line 112, in main
+    results[step] = rpc("pair_time", step)
+                    ^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/sm100-native-retry-20261121-1945/scripts/sm100/native_pair.py", line 73, in rpc
+    values = engine.collective_rpc(name, args=args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 446, in collective_rpc
+    return self.engine_core.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 459, in collective_rpc
+    return self.engine_core.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1037, in collective_rpc
+    return self.model_executor.collective_rpc(method, timeout, args, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 450, in collective_rpc
+    return future if non_block else future.result()
+                                    ^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 99, in result
+    return super().result()
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 103, in _wait_for_response
+    response = self.aggregate(self.get_response())
+                              ^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 439, in get_response
+    raise RuntimeError(
+RuntimeError: Worker failed with error 'expert output allocation changed', please check the stack trace above for the root cause
+(MainProcess pid=3421911) INFO 11-22 16:17:36 [multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(Worker_TP0_EP0 pid=3438499) INFO 11-22 16:17:36 [multiproc_executor.py:838] Parent process exited, terminating worker queues
+(MainProcess pid=3421911) WARNING 11-22 16:17:41 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=3421911) WARNING 11-22 16:17:46 [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=8
