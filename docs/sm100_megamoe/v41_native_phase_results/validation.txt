@@ -1,0 +1,43 @@
+V41 native phase result validation
+generated=2026-11-22T20:26:24+08:00
+
+TASK
+task_sha256=86b8b2a1eea3a1c566af27bfbe48c7637437b048e9d95f3987ce90f46d4fcf41
+
+ARM mega
+stats_steps=1000 measure_steps=3
+measure_block_m=[16]
+validated_layer_graphs=[40]
+prompt_sha256=b4fee0121ad43c17fdd5fccf5c4809602468725776257facc16f867e4c25cd86
+max_abs_drift_all_ranks_us=1.0838046874996508 (rank 7, all five layers)
+layer=00 ranks=8 tokens=3072 rank_m_blocks=413 critical_rank=0 critical_tokens=400 critical_m_blocks=54
+  perfetto_events=96 drift_us=0.637585937496624 half_width_us=0.768
+layer=08 ranks=8 tokens=3072 rank_m_blocks=440 critical_rank=5 critical_tokens=234 critical_m_blocks=45
+  perfetto_events=96 drift_us=0.840828125001281 half_width_us=0.608
+layer=20 ranks=8 tokens=3072 rank_m_blocks=433 critical_rank=6 critical_tokens=293 critical_m_blocks=50
+  perfetto_events=96 drift_us=0.768945312505821 half_width_us=0.832
+layer=32 ranks=8 tokens=3072 rank_m_blocks=427 critical_rank=0 critical_tokens=486 critical_m_blocks=62
+  perfetto_events=96 drift_us=0.637585937496624 half_width_us=0.768
+layer=39 ranks=8 tokens=3072 rank_m_blocks=415 critical_rank=0 critical_tokens=425 critical_m_blocks=53
+  perfetto_events=96 drift_us=0.637585937496624 half_width_us=0.768
+
+ARM gc
+stats_steps=1000 measure_steps=3
+measure_block_m=[16]
+validated_layer_graphs=[40]
+prompt_sha256=b4fee0121ad43c17fdd5fccf5c4809602468725776257facc16f867e4c25cd86
+max_abs_drift_all_ranks_us=1.621054687508149 (rank 7, all five layers)
+layer=00 ranks=8 tokens=3072 rank_m_blocks=411 critical_rank=0 critical_tokens=393 critical_m_blocks=51
+  perfetto_events=112 drift_us=0.76839062498766 half_width_us=0.608
+layer=08 ranks=8 tokens=3072 rank_m_blocks=433 critical_rank=7 critical_tokens=658 critical_m_blocks=68
+  perfetto_events=112 drift_us=1.62105468750815 half_width_us=0.56
+layer=20 ranks=8 tokens=3072 rank_m_blocks=431 critical_rank=0 critical_tokens=608 critical_m_blocks=65
+  perfetto_events=112 drift_us=0.76839062498766 half_width_us=0.608
+layer=32 ranks=8 tokens=3072 rank_m_blocks=437 critical_rank=4 critical_tokens=246 critical_m_blocks=45
+  perfetto_events=112 drift_us=0.846148437500233 half_width_us=0.768
+layer=39 ranks=8 tokens=3072 rank_m_blocks=420 critical_rank=5 critical_tokens=380 critical_m_blocks=53
+  perfetto_events=112 drift_us=0.842781250001281 half_width_us=0.608
+
+RAW EVIDENCE
+files=32 manifest=raw-evidence.sha256 base=/data0/home/admin/workspace/megamoe/v41-phase-bs512-ku9Hv473
+relative paths verified from the run workdir; raw Torch profiles and anchor NPY are intentionally not committed
