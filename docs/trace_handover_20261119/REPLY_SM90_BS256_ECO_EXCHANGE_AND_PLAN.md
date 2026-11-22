@@ -200,7 +200,7 @@ RuntimeError: CUDA cannot isolate one SM from the dispatch partition
 |---|---|
 | 八卡释放 | 三臂结束，`nvidia-smi --query-compute-apps` **0 条** |
 | 临时 checkout | `/tmp/sm90-eco-code-run1` 已 `git worktree remove` 并 `prune` |
-| 保留现场 | `/tmp/sm90-bs256-eco-jBhVwZVo`（三臂 raw/Perfetto/日志）；历史
+| 保留现场 | `/tmp/sm90-bs256-eco-jBhVwZVo`，**237 MB**（三臂 raw/Perfetto/日志）；历史
   `/tmp/sm90-bs256-trace-pbpMbH4u`（KV 320G + replay 12G）**未触碰** |
 | 旧现场 | BS256/512/1024 state 目录均未改动 |
 
