@@ -1,0 +1,40 @@
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]   File "/tmp/sm100-native-retry-20261121-1945/source/gc_moe/runtime/gc_moe.py", line 191, in locked
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]     return function(*args, **kwargs)
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]            ^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]   File "/tmp/sm100-native-retry-20261121-1945/source/gc_moe/runtime/gc_moe.py", line 384, in launch
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]     graph = _ChildGraph(self, binaries, args)
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]   File "/tmp/sm100-native-retry-20261121-1945/source/gc_moe/runtime/gc_moe.py", line 243, in __init__
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]     self.instantiate()
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]   File "/tmp/sm100-native-retry-20261121-1945/source/gc_moe/runtime/gc_moe.py", line 256, in instantiate
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]     self.executable = _ok(cu.cuGraphInstantiate(self.graph, 0))
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]   File "/tmp/sm100-native-retry-20261121-1945/source/gc_moe/runtime/gc_moe.py", line 25, in _ok
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]     raise RuntimeError(f"CUDA driver call failed: {result[0]}")
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058] RuntimeError: CUDA driver call failed: <CUresult.CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED: 900>
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058] 
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058] During handling of the above exception, another exception occurred:
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058] 
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058] Traceback (most recent call last):
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 1050, in _execute_worker_rpc
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]     output = func(*args, **kwargs)
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]              ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]     return func(*args, **kwargs)
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]   File "/tmp/sm100-native-retry-20261121-1945/scripts/sm100/native_pair_worker.py", line 90, in pair_time
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]     with torch.cuda.graph(graph):
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]          ^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/torch/cuda/graphs.py", line 477, in __exit__
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]     self.cuda_graph.capture_end()
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib64/python3.12/site-packages/torch/cuda/graphs.py", line 169, in capture_end
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058]     super().capture_end()
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058] torch.AcceleratorError: CUDA error: operation failed due to a previous error during capture
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058] Search for `cudaErrorStreamCaptureInvalidated' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058] For more detailed error information, run with CUDA_LOG_FILE=stderr
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058] 
+(Worker_TP6_EP6 pid=3861559) ERROR 11-22 15:35:44 [multiproc_executor.py:1058] 
+(MainProcess pid=3845266) INFO 11-22 15:35:44 [multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(Worker_TP0_EP0 pid=3861553) INFO 11-22 15:35:44 [multiproc_executor.py:838] Parent process exited, terminating worker queues
+(MainProcess pid=3845266) WARNING 11-22 15:35:49 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=3845266) WARNING 11-22 15:35:53 [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=8

@@ -1,0 +1,32 @@
+commit 3e24814b272aaef0cc4c84c14ca1b2a48d2e9961
+Author:     SM100 Executor <sm100@local>
+AuthorDate: Sun Nov 22 15:36:59 2026 +0800
+Commit:     SM100 Executor <sm100@local>
+CommitDate: Sun Nov 22 15:36:59 2026 +0800
+
+    [SM100] Defer GC child-graph instantiation to launch
+    
+    The GC child graph was instantiated unconditionally in its constructor,
+    which fails with CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED when the graph is
+    first created inside an active stream capture.  Non-capture launches
+    already instantiate before cuGraphLaunch; captured launches only add the
+    child graph as a node and let the parent instantiation own it.
+---
+ source/gc_moe/runtime/gc_moe.py | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/source/gc_moe/runtime/gc_moe.py b/source/gc_moe/runtime/gc_moe.py
+index d0b734e..5b0e765 100644
+--- a/source/gc_moe/runtime/gc_moe.py
++++ b/source/gc_moe/runtime/gc_moe.py
+@@ -240,7 +240,9 @@ class _ChildGraph:
+                     _ok(cu.cuGraphKernelNodeSetAttribute(
+                         node, cu.CUkernelNodeAttrID.CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION, attr))
+                 nodes.append(node)
+-            self.instantiate()
++            # A captured caller adds this child graph as a graph node; the
++            # parent instantiation owns it.  Instantiating here would try to
++            # instantiate an executable inside an active stream capture.
+         except Exception:
+             try:
+                 self.close()
