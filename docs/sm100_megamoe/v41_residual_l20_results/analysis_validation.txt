@@ -1,0 +1,12 @@
+V41 residual L20 CPU-only analysis
+PASS: no GPU, model, kernel or replay semantics were used or changed
+PASS: step-1 window count = 16
+PASS: maximum |window - union_busy - gap_total| = 0.000000000 us
+PASS: boundary rows = 88, unmatched = 0
+PASS: Perfetto files = gc_step001_l19_l20.perfetto.json, mega_step001_l19_l20.perfetto.json
+STEP arm=gc step=1 dense=on early=2 late=0 exit_spread=0.996us entry_spread=492.612us span_difference=492.856us alignment=profile_two_anchor
+STEP arm=gc step=4 dense=on early=2 late=3 exit_spread=1.828us entry_spread=270.719us span_difference=269.664us alignment=clock_after_single_anchor
+STEP arm=gc step=6 dense=on early=5 late=0 exit_spread=1.153us entry_spread=281.537us span_difference=281.568us alignment=clock_after_single_anchor
+STEP arm=mega step=1 dense=on early=3 late=4 exit_spread=0.784us entry_spread=291.885us span_difference=292.122us alignment=profile_two_anchor
+STEP arm=mega step=4 dense=on early=0 late=7 exit_spread=1.253us entry_spread=269.888us span_difference=269.632us alignment=clock_after_single_anchor
+STEP arm=mega step=6 dense=on early=3 late=0 exit_spread=1.054us entry_spread=260.311us span_difference=260.352us alignment=clock_after_single_anchor

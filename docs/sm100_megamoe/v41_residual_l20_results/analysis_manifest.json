@@ -1,0 +1,104 @@
+{
+  "archive": "/data0/home/admin/workspace/megamoe/v41-residual-jFOSEiJj/code/docs/sm100_megamoe/v41_dense_submit_results",
+  "boundary_match_fraction": 1.0,
+  "boundary_rows": 88,
+  "boundary_unmatched_rows": 0,
+  "cpu_only": true,
+  "gpu_used": false,
+  "max_abs_closure_error_us": 0.0,
+  "overlap_warning": "Early ranks contain same-stream reduce_scatter/mhc Kineto intervals that overlap later launches by milliseconds. They are retained as raw evidence and excluded from causal duration claims.",
+  "perfetto": {
+    "gc": {
+      "common_base_trace_us": 4503005873172.31,
+      "event_count": 705,
+      "path": "gc_step001_l19_l20.perfetto.json"
+    },
+    "mega": {
+      "common_base_trace_us": 4502618852975.567,
+      "event_count": 665,
+      "path": "mega_step001_l19_l20.perfetto.json"
+    }
+  },
+  "ranks": 16,
+  "raw_root": "/data0/home/admin/workspace/megamoe/v41-dense-submit-5u4m9Asy/run/bs512",
+  "step1_windows": 16,
+  "step_summary": {
+    "gc": {
+      "1": {
+        "alignment_half_width_us": 0.72,
+        "alignment_method": "profile_two_anchor",
+        "dense_mode": "on",
+        "early_rank": 2,
+        "l19_exit_spread_us": 0.99609375,
+        "l20_entry_spread_us": 492.6123046875,
+        "late_rank": 0,
+        "span_difference_us": 492.8564453125,
+        "span_early_us": 3762.1728515625,
+        "span_late_us": 4255.029296875
+      },
+      "4": {
+        "alignment_half_width_us": 0.9285,
+        "alignment_method": "clock_after_single_anchor",
+        "dense_mode": "on",
+        "early_rank": 2,
+        "l19_exit_spread_us": 1.828125,
+        "l20_entry_spread_us": 270.71875,
+        "late_rank": 3,
+        "span_difference_us": 269.6640625,
+        "span_early_us": 2145.6640625,
+        "span_late_us": 2415.328125
+      },
+      "6": {
+        "alignment_half_width_us": 0.9285,
+        "alignment_method": "clock_after_single_anchor",
+        "dense_mode": "on",
+        "early_rank": 5,
+        "l19_exit_spread_us": 1.1533203125,
+        "l20_entry_spread_us": 281.537109375,
+        "late_rank": 0,
+        "span_difference_us": 281.568359375,
+        "span_early_us": 2302.8798828125,
+        "span_late_us": 2584.4482421875
+      }
+    },
+    "mega": {
+      "1": {
+        "alignment_half_width_us": 0.816,
+        "alignment_method": "profile_two_anchor",
+        "dense_mode": "on",
+        "early_rank": 3,
+        "l19_exit_spread_us": 0.7841796875,
+        "l20_entry_spread_us": 291.884765625,
+        "late_rank": 4,
+        "span_difference_us": 292.1220703125,
+        "span_early_us": 2747.63671875,
+        "span_late_us": 3039.7587890625
+      },
+      "4": {
+        "alignment_half_width_us": 0.912,
+        "alignment_method": "clock_after_single_anchor",
+        "dense_mode": "on",
+        "early_rank": 0,
+        "l19_exit_spread_us": 1.2529296875,
+        "l20_entry_spread_us": 269.8876953125,
+        "late_rank": 7,
+        "span_difference_us": 269.6318359375,
+        "span_early_us": 2146.6240234375,
+        "span_late_us": 2416.255859375
+      },
+      "6": {
+        "alignment_half_width_us": 0.912,
+        "alignment_method": "clock_after_single_anchor",
+        "dense_mode": "on",
+        "early_rank": 3,
+        "l19_exit_spread_us": 1.0537109375,
+        "l20_entry_spread_us": 260.310546875,
+        "late_rank": 0,
+        "span_difference_us": 260.3515625,
+        "span_early_us": 2032.896484375,
+        "span_late_us": 2293.248046875
+      }
+    }
+  },
+  "task_commit": "ab27d06"
+}
