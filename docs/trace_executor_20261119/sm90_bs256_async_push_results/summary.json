@@ -1,0 +1,22 @@
+{
+ "task": "SM90_BS256_ASYNC_SINGLE_PUSH",
+ "execution_sha": "a4e8854cf2bba897a9c6801115a2a69e56f66121",
+ "cpu_gate": "ASYNC_SINGLE_PUSH_CPU PASS",
+ "baseline": {
+   "exit_code": 0,
+   "stats_ms": 99.808, "measured_ms": 97.238,
+   "moe_ms_999": 36.08209511911912, "moe_ms_1000": 36.08261443199999,
+   "verification": "eco historical workload verified for both windows and all eight ranks"
+ },
+ "single_push": {
+   "exit_code": 1, "launched": true,
+   "stage": "step=3: capture (stats window native check)",
+   "rank": "8/8", "req": "req0", "position": 117, "relative_offset": 0,
+   "native": 80729, "reference": 294,
+   "mismatches": 152669, "total_samples": 256000, "mismatch_fraction": 0.5964,
+   "capture_workspace": "/tmp/gcmoe-aligned-Xv03HEYY",
+   "no_perfetto_or_npz": true
+ },
+ "hardware": {"topology": "NV18 all-to-all", "p2p_all_pairs": "OK"},
+ "state_dir": "/tmp/sm90-bs256-eco-p2dQrgMq"
+}
