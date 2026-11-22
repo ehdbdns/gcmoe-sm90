@@ -20,7 +20,7 @@ for key in ('prompt_hash', 'output_hash', 'prefill_steps', 'steps', 'layers', 'b
             'stream', 'cost', 'rearranged'):
     same(key, before[key], after[key])
 trial = os.environ.get('SM90_ECO_TRIAL')
-switches = {'source_index': 'GC_MOE_SM90_SOURCE_INDEX_PULL', 'split': 'GC_MOE_SM90_SPLIT_EXCHANGE', 'dispatch': 'GC_MOE_SM90_PLAN_DISPATCH'}
+switches = {'single_push': 'GC_MOE_SM90_SINGLE_PUSH', 'source_index': 'GC_MOE_SM90_SOURCE_INDEX_PULL', 'split': 'GC_MOE_SM90_SPLIT_EXCHANGE', 'dispatch': 'GC_MOE_SM90_PLAN_DISPATCH'}
 if trial:
     same('known trial', trial in ('baseline', *switches), True)
     for variant, key in switches.items():
@@ -62,7 +62,14 @@ if len(sys.argv) == 5:
         layers.add(layer)
         if trial:
             detail = load(path.with_name(path.name.replace('.counts.json', '.detail.json')))
+            if trial == 'single_push':
+                sent = sum(span['rows'] for rank in detail['ranks'] for span in rank['singleton_sends'])
+                owned = sum(slot['owned'] for rank in detail['ranks']
+                            for slot in rank['pull_slots'] if slot['copies'] == 1)
+                same('singleton pushed versus owned rows across all ranks', sent, owned)
             for rank in detail['ranks']:
+                same('singleton sender CTAs', sorted(s['cta'] for s in rank['singleton_sends']),
+                     list(range(8)) if trial == 'single_push' else [])
                 if trial == 'source_index' or (trial == 'baseline' and os.getenv('SM90_CHECK_INDEX_TIMING')):
                     same('quota publication count', len(rank['quota_publications']), 1)
                     expected = {s['slot'] for s in rank['pull_slots'] if s['copies'] > 1 and s['owned']}

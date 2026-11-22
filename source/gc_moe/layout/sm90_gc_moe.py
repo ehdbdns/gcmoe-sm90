@@ -37,6 +37,7 @@ class SM90GCBufferLayout:
     # RR uses the same table and the two can be compared column by column.
     trace: bool = False
 
+    single_push: bool = field(init=False)
     source_index_pull: bool = field(init=False)
     split_exchange: bool = field(init=False)
     stream_blocks: bool = field(init=False)
@@ -87,6 +88,7 @@ class SM90GCBufferLayout:
         object.__setattr__(self, 'eplb_window', window)
         object.__setattr__(self, 'fixed_route_order', (matrix or self.eco) and bool(os.environ.get('GC_MOE_FIXED_DIR')))
         object.__setattr__(self, 'long_cost', os.environ.get('GC_MOE_LONG_COST') == '1')
+        object.__setattr__(self, 'single_push', self.eco and os.getenv('GC_MOE_SM90_SINGLE_PUSH') == '1')
         object.__setattr__(self, 'source_index_pull', self.eco and os.getenv('GC_MOE_SM90_SOURCE_INDEX_PULL') == '1')
         object.__setattr__(self, 'split_exchange', self.eco and os.getenv('GC_MOE_SM90_SPLIT_EXCHANGE') == '1')
         views = {}
@@ -178,6 +180,12 @@ class SM90GCBufferLayout:
             # `send_count`: that one is the push's slot allocator and has to
             # march from 0, so sharing an array for both jobs needs an extra
             # clear + grid barrier per call -- that variant deadlocked.
+            if self.single_push:
+                if self.source_index_pull or self.split_exchange or not stream_blocks:
+                    raise ValueError('single push requires streamed blocks and baseline replica transport')
+                reserve('push_arrivals', (local, (rows + min_block_m - 1) // min_block_m), 'int32', 4)
+                if not self.fixed_route_order:
+                    reserve('push_ordinal', (capacity, topk), 'int32', 4)
             if self.source_index_pull:
                 if self.split_exchange:
                     raise ValueError('select one replica index transport')

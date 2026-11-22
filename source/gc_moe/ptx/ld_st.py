@@ -434,6 +434,15 @@ def atom_acq_rel_add_u32(ptr: cute.Pointer, value: Uint32, *, loc=None, ip=None)
 
 
 @dsl_user_op
+def atom_acq_rel_sys_add_u32(ptr: cute.Pointer, value: Uint32, *, loc=None, ip=None):
+    result = llvm.inline_asm(T.i32(), [ptr.toint().ir_value(), value.ir_value()],
+                             'atom.acq_rel.sys.global.add.u32 $0, [$1], $2;',
+                             '=r,l,r,~{memory}', has_side_effects=True,
+                             asm_dialect=llvm.AsmDialect.AD_ATT)
+    return Uint32(result)
+
+
+@dsl_user_op
 def load_scale_pair(ptr: cute.Pointer, *, loc=None, ip=None):
     result = llvm.inline_asm(ir.Type.parse('!llvm.struct<(f32,f32)>'),
                               [ptr.toint().ir_value()],

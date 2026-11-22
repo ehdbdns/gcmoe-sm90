@@ -25,12 +25,15 @@ trials=(baseline split dispatch)
 if [[ ${1:-} == source-index ]]; then
   trials=(baseline source_index)
   export SM90_CHECK_INDEX_TIMING=1
+elif [[ ${1:-} == single-push ]]; then
+  trials=(baseline single_push)
 fi
 for trial in "${trials[@]}"; do
   export SM90_ECO_TRIAL="$trial"
-  unset GC_MOE_SM90_SOURCE_INDEX_PULL GC_MOE_SM90_SPLIT_EXCHANGE GC_MOE_SM90_PLAN_DISPATCH
+  unset GC_MOE_SM90_SINGLE_PUSH GC_MOE_SM90_SOURCE_INDEX_PULL GC_MOE_SM90_SPLIT_EXCHANGE GC_MOE_SM90_PLAN_DISPATCH
   grid=24
   case "$trial" in
+    single_push) export GC_MOE_SM90_SINGLE_PUSH=1 ;;
     source_index) export GC_MOE_SM90_SOURCE_INDEX_PULL=1 ;;
     split) export GC_MOE_SM90_SPLIT_EXCHANGE=1 ;;
     dispatch) export GC_MOE_SM90_PLAN_DISPATCH=1; grid=20 ;;

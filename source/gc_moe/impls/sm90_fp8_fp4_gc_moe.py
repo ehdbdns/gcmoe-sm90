@@ -15,7 +15,7 @@ from ..mma.sm90 import (
     wgmma_rs_issue, wgmma_rs_k128, wgmma_rs_k32_pair, wgmma_rs_wait,
 )
 from ..ptx.ld_st import (
-    atom_acq_rel_add_u32, atom_add_u32, atom_max_u32_global,
+    atom_acq_rel_add_u32, atom_acq_rel_sys_add_u32, atom_add_u32, atom_max_u32_global,
     atom_min_u32_global,
     st_global_u32,
     atom_release_gpu_add_u32,
@@ -112,6 +112,7 @@ class SM90GCMoERoleKernel:
         # [ECO-SM90] role 5 is the plan CTA. `eco_logical_experts > 0` turns
         # ECO on; the plan role only exists when it is on.
         self.eco = int(getattr(config, 'eco_logical_experts', 0)) > 0
+        self.single_push = self.eco and layout.single_push
         self.source_index_pull = self.eco and layout.source_index_pull
         self.split_exchange = self.eco and layout.split_exchange
         self.eco_logical = int(getattr(config, 'eco_logical_experts', 0))
@@ -2370,6 +2371,69 @@ class SM90GCMoERoleKernel:
         cute.arch.sync_threads()
 
     @cute.jit
+    def _push_single_rows(self, base: Uint64, peers: cute.Tensor, rank: Uint32,
+                          tokens: Uint32, epoch: Uint32, by_warp: cute.Pointer, stage: cute.Pointer, pull_bar: cute.Pointer,
+                          phases: cute.Pointer, warp_row_bytes: cutlass.Constexpr):
+        tid, _, _ = cute.arch.thread_idx()
+        block, _, _ = cute.arch.block_idx()
+        lane, warp = tid % 32, tid // 32
+        warps = self.threads // 32
+        senders = min(8, self.grid)
+        blocks_per_slot = (self.rows + self.max_m - 1) // self.max_m
+        if block < senders:
+            if tid == 0:
+                self._fine(base, epoch, 22, Uint32(block), Uint32(0), Uint32(0), Uint32(0))
+            pushed = Uint32(0)
+            for route in cutlass.range(block * warps + warp, tokens * self.topk, senders * warps):
+                logical = cell(base, Uint64(self.off_topk_idx) + Uint64(route) * 8, Int64)[0]
+                if logical >= 0 and logical < self.eco_logical:
+                    e = Uint32(logical)
+                    if not self._eco_has_replica(base, e):
+                        physical = self._eco_slot_of(base, e, 0)
+                        dst = Uint64(peers[physical // self.local])
+                        expert = physical % Uint32(self.local)
+                        prefix = Uint32(0)
+                        if lane < rank:
+                            prefix = ld_acquire_sys_u32(self._field(Uint64(peers[lane]), 'send_count', Uint32) + e)
+                        for shift in cutlass.range_constexpr(5):
+                            prefix += cute.arch.shuffle_sync_bfly(prefix, 1 << shift)
+                        if cutlass.const_expr(self.fixed_route_order):
+                            ordinal = self._field(base, 'used_route_ordinal', Uint32)[route]
+                        else:
+                            ordinal = self._field(base, 'push_ordinal', Uint32)[route]
+                        row = prefix + ordinal
+                        token = Uint32(route) // Uint32(self.topk)
+                        self._copy_activation(dst, base, token, expert, row, stage,
+                                              Uint32(warp * warp_row_bytes), pull_bar, phases)
+                        if lane == 0:
+                            index = Uint64(expert) * self.rows + Uint64(row)
+                            meta = cell(dst, Uint64(self.off_route_meta) + index * 12, Uint32)
+                            meta[0] = rank
+                            meta[1] = token
+                            meta[2] = Uint32(route) % Uint32(self.topk)
+                            weight = cell(dst, Uint64(self.off_route_weight) + index * 4, Float32)
+                            weight[0] = self._field(base, 'topk_weights', Float32)[route]
+                        if cutlass.const_expr(self.fine_trace):
+                            pushed += Uint32(1)
+                        fence_sys()
+                        cute.arch.sync_warp()
+                        if lane == 0:
+                            arrived = self._field(dst, 'push_arrivals', Uint32)
+                            atom_acq_rel_sys_add_u32(arrived + expert * blocks_per_slot + row // self.max_m, Uint32(1))
+            cute.arch.sync_threads()
+            if cutlass.const_expr(self.fine_trace):
+                # Copy barriers are idle and the counts/prefix area is still unused.
+                if lane == 0:
+                    by_warp[warp] = pushed
+                cute.arch.sync_threads()
+                if tid == 0:
+                    total = Uint32(0)
+                    for w in cutlass.range_constexpr(warps):
+                        total += by_warp[w]
+                    self._fine(base, epoch, 23, Uint32(block), total, Uint32(0), Uint32(0))
+        cute.arch.sync_threads()
+
+    @cute.jit
     def _dispatch(self, base: Uint64, peers: cute.Pointer, rank: Uint32,
                    tokens: Uint32, stats: cute.Pointer, win: cute.Pointer, stream: cutlass.Constexpr):
         tid, _, _ = cute.arch.thread_idx()
@@ -2483,6 +2547,12 @@ class SM90GCMoERoleKernel:
         if block == 0 and tid == 0:
             self._eco_tl_write(base, epoch, 8, read_globaltimer())      # push_begin
 
+        if cutlass.const_expr(self.single_push and stream):
+            blocks_per_slot = (self.rows + self.max_m - 1) // self.max_m
+            for i in cutlass.range(block * self.threads + tid, self.local * blocks_per_slot,
+                                   self.grid * self.threads):
+                counter = cell(base, Uint64(self.off_push_arrivals) + Uint64(i) * 4, Uint32)
+                counter[0] = Uint32(0)
         for route in cutlass.range(block * self.threads + tid, tokens * self.topk,
                                    self.grid * self.threads):
             expert_id = cell(base, Uint64(self.off_topk_idx) + Uint64(route) * 8, Int64)[0]
@@ -2531,16 +2601,24 @@ class SM90GCMoERoleKernel:
                             saved = cell(base, Uint64(self.off_replica_ordinal) + Uint64(route) * 4, Uint32)
                             saved[0] = slot
                     else:
-                        for k in cutlass.range_constexpr(self.eco_max_copies):
-                            raw = self._eco_copy(base, e, k)
-                            # 0x7FFF: unused entry; bit 15: passive copy
-                            if raw != Uint32(0x7FFF) and (raw & Uint32(0x8000)) == Uint32(0):
-                                s = raw & Uint32(0x7FFF)
-                                dst = Uint64(peer_table[s // self.local])
-                                addr = (Uint64(self.off_source_index)
-                                        + ((Uint64(s % Uint32(self.local)) * self.ranks + rank)
-                                           * self.capacity + slot) * 4)
-                                cell(dst, addr, Uint32)[0] = Uint32(route)
+                        send_index = Boolean(True)
+                        if cutlass.const_expr(self.single_push and stream):
+                            send_index = self._eco_has_replica(base, e)
+                            if cutlass.const_expr(not self.fixed_route_order):
+                                if not send_index:
+                                    saved = cell(base, Uint64(self.off_push_ordinal) + Uint64(route) * 4, Uint32)
+                                    saved[0] = slot
+                        if send_index:
+                            for k in cutlass.range_constexpr(self.eco_max_copies):
+                                raw = self._eco_copy(base, e, k)
+                                # 0x7FFF: unused entry; bit 15: passive copy
+                                if raw != Uint32(0x7FFF) and (raw & Uint32(0x8000)) == Uint32(0):
+                                    s = raw & Uint32(0x7FFF)
+                                    dst = Uint64(peer_table[s // self.local])
+                                    addr = (Uint64(self.off_source_index)
+                                            + ((Uint64(s % Uint32(self.local)) * self.ranks + rank)
+                                               * self.capacity + slot) * 4)
+                                    cell(dst, addr, Uint32)[0] = Uint32(route)
             elif expert_id >= 0 and expert_id < self.ranks * self.local:
                 expert_u = Uint32(expert_id)
                 slot = atom_add_u32(self._field(base, 'send_count', Uint32) + expert_u, Uint32(1))
@@ -2653,6 +2731,9 @@ class SM90GCMoERoleKernel:
         if tid < Uint32(n_warps):
             pull_phase_smem[tid] = Uint32(0)
         cute.arch.sync_threads()
+        if cutlass.const_expr(self.single_push and stream):
+            self._push_single_rows(base, peer_table, rank, tokens, epoch, counts, stage, pull_bar,
+                                   pull_phase_smem, warp_row_bytes)
         for expert in cutlass.range(block, self.local, self.grid):
             # [ECO-SM90] per logical expert, because the copies of an expert
             # share one canonical order; without ECO the key is the global
@@ -2845,25 +2926,46 @@ class SM90GCMoERoleKernel:
                         stream_epoch_out = cell(
                             base, Uint64(self.off_fine_epx) + Uint64(expert) * 4, Uint32)
                         stream_epoch_out[0] = epoch
-                for row_lo in cutlass.range(lo, hi, self.max_m):
-                    row_hi = cute.math.min(Uint32(row_lo) + Uint32(self.max_m), hi)
-                    if cutlass.const_expr(self.source_index_pull):
-                        if replica:
-                            self._pull_replica_rows(base, peer_table, prefix, stage, pull_bar,
-                                                    pull_phase_smem, warp_row_bytes, meta_base, weight_base,
-                                                    Uint32(expert), slot_expert, lo, Uint32(row_lo), row_hi, epoch)
+                use_pull = Boolean(True)
+                if cutlass.const_expr(self.single_push):
+                    use_pull = replica != Uint32(0)
+                    if not use_pull:
+                        # The payload is already in canonical rows. Each lane monitors
+                        # a separate M block, including the partial tail. Publish within
+                        # the poll loop so a slower lane cannot hold back a ready block.
+                        cute.arch.sync_threads()  # expert_count precedes every release
+                        blocks_per_slot = (self.rows + self.max_m - 1) // self.max_m
+                        arrivals = self._field(base, 'push_arrivals', Uint32) + Uint32(expert) * blocks_per_slot
+                        for start in cutlass.range(tid * self.max_m, hi, self.threads * self.max_m):
+                            mblk = Uint32(start) // self.max_m
+                            valid = cute.math.min(Uint32(self.max_m), hi - Uint32(start))
+                            published = False
+                            while not published:
+                                if ld_acquire_sys_u32(arrivals + mblk) == valid:
+                                    self._publish_l1_batch(base, head, epoch, Uint32(expert),
+                                                           mblk, valid, rank)
+                                    published = True
+                        cute.arch.sync_threads()
+                if use_pull:
+                    for row_lo in cutlass.range(lo, hi, self.max_m):
+                        row_hi = cute.math.min(Uint32(row_lo) + Uint32(self.max_m), hi)
+                        if cutlass.const_expr(self.source_index_pull):
+                            if replica:
+                                self._pull_replica_rows(base, peer_table, prefix, stage, pull_bar,
+                                                        pull_phase_smem, warp_row_bytes, meta_base, weight_base,
+                                                        Uint32(expert), slot_expert, lo, Uint32(row_lo), row_hi, epoch)
+                            else:
+                                self._pull_slot_rows(base, peer_table, prefix, stage, pull_bar,
+                                                     pull_phase_smem, warp_row_bytes, meta_base,
+                                                     weight_base, Uint32(expert), lo, Uint32(row_lo), row_hi, replica, epoch)
                         else:
                             self._pull_slot_rows(base, peer_table, prefix, stage, pull_bar,
                                                  pull_phase_smem, warp_row_bytes, meta_base,
                                                  weight_base, Uint32(expert), lo, Uint32(row_lo), row_hi, replica, epoch)
-                    else:
-                        self._pull_slot_rows(base, peer_table, prefix, stage, pull_bar,
-                                             pull_phase_smem, warp_row_bytes, meta_base,
-                                             weight_base, Uint32(expert), lo, Uint32(row_lo), row_hi, replica, epoch)
-                    if tid == 0:
-                        mblk = (Uint32(row_lo) - lo) // Uint32(self.max_m)
-                        self._publish_l1_batch(base, head, epoch, Uint32(expert),
-                                               mblk, row_hi - Uint32(row_lo), rank)
+                        if tid == 0:
+                            mblk = (Uint32(row_lo) - lo) // Uint32(self.max_m)
+                            self._publish_l1_batch(base, head, epoch, Uint32(expert),
+                                                   mblk, row_hi - Uint32(row_lo), rank)
             else:
                 # The legacy path pulls the entire slot before publishing work.
                 for row in cutlass.range(lo + tid, hi, self.threads):

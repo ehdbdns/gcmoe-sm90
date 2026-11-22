@@ -84,6 +84,19 @@ def main():
             else:
                 raise AssertionError(f'invalid trace accepted: {expected}')
 
+        # The two timestamps belong to the same source dispatch CTA.
+        worker = fine['ranks'][0]
+        rows = worker['epochs'][str(report['epoch'])]
+        first = rows[0]
+        for kind, count in ((22, 0), (23, 17)):
+            rows.append([first[0] + kind - 22, kind, 3, count, 0, 0, 0, 0, report['epoch'], 0])
+        worker['count'] = len(rows)
+        (path / 'fine.json').write_text(json.dumps(fine))
+        [(_, detail, overlay)] = analyze(path, path)
+        [sender] = detail['ranks'][0]['singleton_sends']
+        assert (sender['cta'], sender['rows'], sender['end_us'] - sender['start_us']) == (3, 17, 1)
+        assert any(e.get('name') == 'singleton activation push' for e in overlay['traceEvents'])
+
         baseline = fine_fixture(path, report)
         rows = baseline['ranks'][0]['epochs'][str(report['epoch'])]
         last = next(r for r in rows if r[1] == 7 and r[3] == 0 and r[7] == 1)
