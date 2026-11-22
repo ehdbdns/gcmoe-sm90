@@ -32,9 +32,12 @@ HOT_BLOCKS = os.environ.get('TL_HOT_BLOCKS') == '1'
 
 
 CHECK_PUSH_RETURN = os.environ.get('TL_CHECK_PUSH_RETURN') == '1'
+CHECK_PAYLOAD = os.environ.get('TL_PUSH_PAYLOAD') == '1'
 
 
 def main():
+    if CHECK_PAYLOAD and not (CHECK_PUSH_RETURN and os.getenv('GC_MOE_FIXED_DIR')):
+        raise ValueError('payload comparison requires return-address checks and the fixed-replay ABI')
     if CHECK_PUSH_RETURN and not HOT_BLOCKS:
         raise ValueError('push return-address check requires TL_HOT_BLOCKS=1')
     lr = int(os.environ['LOCAL_RANK'])
@@ -65,6 +68,8 @@ def main():
            torch.rand((H, si // 32), dtype=torch.float32, device=dev) + 0.5)
     sw1t, sw2t = transform_weights_for_gc_moe_sm90(sw1, sw2)
 
+    if CHECK_PAYLOAD:
+        gen.manual_seed(31 + rank)
     raw = torch.randn((T, H), dtype=torch.bfloat16, device=dev, generator=gen) * 0.5
     xq, xsf = per_token_cast_to_fp8(raw, use_ue8m0=False, gran_k=128)
     sc = torch.randn((T, E), dtype=torch.float32, device=dev, generator=gen)
@@ -122,6 +127,12 @@ def main():
     except Exception as exc:  # noqa: BLE001
         print(f'[cap] CAPTURE FAILED rank{rank}: {type(exc).__name__}: {exc}', flush=True)
         raise
+    if CHECK_PAYLOAD:
+        from trace_layer.single_push_payload import verify_push_replays
+        verify_push_replays(buf, g, out, lay.phy2log, raw, sc, hot, TOPK, per_token_cast_to_fp8)
+        if rank == 0:
+            print('ECO_CAPTURE OK', flush=True)
+        return
     if CHECK_PUSH_RETURN:
         buf.route_meta.zero_()
         torch.cuda.synchronize()

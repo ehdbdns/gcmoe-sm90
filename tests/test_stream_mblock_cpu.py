@@ -35,6 +35,13 @@ def main():
         assert len({stream.views[name].offset for name in fields}) == len(fields)
         assert all(name not in base.views for name in fields)
         schedule = get_sm90_role_config(conf, context)
+        for hidden in range(512, 8193, 512):
+            geom = get_sm90_role_config(replace(conf, hidden=hidden), context)
+            warp_bytes = hidden + hidden // 128 * 4
+            first_row = geom.smem[0] - 384 - (geom.threads[0] // 32) * warp_bytes
+            assert first_row >= (2 * conf.ranks + 2) * 4, (hidden, first_row)
+            assert geom.grids[0] * (geom.smem[0] + 1024) <= context.dispatch_sms * 228 * 1024
+        assert (schedule.grids[0], schedule.smem[0]) == (24, 43008)
         specs = _role_specs(conf, stream, schedule, True)
         assert [spec[0] for _, spec in specs] == [1, 4, 2, 5, 3]
         routed = next(kernel for kernel, spec in specs if spec[0] == 2)

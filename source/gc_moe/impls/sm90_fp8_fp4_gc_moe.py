@@ -2739,25 +2739,12 @@ class SM90GCMoERoleKernel:
         # `mbarrier_wait` of the last chunk to AFTER the weight/scale work
         # (sm100_fp8_fp4_gc_moe.py L1184-1269), not by alternating buffers.
         #
-        # The size MATTERS: the dispatch role does a whole-grid rendezvous
-        # (`_dispatch_grid`), so every CTA must be resident at once, and
-        # `min_blocks_per_mp=4` means the smem budget is 233472/4 = 58368 B.
-        # A second buffer (84864 B/CTA) only allows 2 CTAs/SM, so 12 of the 24
-        # CTAs never start and the rendezvous hangs -- that was every earlier
-        # TMA attempt's deadlock.
+        # The launch heuristic sizes the grid so every dispatch CTA can
+        # reside on the partition while waiting at _dispatch_grid.
         warp_row_bytes = ((self.hidden + (self.hidden // 128) * 4 + 15) // 16) * 16
         n_warps = self.threads // 32
-        # Place the staging area at a FIXED offset from the top of the dynamic
-        # shared window instead of asking the allocator to continue from
-        # whatever `counts`/`prefix`/`total_shared` left behind: the window is
-        # 84864 B and the staging needs 84736 B, so 52 B of slack means an
-        # allocator bump in the wrong direction silently hands back an address
-        # outside the allocation and the TMA never lands (observed as a hang).
-        # Take the whole window ONCE and slice it by hand. Continuing the
-        # allocator from `counts`/`prefix`/`total_shared` leaves only 52 B of
-        # slack in an 84864 B window, and an alignment bump then hands back an
-        # address outside the allocation -- the TMA never lands and the kernel
-        # hangs. Everything below is placed explicitly.
+        # Slice the same 1024-byte-aligned allocation as the launch heuristic:
+        # counts and prefix at the bottom, one row per warp, then the barrier tail.
         pull_stage_bytes = n_warps * warp_row_bytes
         stage = win + Uint32(self.smem) - Uint32(pull_stage_bytes) - Uint32(384)
         pull_bar = cute.recast_ptr(win + Uint32(self.smem) - Uint32(384), dtype=Uint64)
@@ -4910,8 +4897,9 @@ class SM90GCMoERoleKernel:
                 sync_math()
         # Retire every LOCAL combine/cleanup group before the successor.
         # A next-call scatter cannot overwrite a peer's old combine slots:
-        # both dispatch paths await every peer's next input_ready before
-        # publishing any expert_ready, so that peer has finished this call.
+        # Pull waits for peer input readiness. On the asynchronous push path,
+        # each consumed row came from a source already executing the next
+        # dispatch, so that specific scatter destination has retired combine.
         # The earlier all-peer compute_ready wait also retires all old source readers.
         # This removes a redundant all-rank exit wait, including for T0.
         sync_tile()

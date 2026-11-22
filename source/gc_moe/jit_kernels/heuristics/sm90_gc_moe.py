@@ -69,7 +69,6 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
     # for the plan before pulling its quota. Growing the grid is NOT safe here
     # -- the dispatch role has a whole-grid rendezvous, so every block must be
     # resident, which caps the grid at 4 CTAs per communication SM.
-    dispatch_grid = (config.physical or config.experts) // config.ranks if direct_scan else dispatch_sms * 4
     # [ECO-SM90] The plan role (5) must be RESIDENT while the call runs: the
     # dispatch role blocks on it before it can pull a replica's quota. The
     # routed role is persistent and holds every SM of the compute partition for
@@ -90,25 +89,21 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
         # schedulable on a completely free SM -- and fill the rest with
         # `workers` CTAs each.
         routed_grid = max(1, (compute_sms - 1) * workers)
-    # [ECO-PULL] The dispatch role stages each pulled token through shared
-    # memory so it can use TMA (`cp.async.bulk`) instead of a 16-byte
-    # `ld.global.v4`/`st.global.v4` pair. One token row is `hidden` bytes (fp8)
-    # plus its scales; one staging slot per warp with a double buffer covers
-    # `2 * warps` rows so a warp can have the next pull in flight.
-    # Falls back to the tiny barrier-only allocation when the window does not
-    # fit (the plain path never uses it).
-    _pull_row_bytes = ((config.hidden + (config.hidden // 128) * 4 + 15) // 16) * 16
-    _pull_warps = (256 if not direct_scan else 128) // 32
-    dispatch_smem = max(128, ((2 * config.ranks + 2) * 4 + 127) // 128 * 128)
-    # ONE buffer per warp, like SM100 (no double buffering there).
-    _want = _pull_warps * _pull_row_bytes + 256
-    if dispatch_smem + _want <= 200 * 1024:
-        # Round UP to 1024: the dispatch path hands the whole window to
-        # `SmemAllocator.allocate(size, 1024)`, and that alignment means a size
-        # like 84864 asks for 84992 bytes -- 128 B past the real limit. The
-        # barrier block at the top of the window then lands in the overflow and
-        # the TMA's arrive/expect never becomes visible (observed as a hang).
-        dispatch_smem = ((dispatch_smem + _want + 1023) // 1024) * 1024
+    # _dispatch lays counts/prefix at the bottom, one staging row per warp
+    # in the middle, and reserves the last 384 bytes for barriers and phases.
+    row_bytes = ((config.hidden + (config.hidden // 128) * 4 + 15) // 16) * 16
+    warps = (128 if direct_scan else 256) // 32
+    counts_bytes = ((2 * config.ranks + 2) * 4 + 127) // 128 * 128
+    tail_bytes = 256 if direct_scan else 384
+    dispatch_smem = ((counts_bytes + warps * row_bytes + tail_bytes + 1023) // 1024) * 1024
+
+    if direct_scan:
+        dispatch_grid = (config.physical or config.experts) // config.ranks
+    else:
+        # All dispatch CTAs must reach the grid barrier. Large hidden widths
+        # fit only three staging windows per SM90 SM (228 KiB; 1 KiB reserved per CTA).
+        resident = min(4, (228 * 1024) // (dispatch_smem + 1024))
+        dispatch_grid = dispatch_sms * resident
 
     return SM90RoleConfig((dispatch_grid,
                            routed_grid, combine_grid),
