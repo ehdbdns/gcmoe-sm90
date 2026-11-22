@@ -240,7 +240,9 @@ class _ChildGraph:
                     _ok(cu.cuGraphKernelNodeSetAttribute(
                         node, cu.CUkernelNodeAttrID.CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION, attr))
                 nodes.append(node)
-            self.instantiate()
+            # A captured caller adds this child graph as a graph node; the
+            # parent instantiation owns it.  Instantiating here would try to
+            # instantiate an executable inside an active stream capture.
         except Exception:
             try:
                 self.close()
