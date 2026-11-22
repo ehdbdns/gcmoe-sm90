@@ -134,6 +134,22 @@ def rank_detail(row, fine, epoch):
             require(l1['batch'] == l2['batch'] and l1['time_us'] <= l2['time_us'],
                     f'inconsistent release order for slot {slot}, block {mblk}')
 
+    quota_edges = [ts(rec) for rec in rows if rec[1] == 21]
+    replica_starts = {}
+    for rec in rows:
+        if rec[1] == 20:
+            slot = rec[2]
+            replica_starts[slot] = min(ts(rec), replica_starts.get(slot, float('inf')))
+    replica_timing = []
+    if quota_edges:
+        require(len(quota_edges) == 1, 'expected a single local quota publication')
+        for slot, first in sorted(replica_starts.items()):
+            last = max(rel['time_us'] for rel in releases.values()
+                       if rel['slot'] == slot and rel['phase'] == 1)
+            require(quota_edges[0] <= first <= last, 'invalid replica transfer ordering')
+            replica_timing.append(dict(slot=slot, quota_us=quota_edges[0],
+                                       first_issue_us=first, last_block_ready_us=last))
+
     ident = lambda rec: tuple(rec[2:8])
     tiles, observed = {}, set()
     first_l1_by_slot = {}
@@ -226,6 +242,7 @@ def rank_detail(row, fine, epoch):
                 last_push=max(pushes.values(), key=lambda tile: tile['end_us'], default=None),
                 tile_counts=dict(Counter(item['phase'] for item in tile_rows)),
                 active_compute_ctas=active_ctas(tile_rows),
+                replica_timing=replica_timing, quota_publications=quota_edges,
                 replica_exchange=[span(a, b) for a, b in pair_records(rows, 18, 19, lambda rec: rec[2])],
                 pull_slots=ordered_slots, replica_plan_waits=plan_waits,
                 tiles=tile_rows, l2_pushes=list(pushes.values()), claim_events=claim_events,
@@ -255,6 +272,12 @@ def overlay(trace, details):
                 events.append(dict(ph='X', name=name, cat=key, pid=r, tid=offset + item['cta'],
                                    ts=anchors[r] + item['start_us'],
                                    dur=item['end_us'] - item['start_us'], args=item))
+        for item in rank.get('replica_timing', []):
+            for name, key in (('quota to first activation issue', 'quota_us'),
+                              ('first activation issue to last M block ready', 'first_issue_us')):
+                end = item['first_issue_us'] if key == 'quota_us' else item['last_block_ready_us']
+                events.append(dict(ph='X', name=name, cat='replica pull', pid=r, tid=700 + item['slot'],
+                                   ts=anchors[r] + item[key], dur=end - item[key], args=item))
         for item in rank['replica_exchange']:
             events.append(dict(ph='X', name='replica index exchange incl. peer wait', pid=r, tid=650,
                                ts=anchors[r] + item['start_us'], dur=item['end_us'] - item['start_us']))

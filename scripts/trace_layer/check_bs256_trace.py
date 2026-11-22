@@ -20,7 +20,7 @@ for key in ('prompt_hash', 'output_hash', 'prefill_steps', 'steps', 'layers', 'b
             'stream', 'cost', 'rearranged'):
     same(key, before[key], after[key])
 trial = os.environ.get('SM90_ECO_TRIAL')
-switches = {'split': 'GC_MOE_SM90_SPLIT_EXCHANGE', 'dispatch': 'GC_MOE_SM90_PLAN_DISPATCH'}
+switches = {'source_index': 'GC_MOE_SM90_SOURCE_INDEX_PULL', 'split': 'GC_MOE_SM90_SPLIT_EXCHANGE', 'dispatch': 'GC_MOE_SM90_PLAN_DISPATCH'}
 if trial:
     same('known trial', trial in ('baseline', *switches), True)
     for variant, key in switches.items():
@@ -63,6 +63,10 @@ if len(sys.argv) == 5:
         if trial:
             detail = load(path.with_name(path.name.replace('.counts.json', '.detail.json')))
             for rank in detail['ranks']:
+                if trial == 'source_index' or (trial == 'baseline' and os.getenv('SM90_CHECK_INDEX_TIMING')):
+                    same('quota publication count', len(rank['quota_publications']), 1)
+                    expected = {s['slot'] for s in rank['pull_slots'] if s['copies'] > 1 and s['owned']}
+                    same('replica transfer coverage', {s['slot'] for s in rank['replica_timing']}, expected)
                 same('replica exchange spans', len(rank['replica_exchange']), int(trial == 'split'))
         for row in c['ranks']:
             if trial:

@@ -26,7 +26,7 @@ if __name__ == '__main__':
     writer.writerow(['arm', 'steps', 'graph_to_first_ms', 'first_to_last_ms', 'last_to_combine_ms',
                      'moe_ms', 'moe_change_pct_vs_baseline'])
     baseline = {}
-    for trial in ('baseline', 'split', 'dispatch'):
+    for trial in sys.argv[2:] or ('baseline', 'split', 'dispatch'):
         steps = step_times(Path((root / trial / 'measurement.path').read_text().strip()))
         for sample in (steps[np.arange(len(steps)) != 2], steps):
             means = sample.mean(axis=0)

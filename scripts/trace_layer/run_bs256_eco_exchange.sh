@@ -21,11 +21,17 @@ for rank in {0..7}; do
     cmp "$ref/checkpoint/${phase}rank$rank.json" "$previous/kv/${phase}rank$rank.json"
   done
 done
-for trial in baseline split dispatch; do
+trials=(baseline split dispatch)
+if [[ ${1:-} == source-index ]]; then
+  trials=(baseline source_index)
+  export SM90_CHECK_INDEX_TIMING=1
+fi
+for trial in "${trials[@]}"; do
   export SM90_ECO_TRIAL="$trial"
-  unset GC_MOE_SM90_SPLIT_EXCHANGE GC_MOE_SM90_PLAN_DISPATCH
+  unset GC_MOE_SM90_SOURCE_INDEX_PULL GC_MOE_SM90_SPLIT_EXCHANGE GC_MOE_SM90_PLAN_DISPATCH
   grid=24
   case "$trial" in
+    source_index) export GC_MOE_SM90_SOURCE_INDEX_PULL=1 ;;
     split) export GC_MOE_SM90_SPLIT_EXCHANGE=1 ;;
     dispatch) export GC_MOE_SM90_PLAN_DISPATCH=1; grid=20 ;;
   esac
@@ -48,4 +54,4 @@ for trial in baseline split dispatch; do
   "$py" scripts/trace_layer/pull_gemm_detail.py "$dir/raw" "$dir/perfetto" --require-streamed-blocks --require-batch-claims
   "$py" scripts/trace_layer/check_bs256_trace.py "$ref/eco" "$raw" eco "$dir/perfetto" | tee "$dir/verification.txt"
 done
-"$py" scripts/trace_layer/bs256_eco_times.py "$work" | tee "$work/moe.csv"
+"$py" scripts/trace_layer/bs256_eco_times.py "$work" "${trials[@]}" | tee "$work/moe.csv"
