@@ -1,0 +1,1724 @@
+{
+  "traceEvents": [
+    {
+      "ph": "M",
+      "name": "process_name",
+      "pid": 0,
+      "tid": 0,
+      "args": {
+        "name": "Rank 0"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 0,
+      "tid": 1,
+      "args": {
+        "name": "dispatch"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 0,
+      "tid": 2,
+      "args": {
+        "name": "shared"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 0,
+      "tid": 3,
+      "args": {
+        "name": "routed"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 0,
+      "tid": 4,
+      "args": {
+        "name": "plan"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 0,
+      "tid": 5,
+      "args": {
+        "name": "combine"
+      }
+    },
+    {
+      "ph": "X",
+      "name": "count exchange",
+      "cat": "dispatch",
+      "pid": 0,
+      "tid": 1,
+      "ts": 16.4228515625,
+      "dur": 19.0,
+      "args": {
+        "rank": 0,
+        "tokens": 188.0,
+        "routed_rows": 1504,
+        "m_blocks": 50,
+        "block_m": 64,
+        "plan_cost": 348536,
+        "routed_us": 681.826,
+        "dispatch_to_routed_end_us": 875.7158203125,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "pull token",
+      "cat": "dispatch",
+      "pid": 0,
+      "tid": 1,
+      "ts": 35.4228515625,
+      "dur": 426.5703125,
+      "args": {
+        "rank": 0,
+        "tokens": 188.0,
+        "routed_rows": 1504,
+        "m_blocks": 50,
+        "block_m": 64,
+        "plan_cost": 348536,
+        "routed_us": 681.826,
+        "dispatch_to_routed_end_us": 875.7158203125,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "shared L1+L2",
+      "cat": "shared",
+      "pid": 0,
+      "tid": 2,
+      "ts": 14.5029296875,
+      "dur": 194.9130859375,
+      "args": {
+        "rank": 0,
+        "tokens": 188.0,
+        "routed_rows": 1504,
+        "m_blocks": 50,
+        "block_m": 64,
+        "plan_cost": 348536,
+        "routed_us": 681.826,
+        "dispatch_to_routed_end_us": 875.7158203125,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9892
+      }
+    },
+    {
+      "ph": "X",
+      "name": "ECO plan",
+      "cat": "plan",
+      "pid": 0,
+      "tid": 4,
+      "ts": 15.7509765625,
+      "dur": 111.6171875,
+      "args": {
+        "rank": 0,
+        "tokens": 188.0,
+        "routed_rows": 1504,
+        "m_blocks": 50,
+        "block_m": 64,
+        "plan_cost": 348536,
+        "routed_us": 681.826,
+        "dispatch_to_routed_end_us": 875.7158203125,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9896
+      }
+    },
+    {
+      "ph": "X",
+      "name": "wait token",
+      "cat": "routed",
+      "pid": 0,
+      "tid": 3,
+      "ts": 210.3125,
+      "dur": 3.0,
+      "args": {
+        "rank": 0,
+        "tokens": 188.0,
+        "routed_rows": 1504,
+        "m_blocks": 50,
+        "block_m": 64,
+        "plan_cost": 348536,
+        "routed_us": 681.826,
+        "dispatch_to_routed_end_us": 875.7158203125,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "GEMM",
+      "cat": "routed",
+      "pid": 0,
+      "tid": 3,
+      "ts": 213.3125,
+      "dur": 678.826171875,
+      "args": {
+        "rank": 0,
+        "tokens": 188.0,
+        "routed_rows": 1504,
+        "m_blocks": 50,
+        "block_m": 64,
+        "plan_cost": 348536,
+        "routed_us": 681.826,
+        "dispatch_to_routed_end_us": 875.7158203125,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "combine",
+      "cat": "combine",
+      "pid": 0,
+      "tid": 5,
+      "ts": 894.21875,
+      "dur": 44.51171875,
+      "args": {
+        "rank": 0,
+        "tokens": 188.0,
+        "routed_rows": 1504,
+        "m_blocks": 50,
+        "block_m": 64,
+        "plan_cost": 348536,
+        "routed_us": 681.826,
+        "dispatch_to_routed_end_us": 875.7158203125,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9898
+      }
+    },
+    {
+      "ph": "M",
+      "name": "process_name",
+      "pid": 1,
+      "tid": 0,
+      "args": {
+        "name": "Rank 1"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "name": "dispatch"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 1,
+      "tid": 2,
+      "args": {
+        "name": "shared"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 1,
+      "tid": 3,
+      "args": {
+        "name": "routed"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 1,
+      "tid": 4,
+      "args": {
+        "name": "plan"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 1,
+      "tid": 5,
+      "args": {
+        "name": "combine"
+      }
+    },
+    {
+      "ph": "X",
+      "name": "count exchange",
+      "cat": "dispatch",
+      "pid": 1,
+      "tid": 1,
+      "ts": 15.4912109375,
+      "dur": 21.0,
+      "args": {
+        "rank": 1,
+        "tokens": 181.0,
+        "routed_rows": 1448,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 335064,
+        "routed_us": 678.975,
+        "dispatch_to_routed_end_us": 875.3271484375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "pull token",
+      "cat": "dispatch",
+      "pid": 1,
+      "tid": 1,
+      "ts": 36.4912109375,
+      "dur": 442.16796875,
+      "args": {
+        "rank": 1,
+        "tokens": 181.0,
+        "routed_rows": 1448,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 335064,
+        "routed_us": 678.975,
+        "dispatch_to_routed_end_us": 875.3271484375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "shared L1+L2",
+      "cat": "shared",
+      "pid": 1,
+      "tid": 2,
+      "ts": 16.8037109375,
+      "dur": 194.2080078125,
+      "args": {
+        "rank": 1,
+        "tokens": 181.0,
+        "routed_rows": 1448,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 335064,
+        "routed_us": 678.975,
+        "dispatch_to_routed_end_us": 875.3271484375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9892
+      }
+    },
+    {
+      "ph": "X",
+      "name": "ECO plan",
+      "cat": "plan",
+      "pid": 1,
+      "tid": 4,
+      "ts": 18.37109375,
+      "dur": 111.904296875,
+      "args": {
+        "rank": 1,
+        "tokens": 181.0,
+        "routed_rows": 1448,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 335064,
+        "routed_us": 678.975,
+        "dispatch_to_routed_end_us": 875.3271484375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9896
+      }
+    },
+    {
+      "ph": "X",
+      "name": "wait token",
+      "cat": "routed",
+      "pid": 1,
+      "tid": 3,
+      "ts": 211.84375,
+      "dur": 3.0,
+      "args": {
+        "rank": 1,
+        "tokens": 181.0,
+        "routed_rows": 1448,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 335064,
+        "routed_us": 678.975,
+        "dispatch_to_routed_end_us": 875.3271484375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "GEMM",
+      "cat": "routed",
+      "pid": 1,
+      "tid": 3,
+      "ts": 214.84375,
+      "dur": 675.974609375,
+      "args": {
+        "rank": 1,
+        "tokens": 181.0,
+        "routed_rows": 1448,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 335064,
+        "routed_us": 678.975,
+        "dispatch_to_routed_end_us": 875.3271484375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "combine",
+      "cat": "combine",
+      "pid": 1,
+      "tid": 5,
+      "ts": 892.9306640625,
+      "dur": 45.6962890625,
+      "args": {
+        "rank": 1,
+        "tokens": 181.0,
+        "routed_rows": 1448,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 335064,
+        "routed_us": 678.975,
+        "dispatch_to_routed_end_us": 875.3271484375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9898
+      }
+    },
+    {
+      "ph": "M",
+      "name": "process_name",
+      "pid": 2,
+      "tid": 0,
+      "args": {
+        "name": "Rank 2"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 2,
+      "tid": 1,
+      "args": {
+        "name": "dispatch"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 2,
+      "tid": 2,
+      "args": {
+        "name": "shared"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 2,
+      "tid": 3,
+      "args": {
+        "name": "routed"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 2,
+      "tid": 4,
+      "args": {
+        "name": "plan"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 2,
+      "tid": 5,
+      "args": {
+        "name": "combine"
+      }
+    },
+    {
+      "ph": "X",
+      "name": "count exchange",
+      "cat": "dispatch",
+      "pid": 2,
+      "tid": 1,
+      "ts": 2.0888671875,
+      "dur": 19.0,
+      "args": {
+        "rank": 2,
+        "tokens": 187.0,
+        "routed_rows": 1496,
+        "m_blocks": 48,
+        "block_m": 64,
+        "plan_cost": 336977,
+        "routed_us": 661.859,
+        "dispatch_to_routed_end_us": 854.212890625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "pull token",
+      "cat": "dispatch",
+      "pid": 2,
+      "tid": 1,
+      "ts": 21.0888671875,
+      "dur": 442.185546875,
+      "args": {
+        "rank": 2,
+        "tokens": 187.0,
+        "routed_rows": 1496,
+        "m_blocks": 48,
+        "block_m": 64,
+        "plan_cost": 336977,
+        "routed_us": 661.859,
+        "dispatch_to_routed_end_us": 854.212890625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "shared L1+L2",
+      "cat": "shared",
+      "pid": 2,
+      "tid": 2,
+      "ts": 0.3291015625,
+      "dur": 193.6328125,
+      "args": {
+        "rank": 2,
+        "tokens": 187.0,
+        "routed_rows": 1496,
+        "m_blocks": 48,
+        "block_m": 64,
+        "plan_cost": 336977,
+        "routed_us": 661.859,
+        "dispatch_to_routed_end_us": 854.212890625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9892
+      }
+    },
+    {
+      "ph": "X",
+      "name": "ECO plan",
+      "cat": "plan",
+      "pid": 2,
+      "tid": 4,
+      "ts": 1.6728515625,
+      "dur": 113.4716796875,
+      "args": {
+        "rank": 2,
+        "tokens": 187.0,
+        "routed_rows": 1496,
+        "m_blocks": 48,
+        "block_m": 64,
+        "plan_cost": 336977,
+        "routed_us": 661.859,
+        "dispatch_to_routed_end_us": 854.212890625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9896
+      }
+    },
+    {
+      "ph": "X",
+      "name": "wait token",
+      "cat": "routed",
+      "pid": 2,
+      "tid": 3,
+      "ts": 194.4423828125,
+      "dur": 3.0,
+      "args": {
+        "rank": 2,
+        "tokens": 187.0,
+        "routed_rows": 1496,
+        "m_blocks": 48,
+        "block_m": 64,
+        "plan_cost": 336977,
+        "routed_us": 661.859,
+        "dispatch_to_routed_end_us": 854.212890625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "GEMM",
+      "cat": "routed",
+      "pid": 2,
+      "tid": 3,
+      "ts": 197.4423828125,
+      "dur": 658.859375,
+      "args": {
+        "rank": 2,
+        "tokens": 187.0,
+        "routed_rows": 1496,
+        "m_blocks": 48,
+        "block_m": 64,
+        "plan_cost": 336977,
+        "routed_us": 661.859,
+        "dispatch_to_routed_end_us": 854.212890625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "combine",
+      "cat": "combine",
+      "pid": 2,
+      "tid": 5,
+      "ts": 857.9013671875,
+      "dur": 80.83203125,
+      "args": {
+        "rank": 2,
+        "tokens": 187.0,
+        "routed_rows": 1496,
+        "m_blocks": 48,
+        "block_m": 64,
+        "plan_cost": 336977,
+        "routed_us": 661.859,
+        "dispatch_to_routed_end_us": 854.212890625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9898
+      }
+    },
+    {
+      "ph": "M",
+      "name": "process_name",
+      "pid": 3,
+      "tid": 0,
+      "args": {
+        "name": "Rank 3"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 3,
+      "tid": 1,
+      "args": {
+        "name": "dispatch"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 3,
+      "tid": 2,
+      "args": {
+        "name": "shared"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 3,
+      "tid": 3,
+      "args": {
+        "name": "routed"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 3,
+      "tid": 4,
+      "args": {
+        "name": "plan"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 3,
+      "tid": 5,
+      "args": {
+        "name": "combine"
+      }
+    },
+    {
+      "ph": "X",
+      "name": "count exchange",
+      "cat": "dispatch",
+      "pid": 3,
+      "tid": 1,
+      "ts": 0.0546875,
+      "dur": 21.0,
+      "args": {
+        "rank": 3,
+        "tokens": 208.0,
+        "routed_rows": 1664,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 355147,
+        "routed_us": 717.059,
+        "dispatch_to_routed_end_us": 918.3388671875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "pull token",
+      "cat": "dispatch",
+      "pid": 3,
+      "tid": 1,
+      "ts": 21.0546875,
+      "dur": 459.9296875,
+      "args": {
+        "rank": 3,
+        "tokens": 208.0,
+        "routed_rows": 1664,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 355147,
+        "routed_us": 717.059,
+        "dispatch_to_routed_end_us": 918.3388671875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "shared L1+L2",
+      "cat": "shared",
+      "pid": 3,
+      "tid": 2,
+      "ts": 1.23828125,
+      "dur": 199.6171875,
+      "args": {
+        "rank": 3,
+        "tokens": 208.0,
+        "routed_rows": 1664,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 355147,
+        "routed_us": 717.059,
+        "dispatch_to_routed_end_us": 918.3388671875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9892
+      }
+    },
+    {
+      "ph": "X",
+      "name": "ECO plan",
+      "cat": "plan",
+      "pid": 3,
+      "tid": 4,
+      "ts": 0.822265625,
+      "dur": 111.10546875,
+      "args": {
+        "rank": 3,
+        "tokens": 208.0,
+        "routed_rows": 1664,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 355147,
+        "routed_us": 717.059,
+        "dispatch_to_routed_end_us": 918.3388671875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9896
+      }
+    },
+    {
+      "ph": "X",
+      "name": "wait token",
+      "cat": "routed",
+      "pid": 3,
+      "tid": 3,
+      "ts": 201.3349609375,
+      "dur": 2.0,
+      "args": {
+        "rank": 3,
+        "tokens": 208.0,
+        "routed_rows": 1664,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 355147,
+        "routed_us": 717.059,
+        "dispatch_to_routed_end_us": 918.3388671875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "GEMM",
+      "cat": "routed",
+      "pid": 3,
+      "tid": 3,
+      "ts": 203.3349609375,
+      "dur": 715.05859375,
+      "args": {
+        "rank": 3,
+        "tokens": 208.0,
+        "routed_rows": 1664,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 355147,
+        "routed_us": 717.059,
+        "dispatch_to_routed_end_us": 918.3388671875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "combine",
+      "cat": "combine",
+      "pid": 3,
+      "tid": 5,
+      "ts": 919.9306640625,
+      "dur": 18.4638671875,
+      "args": {
+        "rank": 3,
+        "tokens": 208.0,
+        "routed_rows": 1664,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 355147,
+        "routed_us": 717.059,
+        "dispatch_to_routed_end_us": 918.3388671875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9898
+      }
+    },
+    {
+      "ph": "M",
+      "name": "process_name",
+      "pid": 4,
+      "tid": 0,
+      "args": {
+        "name": "Rank 4"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 4,
+      "tid": 1,
+      "args": {
+        "name": "dispatch"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 4,
+      "tid": 2,
+      "args": {
+        "name": "shared"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 4,
+      "tid": 3,
+      "args": {
+        "name": "routed"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 4,
+      "tid": 4,
+      "args": {
+        "name": "plan"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 4,
+      "tid": 5,
+      "args": {
+        "name": "combine"
+      }
+    },
+    {
+      "ph": "X",
+      "name": "count exchange",
+      "cat": "dispatch",
+      "pid": 4,
+      "tid": 1,
+      "ts": 1.3955078125,
+      "dur": 18.0,
+      "args": {
+        "rank": 4,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 349208,
+        "routed_us": 711.203,
+        "dispatch_to_routed_end_us": 911.5234375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "pull token",
+      "cat": "dispatch",
+      "pid": 4,
+      "tid": 1,
+      "ts": 19.3955078125,
+      "dur": 423.5380859375,
+      "args": {
+        "rank": 4,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 349208,
+        "routed_us": 711.203,
+        "dispatch_to_routed_end_us": 911.5234375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "shared L1+L2",
+      "cat": "shared",
+      "pid": 4,
+      "tid": 2,
+      "ts": 2.515625,
+      "dur": 198.625,
+      "args": {
+        "rank": 4,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 349208,
+        "routed_us": 711.203,
+        "dispatch_to_routed_end_us": 911.5234375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9892
+      }
+    },
+    {
+      "ph": "X",
+      "name": "ECO plan",
+      "cat": "plan",
+      "pid": 4,
+      "tid": 4,
+      "ts": 1.9716796875,
+      "dur": 112.51171875,
+      "args": {
+        "rank": 4,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 349208,
+        "routed_us": 711.203,
+        "dispatch_to_routed_end_us": 911.5234375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9896
+      }
+    },
+    {
+      "ph": "X",
+      "name": "wait token",
+      "cat": "routed",
+      "pid": 4,
+      "tid": 3,
+      "ts": 201.7158203125,
+      "dur": 3.0,
+      "args": {
+        "rank": 4,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 349208,
+        "routed_us": 711.203,
+        "dispatch_to_routed_end_us": 911.5234375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "GEMM",
+      "cat": "routed",
+      "pid": 4,
+      "tid": 3,
+      "ts": 204.7158203125,
+      "dur": 708.203125,
+      "args": {
+        "rank": 4,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 349208,
+        "routed_us": 711.203,
+        "dispatch_to_routed_end_us": 911.5234375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "combine",
+      "cat": "combine",
+      "pid": 4,
+      "tid": 5,
+      "ts": 914.359375,
+      "dur": 24.2880859375,
+      "args": {
+        "rank": 4,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 349208,
+        "routed_us": 711.203,
+        "dispatch_to_routed_end_us": 911.5234375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9898
+      }
+    },
+    {
+      "ph": "M",
+      "name": "process_name",
+      "pid": 5,
+      "tid": 0,
+      "args": {
+        "name": "Rank 5"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 5,
+      "tid": 1,
+      "args": {
+        "name": "dispatch"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 5,
+      "tid": 2,
+      "args": {
+        "name": "shared"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 5,
+      "tid": 3,
+      "args": {
+        "name": "routed"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 5,
+      "tid": 4,
+      "args": {
+        "name": "plan"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 5,
+      "tid": 5,
+      "args": {
+        "name": "combine"
+      }
+    },
+    {
+      "ph": "X",
+      "name": "count exchange",
+      "cat": "dispatch",
+      "pid": 5,
+      "tid": 1,
+      "ts": 0.53515625,
+      "dur": 18.0,
+      "args": {
+        "rank": 5,
+        "tokens": 183.0,
+        "routed_rows": 1464,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 339048,
+        "routed_us": 685.058,
+        "dispatch_to_routed_end_us": 880.9951171875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "pull token",
+      "cat": "dispatch",
+      "pid": 5,
+      "tid": 1,
+      "ts": 18.53515625,
+      "dur": 467.9541015625,
+      "args": {
+        "rank": 5,
+        "tokens": 183.0,
+        "routed_rows": 1464,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 339048,
+        "routed_us": 685.058,
+        "dispatch_to_routed_end_us": 880.9951171875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "shared L1+L2",
+      "cat": "shared",
+      "pid": 5,
+      "tid": 2,
+      "ts": 1.87890625,
+      "dur": 194.14453125,
+      "args": {
+        "rank": 5,
+        "tokens": 183.0,
+        "routed_rows": 1464,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 339048,
+        "routed_us": 685.058,
+        "dispatch_to_routed_end_us": 880.9951171875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9892
+      }
+    },
+    {
+      "ph": "X",
+      "name": "ECO plan",
+      "cat": "plan",
+      "pid": 5,
+      "tid": 4,
+      "ts": 1.0791015625,
+      "dur": 107.6162109375,
+      "args": {
+        "rank": 5,
+        "tokens": 183.0,
+        "routed_rows": 1464,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 339048,
+        "routed_us": 685.058,
+        "dispatch_to_routed_end_us": 880.9951171875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9896
+      }
+    },
+    {
+      "ph": "X",
+      "name": "wait token",
+      "cat": "routed",
+      "pid": 5,
+      "tid": 3,
+      "ts": 196.47265625,
+      "dur": 2.0,
+      "args": {
+        "rank": 5,
+        "tokens": 183.0,
+        "routed_rows": 1464,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 339048,
+        "routed_us": 685.058,
+        "dispatch_to_routed_end_us": 880.9951171875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "GEMM",
+      "cat": "routed",
+      "pid": 5,
+      "tid": 3,
+      "ts": 198.47265625,
+      "dur": 683.0576171875,
+      "args": {
+        "rank": 5,
+        "tokens": 183.0,
+        "routed_rows": 1464,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 339048,
+        "routed_us": 685.058,
+        "dispatch_to_routed_end_us": 880.9951171875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "combine",
+      "cat": "combine",
+      "pid": 5,
+      "tid": 5,
+      "ts": 883.06640625,
+      "dur": 55.4560546875,
+      "args": {
+        "rank": 5,
+        "tokens": 183.0,
+        "routed_rows": 1464,
+        "m_blocks": 49,
+        "block_m": 64,
+        "plan_cost": 339048,
+        "routed_us": 685.058,
+        "dispatch_to_routed_end_us": 880.9951171875,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9898
+      }
+    },
+    {
+      "ph": "M",
+      "name": "process_name",
+      "pid": 6,
+      "tid": 0,
+      "args": {
+        "name": "Rank 6"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 6,
+      "tid": 1,
+      "args": {
+        "name": "dispatch"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 6,
+      "tid": 2,
+      "args": {
+        "name": "shared"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 6,
+      "tid": 3,
+      "args": {
+        "name": "routed"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 6,
+      "tid": 4,
+      "args": {
+        "name": "plan"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 6,
+      "tid": 5,
+      "args": {
+        "name": "combine"
+      }
+    },
+    {
+      "ph": "X",
+      "name": "count exchange",
+      "cat": "dispatch",
+      "pid": 6,
+      "tid": 1,
+      "ts": 1.7939453125,
+      "dur": 18.0,
+      "args": {
+        "rank": 6,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 46,
+        "block_m": 64,
+        "plan_cost": 343500,
+        "routed_us": 673.984,
+        "dispatch_to_routed_end_us": 867.6181640625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "pull token",
+      "cat": "dispatch",
+      "pid": 6,
+      "tid": 1,
+      "ts": 19.7939453125,
+      "dur": 464.3046875,
+      "args": {
+        "rank": 6,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 46,
+        "block_m": 64,
+        "plan_cost": 343500,
+        "routed_us": 673.984,
+        "dispatch_to_routed_end_us": 867.6181640625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "shared L1+L2",
+      "cat": "shared",
+      "pid": 6,
+      "tid": 2,
+      "ts": 0.162109375,
+      "dur": 194.6572265625,
+      "args": {
+        "rank": 6,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 46,
+        "block_m": 64,
+        "plan_cost": 343500,
+        "routed_us": 673.984,
+        "dispatch_to_routed_end_us": 867.6181640625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9892
+      }
+    },
+    {
+      "ph": "X",
+      "name": "ECO plan",
+      "cat": "plan",
+      "pid": 6,
+      "tid": 4,
+      "ts": 1.4423828125,
+      "dur": 110.7841796875,
+      "args": {
+        "rank": 6,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 46,
+        "block_m": 64,
+        "plan_cost": 343500,
+        "routed_us": 673.984,
+        "dispatch_to_routed_end_us": 867.6181640625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9896
+      }
+    },
+    {
+      "ph": "X",
+      "name": "wait token",
+      "cat": "routed",
+      "pid": 6,
+      "tid": 3,
+      "ts": 195.427734375,
+      "dur": 2.0,
+      "args": {
+        "rank": 6,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 46,
+        "block_m": 64,
+        "plan_cost": 343500,
+        "routed_us": 673.984,
+        "dispatch_to_routed_end_us": 867.6181640625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "GEMM",
+      "cat": "routed",
+      "pid": 6,
+      "tid": 3,
+      "ts": 197.427734375,
+      "dur": 671.984375,
+      "args": {
+        "rank": 6,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 46,
+        "block_m": 64,
+        "plan_cost": 343500,
+        "routed_us": 673.984,
+        "dispatch_to_routed_end_us": 867.6181640625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "combine",
+      "cat": "combine",
+      "pid": 6,
+      "tid": 5,
+      "ts": 871.04296875,
+      "dur": 67.5849609375,
+      "args": {
+        "rank": 6,
+        "tokens": 200.0,
+        "routed_rows": 1600,
+        "m_blocks": 46,
+        "block_m": 64,
+        "plan_cost": 343500,
+        "routed_us": 673.984,
+        "dispatch_to_routed_end_us": 867.6181640625,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9898
+      }
+    },
+    {
+      "ph": "M",
+      "name": "process_name",
+      "pid": 7,
+      "tid": 0,
+      "args": {
+        "name": "Rank 7"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 7,
+      "tid": 1,
+      "args": {
+        "name": "dispatch"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 7,
+      "tid": 2,
+      "args": {
+        "name": "shared"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 7,
+      "tid": 3,
+      "args": {
+        "name": "routed"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 7,
+      "tid": 4,
+      "args": {
+        "name": "plan"
+      }
+    },
+    {
+      "ph": "M",
+      "name": "thread_name",
+      "pid": 7,
+      "tid": 5,
+      "args": {
+        "name": "combine"
+      }
+    },
+    {
+      "ph": "X",
+      "name": "count exchange",
+      "cat": "dispatch",
+      "pid": 7,
+      "tid": 1,
+      "ts": 1.6005859375,
+      "dur": 19.0,
+      "args": {
+        "rank": 7,
+        "tokens": 189.0,
+        "routed_rows": 1512,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 341901,
+        "routed_us": 677.729,
+        "dispatch_to_routed_end_us": 877.6005859375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "pull token",
+      "cat": "dispatch",
+      "pid": 7,
+      "tid": 1,
+      "ts": 20.6005859375,
+      "dur": 489.4169921875,
+      "args": {
+        "rank": 7,
+        "tokens": 189.0,
+        "routed_rows": 1512,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 341901,
+        "routed_us": 677.729,
+        "dispatch_to_routed_end_us": 877.6005859375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9890
+      }
+    },
+    {
+      "ph": "X",
+      "name": "shared L1+L2",
+      "cat": "shared",
+      "pid": 7,
+      "tid": 2,
+      "ts": 0.2880859375,
+      "dur": 200.671875,
+      "args": {
+        "rank": 7,
+        "tokens": 189.0,
+        "routed_rows": 1512,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 341901,
+        "routed_us": 677.729,
+        "dispatch_to_routed_end_us": 877.6005859375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9892
+      }
+    },
+    {
+      "ph": "X",
+      "name": "ECO plan",
+      "cat": "plan",
+      "pid": 7,
+      "tid": 4,
+      "ts": 0.0,
+      "dur": 107.904296875,
+      "args": {
+        "rank": 7,
+        "tokens": 189.0,
+        "routed_rows": 1512,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 341901,
+        "routed_us": 677.729,
+        "dispatch_to_routed_end_us": 877.6005859375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9896
+      }
+    },
+    {
+      "ph": "X",
+      "name": "wait token",
+      "cat": "routed",
+      "pid": 7,
+      "tid": 3,
+      "ts": 201.47265625,
+      "dur": 2.0,
+      "args": {
+        "rank": 7,
+        "tokens": 189.0,
+        "routed_rows": 1512,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 341901,
+        "routed_us": 677.729,
+        "dispatch_to_routed_end_us": 877.6005859375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "GEMM",
+      "cat": "routed",
+      "pid": 7,
+      "tid": 3,
+      "ts": 203.47265625,
+      "dur": 675.728515625,
+      "args": {
+        "rank": 7,
+        "tokens": 189.0,
+        "routed_rows": 1512,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 341901,
+        "routed_us": 677.729,
+        "dispatch_to_routed_end_us": 877.6005859375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9894
+      }
+    },
+    {
+      "ph": "X",
+      "name": "combine",
+      "cat": "combine",
+      "pid": 7,
+      "tid": 5,
+      "ts": 880.9609375,
+      "dur": 57.6318359375,
+      "args": {
+        "rank": 7,
+        "tokens": 189.0,
+        "routed_rows": 1512,
+        "m_blocks": 47,
+        "block_m": 64,
+        "plan_cost": 341901,
+        "routed_us": 677.729,
+        "dispatch_to_routed_end_us": 877.6005859375,
+        "step": 2,
+        "layer": 39,
+        "epoch": 46520,
+        "trace_row": 9898
+      }
+    }
+  ]
+}
