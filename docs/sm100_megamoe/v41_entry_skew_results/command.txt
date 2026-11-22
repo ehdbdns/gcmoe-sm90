@@ -1,0 +1,7 @@
+git fetch origin main
+book=docs/sm100_megamoe/V41_ENTRY_SKEW_CPU.md
+sha=$(git log -1 --format=%H origin/main -- "$book")
+archive=/tmp/sm100-native-retry-20261121-1945/docs/sm100_megamoe/v41_native_phase_results
+raw=/data0/home/admin/workspace/megamoe/v41-phase-bs512-ku9Hv473
+(cd "$raw" && sha256sum --quiet -c "$archive/raw-evidence.sha256")
+/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/bin/python scripts/sm100/native_entry_skew.py "$raw/bs512" "$archive" /tmp/sm100-native-retry-20261121-1945/docs/sm100_megamoe/v41_entry_skew_results

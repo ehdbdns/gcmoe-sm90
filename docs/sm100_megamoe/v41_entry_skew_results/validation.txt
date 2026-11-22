@@ -1,0 +1,38 @@
+V41 entry-skew CPU validation
+generated=2026-11-22T21:43:54+08:00
+
+task_sha256=367c2cbf28c2b55eeb87f941936adabe935c86c5353599561b5c6e77219d84f0
+execution_source_commit=1636e5e3b9f1b29f42618bf9b88ac32cd5114d0a
+gpu_used=false model_started=false
+raw_evidence=source-raw-evidence.sha256 files=32 verification=32/32 SHA_OK before run and after run
+intervals_rows=624 expected=624 (2 arms x 8 ranks x 39 intervals)
+kernels_rows=12278
+
+ROW GEOMETRY
+arm=mega ranks=8 per_rank_intervals=[39] layers=1..39
+arm=gc ranks=8 per_rank_intervals=[39] layers=1..39
+
+CORE IDENTITIES
+gap_eq_active_plus_uncovered_max_abs_error_us=0
+launches_seen_values=['40']
+empty_launch_timing_records=0
+launch_note=all 624 intervals had 40 ordered cudaGraphLaunch records; no trace fallback was required.
+kernel_note=kernel summed_us are per-name group totals; kernels may overlap and totals are not GPU active-union durations.
+
+SELECTED MAX-ENTRY vs MIN-ENTRY COMPARISON
+arm layer min_rank max_rank gap_delta_us active_delta_us uncovered_delta_us identity_error_us entry_host_delta_us launch_to_entry_min/max_us
+mega 08 5 4 351.546875 -1907.309570 2258.856445 0 351.472000 1547.146484/19.882812
+mega 20 6 4 383.481445 -2699.824219 3083.305664 0 383.435000 2160.097656/21.632812
+mega 32 0 4 349.310547 -2021.711914 2371.022461 0 349.173000 8674.199219/21.905273
+mega 39 0 4 389.598633 -1350.636719 1740.235352 0 389.190000 10038.788086/22.583984
+gc 08 7 2 358.048828 -1488.617188 1846.666016 0 359.121000 1151.436523/20.244141
+gc 20 0 2 348.137695 -2280.654297 2628.791992 0 349.610000 1983.097656/19.551758
+gc 32 4 2 362.666992 -2020.103516 2382.770508 0 364.021000 3614.367188/22.331055
+gc 39 5 2 340.676758 -1153.102539 1493.779297 0 341.974000 1862.004883/21.170898
+
+FILES
+intervals.csv sha256=e2238b72423996817d4d8e7d295288c647da83232c5a8da08b5185a4871b0501
+kernels.csv sha256=e53a486933049f39e07331c9c5b7430ef1a04df1bdbcb96c80c20890f14bfb1c
+skew_summary.csv sha256=03d2f2fd558c18f88fbe697edb7531050641953296c7b4fcf1ffd3ed34e81e52
+kernel_top.csv sha256=da4c9750b43ad82cab77c2cd266aa2d1572c41f2247f9eb11d7c62017a0c952e
+errors=none
