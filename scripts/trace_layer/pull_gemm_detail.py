@@ -134,6 +134,18 @@ def rank_detail(row, fine, epoch):
             require(l1['batch'] == l2['batch'] and l1['time_us'] <= l2['time_us'],
                     f'inconsistent release order for slot {slot}, block {mblk}')
 
+    snapshots = set()
+    for rec in rows:
+        if rec[1] == 24:
+            slot, mblk, valid, declared, finished = rec[2:7]
+            key = (14, slot, mblk)
+            require(key in releases and key not in snapshots and releases[key]['valid'] == valid
+                    and 0 <= finished <= declared <= RANKS
+                    and (valid == block_m or declared == RANKS),
+                    'invalid async singleton block publication')
+            releases[key].update(declared_sources=declared, finished_sources=finished)
+            snapshots.add(key)
+
     quota_edges = [ts(rec) for rec in rows if rec[1] == 21]
     replica_starts = {}
     for rec in rows:
@@ -270,7 +282,7 @@ def overlay(trace, details):
             for item in rank[key]:
                 name = f'slot {item["slot"]}'
                 if key == 'pull_slots' and rank.get('singleton_sends') and item['copies'] == 1:
-                    name += ' · wait/publish pushed rows'
+                    name += ' · finalize pushed slot'
                 if key == 'tiles':
                     name = f'L{item["phase"]} · ' + name + f' M{item["m_block"]} N{item["ntile"]}'
                 events.append(dict(ph='X', name=name, cat=key, pid=r, tid=offset + item['cta'],

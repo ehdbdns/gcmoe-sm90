@@ -68,6 +68,11 @@ if len(sys.argv) == 5:
                             for slot in rank['pull_slots'] if slot['copies'] == 1)
                 same('singleton pushed versus owned rows across all ranks', sent, owned)
             for rank in detail['ranks']:
+                if trial == 'single_push':
+                    singleton = {s['slot'] for s in rank['pull_slots'] if s['copies'] == 1}
+                    for release in rank['block_releases']:
+                        same('async singleton snapshot', 'declared_sources' in release,
+                             release['phase'] == 1 and release['slot'] in singleton)
                 same('singleton sender CTAs', sorted(s['cta'] for s in rank['singleton_sends']),
                      list(range(8)) if trial == 'single_push' else [])
                 if trial == 'source_index' or (trial == 'baseline' and os.getenv('SM90_CHECK_INDEX_TIMING')):

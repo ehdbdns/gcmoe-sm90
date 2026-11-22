@@ -109,6 +109,19 @@ def main():
         assert rank0['hot_slot']['first_l1_us'] < rank0['hot_slot']['end_us']
         assert len(rank0['block_releases']) == 6
         rows = fine['ranks'][0]['epochs'][str(report['epoch'])]
+        tail = next(r for r in rows if r[1] == 14 and r[5] < report['ranks'][0]['block_m'])
+        slot, mblk, valid = tail[3:6]
+        snap = [tail[0], 24, slot, mblk, valid, 8, 3, 0, report['epoch'], 0]
+        rows.append(snap)
+        fine['ranks'][0]['count'] += 1
+        (path / 'fine.json').write_text(json.dumps(fine))
+        [(_, detail, _)] = analyze(path, path)
+        assert any(r.get('finished_sources') == 3 for r in detail['ranks'][0]['block_releases'])
+        snap[5] = 7
+        (path / 'fine.json').write_text(json.dumps(fine))
+        reject('invalid async singleton block publication')
+        rows.pop()
+        fine['ranks'][0]['count'] -= 1
         early = next(rec for rec in rows if rec[1] == 15)
         early[0] -= 3
         (path / 'fine.json').write_text(json.dumps(fine))

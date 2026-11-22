@@ -183,7 +183,11 @@ class SM90GCBufferLayout:
             if self.single_push:
                 if self.source_index_pull or self.split_exchange or not stream_blocks:
                     raise ValueError('single push requires streamed blocks and baseline replica transport')
-                reserve('push_arrivals', (local, (rows + min_block_m - 1) // min_block_m), 'int32', 4)
+                # Alternate epochs so early peers never race a destination reset.
+                slot_words = ranks + 2 + (rows + min_block_m - 1) // min_block_m
+                reserve('push_state', (2, local, slot_words), 'int32', 4)
+                reserve('push_base', (experts,), 'int32', 4)
+                reserve('batch_valid', (batches,), 'int32', 4)
                 if not self.fixed_route_order:
                     reserve('push_ordinal', (capacity, topk), 'int32', 4)
             if self.source_index_pull:
