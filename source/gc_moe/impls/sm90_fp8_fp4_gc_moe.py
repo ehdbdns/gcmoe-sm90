@@ -2800,7 +2800,29 @@ class SM90GCMoERoleKernel:
             if block == self.grid - 1:
                 self._publish_singletons(base, rank, epoch)
         replica_headers_ready = False
-        for expert in cutlass.range(block, self.local, self.grid):
+        replica_cursor = Uint32(block)
+        single_cursor = Uint32(block)
+        for assigned in cutlass.range(block, self.local, self.grid):
+            expert = assigned
+            if cutlass.const_expr(self.single_push and stream):
+                # The publisher services singleton blocks independently. Closing
+                # a singleton may wait for all eight sources; do that bookkeeping
+                # after pulling this CTA's replicas, whose quotas may be ready now.
+                found = Boolean(False)
+                while replica_cursor < self.local and not found:
+                    candidate = replica_cursor
+                    replica_cursor += Uint32(self.grid)
+                    logical = self._eco_phy(base, rank * self.local + candidate)
+                    if self._eco_has_replica(base, logical):
+                        expert = Int32(candidate)
+                        found = Boolean(True)
+                while single_cursor < self.local and not found:
+                    candidate = single_cursor
+                    single_cursor += Uint32(self.grid)
+                    logical = self._eco_phy(base, rank * self.local + candidate)
+                    if not self._eco_has_replica(base, logical):
+                        expert = Int32(candidate)
+                        found = Boolean(True)
             # [ECO-SM90] per logical expert, because the copies of an expert
             # share one canonical order; without ECO the key is the global
             # slot (rank * local + local slot), as before.
