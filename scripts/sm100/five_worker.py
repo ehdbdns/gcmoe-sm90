@@ -70,9 +70,9 @@ class FiveWorker:
         self.backend_file = inspect.getfile(dg.fp8_fp4_mega_moe) if os.getenv("SM100_FORMAL_512") else None
         if os.getenv("SM100_FORMAL_512") and arm.startswith("gc"):
             upstream = Path(os.environ["SM100_CLOCKED_UPSTREAM"]).resolve()
-            assert (upstream in Path(self.backend_file).resolve().parents) == (arm != "gc_eco")
+            assert upstream in Path(self.backend_file).resolve().parents
             from gc_moe.runtime.gc_moe import get_context
-            ctx = get_context() if arm == "gc_eco" else get_context(num_ranks=8)
+            ctx = get_context()
             self.sm_split = dict(dispatch=ctx.dispatch_sms, compute=ctx.compute_sms)
         self.select_m = dg.get_block_m_for_mega_moe
         if (
@@ -129,6 +129,11 @@ class FiveWorker:
                     graph, target = self.layer_graphs[layer]
                     graph.replay()
                 y.copy_(target)
+                if self.eco_tables is not None and os.getenv("SM100_FORMAL_512"):
+                    plan_start = self.audit_scratch[2:4].view(torch.int64)
+                    start = scratch[self.local_slots:self.local_slots + 2].view(torch.int64)
+                    start.copy_(torch.minimum(start, plan_start))
+                    self.plan_counts[call].copy_(self.quota_view)
                 self.auction[call].copy_(self.audit_scratch[0])
                 self.recv[call].copy_(scratch)
                 return None
@@ -235,6 +240,8 @@ class FiveWorker:
         assert get_ep_group().rank_in_group == self.rank
         if phase == "measure":
             self.audit_scratch = torch.zeros(per_rank + 32, dtype=torch.int32, device="cuda")
+            if self.eco_tables is not None and os.getenv("SM100_FORMAL_512"):
+                self.plan_counts = torch.empty((n, per_rank), dtype=torch.int32, device="cuda")
             self.auction = torch.zeros(n, dtype=torch.int32, device="cuda")
         if phase == "measure":
             # Warm each real packed weight address, shape, instrumentation and JIT before
@@ -275,6 +282,12 @@ class FiveWorker:
             num_shared_experts=1,
             eco=True,
         )
+        if os.getenv("SM100_FORMAL_512"):
+            from gc_moe.layout.gc_moe import ECO_SIGNAL_OFFSETS
+            local_slots = buf.num_experts // buf.group.size()
+            offset = buf.layout.eco_base + ECO_SIGNAL_OFFSETS["eco_quota"]
+            quotas = buf.buffer.narrow(0, offset, buf.num_experts * 4).view(torch.int32)
+            self.quota_view = quotas.narrow(0, self.rank * local_slots, local_slots)
         with np.load(filename) as f:
             self.eco_tables = [
                 (
@@ -350,6 +363,12 @@ class FiveWorker:
             )
         if phase == "measure":
             if self.eco_tables is not None:
+                if os.getenv("SM100_FORMAL_512"):
+                    if not torch.equal(self.plan_counts, self.recv[:, :self.local_slots]):
+                        raise ValueError("physical receive counts differ from auction quotas")
+                    from gc_moe.eco.plan import eco_unit_config
+                    evidence["eco_unit_config"] = eco_unit_config(8, self.bm, 64)
+                    evidence["verified_local_quota_rows"] = STEPS * LAYERS
                 result["accepted"] = (
                     self.auction.cpu().numpy().reshape(STEPS, LAYERS)
                 )

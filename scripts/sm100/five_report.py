@@ -168,6 +168,14 @@ def summarize(root, bs):
                 x["native_window"] == y["native_window"] and x["prefill_native"] == y["prefill_native"]
                 for phase in ("stats", "measure")
                 for x, y in zip(ra[phase]["ranks"], rb[phase]["ranks"], strict=True))
+            if a == "gc_rr" and b == "gc_eco":
+                comparable = all(
+                    all(x[k] == y[k] for k in ("backend_file", "sm_split", "block_m"))
+                    and y.get("verified_local_quota_rows") == 40000
+                    for x, y in zip(ra["measure"]["ranks"], rb["measure"]["ranks"], strict=True))
+                controlled &= comparable and ra["layout_sha256"] == rb["layout_sha256"]
+                if not controlled:
+                    failures.append("GC_RR / GC_ECO backend, workload or placement mismatch")
             strict = controlled and equal_native
         pairs.append(
             dict(

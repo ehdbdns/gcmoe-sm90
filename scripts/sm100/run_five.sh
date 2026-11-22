@@ -28,9 +28,12 @@ if [[ ${2:-} == formal-bs512 ]]; then
   export PATH="$root/dsl-env/bin:$PATH"
   test "$(command -v python)" = "$root/dsl-env/bin/python"
   export SM100_CLOCKED_UPSTREAM="$root/upstream"
-  test "$(git -C "$root/upstream" rev-parse HEAD)" = 7902831ec4a6691b6268b308bcff5ec0cb15ec86
+  test "$(git -C "$root/upstream" rev-parse HEAD)" = fb8b65fa829c97962eb2dbc9a4ad8b759b9cd736
   git -C "$root/upstream" diff --exit-code HEAD
-  git -C "$root/upstream" apply --unidiff-zero "$repo/scripts/sm100/upstream_matrix_clocks.patch"
+  git -C "$root/upstream" apply "$repo/scripts/sm100/natureal_matrix_audit.patch"
+  cp -R "$repo/source/gc_moe/eplb" "$root/upstream/gc_moe/"
+  cp "$repo/source/gc_moe/eco/"meta_sm{90,100}.py "$root/upstream/gc_moe/eco/"
+  unset GC_MOE_ECO_BLOCK_M GC_MOE_ECO_PLAN_DISPATCH GC_MOE_ECO_HELPER GC_MOE_ECO_TRACE
   python -c 'from importlib.metadata import version; assert version("nvidia-cutlass-dsl") == "4.8.1"'
   unset GC_MOE_PRIMARY_CTX GC_MOE_BALANCED_WORKQUEUES
 fi
@@ -129,7 +132,7 @@ for bs in "${batches[@]}"; do
     code=0
     date -Is > "$dest/start"
     arm_path="$PYTHONPATH"
-    if [[ ${SM100_FORMAL_512:-} == 1 && ( $arm == gc || $arm == gc_rr ) ]]; then
+    if [[ ${SM100_FORMAL_512:-} == 1 && $arm == gc* ]]; then
       arm_path="$SM100_CLOCKED_UPSTREAM:$arm_path"
     fi
     PYTHONPATH="$arm_path" python -u scripts/sm100/five_matrix.py "$group" "$arm" "$bs" > "$dest/model.log" 2>&1 || code=$?
