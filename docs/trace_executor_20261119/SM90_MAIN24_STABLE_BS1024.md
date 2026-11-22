@@ -44,3 +44,10 @@ test "$code" = 0
 GPU 使用每卡自己的 globaltimer。正式窗口取 20 对相邻 decode 步，在 execute_model 与 sample_tokens 入口、返回的当前 stream 插入时间戳。报告上一步末层 combine 到 forward 返回、到 sampler 入口、sample_tokens 入口至返回、到下次 execute_model 入口、到下步第一层 MoE 五段。它们表示流上的经过时间，可包含排队和等待。先核对五段之和与 marked_gaps，再并列未打点区间 unmarked_gaps 和全窗 between_steps。
 
 主机逐步记录调度 schedule、update_from_output、其余 get_output（含等待 worker）、engine.step 的其余部分及收集输出耗时。它们与 GPU 区间可能重叠，请分表报告。给出各段新减旧的均值、配对中位数、样本数，以及细分段与完整窗口方向是否一致。若新 cost 在 BS1024 更快，同样如实记录。若旧 SHA、样本波动或标记缺失导致只能定位到较粗区间，注明证据边界，勿将等待直接归因为 CPU 调度或某个 GPU 算子。
+
+## SM90 收尾清理（已交付的 BS1024 同样适用）
+
+1. 对已经完成的 BS1024 直接检查现场并补回执，无需重新启动模型。成功、失败或中断时均根据本轮日志及工作目录核实 launcher 和八卡 worker 已退出；若有残留，仅向确认属于本轮的 PID 发送 TERM 并复查。用 `nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory --format=csv` 核对八张 H20 上本轮进程已退出，并释放本轮预约（如有）。
+2. 从回执核对工作目录和 state-path.txt 指向的现场目录。先在已交付的 delivery 目录执行 `sha256sum -c SHA256SUMS`，保留原始日志、rank NPZ、布局、路由回放及清单。给现场 state 目录按一级子项登记大小，标明仍用于复查或续跑的数据及其保留位置。
+3. 在交付核验通过、失败材料已归档且结束续跑后，仅清理本次创建的临时编译文件、可重建缓存及已核验的重复副本。临时 worktree 从主仓库用 `git worktree remove` 正常移除，先确认其路径、干净状态及诊断文件已归档。保留共享模型、数据集、软件环境和其他作业的文件；逐项核实归属，保留尚未确认的文件。
+4. 在 SM90 回执末尾补记实际检查时间、八卡上本轮残留 PID 数、清理前后占用、释放空间及仍保留的路径和用途，并推送 main。
