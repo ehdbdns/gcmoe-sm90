@@ -1,0 +1,255 @@
+diff --git a/gc_moe/eco/eco_unit_auction.cuh b/gc_moe/eco/eco_unit_auction.cuh
+index b0ad88b..de23c4e 100644
+--- a/gc_moe/eco/eco_unit_auction.cuh
++++ b/gc_moe/eco/eco_unit_auction.cuh
+@@ -343,6 +343,7 @@
+             const int lim = static_cast<int>(kMaxV - static_cast<uint32_t>((ki >> 40) & kMaxV)), cur = Ts[rv] + S;
+             if (cur >= lim or (cur - kSlack) * static_cast<int>(kR) > tot)
+                 continue;
++            if (ECO_MATRIX_AUDIT && stats != nullptr) atomicAdd(stats, 1);
+             won = true;
+             mv(s0, s1, (ai >> 30) & 1);
+             if (r1 != rv)
+@@ -411,7 +412,7 @@
+             break;
+         if (tid == 0)
+             milestone(26);
+-        if (stats != nullptr and tid < kR)
++        if (!ECO_MATRIX_AUDIT && stats != nullptr and tid < kR)
+             stats[kP / kR + 2100 + tid] = ecntr[tid];
+         // (C2) offered while the shed of the source's smaller keys is below its excess (same few/many-rank split)
+         if (kR <= 16)
+@@ -558,6 +559,7 @@
+             const int lim = static_cast<int>(kMaxV - static_cast<uint32_t>((ki >> 40) & kMaxV)), cur = Ts[rv] + S;
+             if (cur >= lim or (cur - kSlack) * static_cast<int>(kR) > tot)
+                 continue;
++            if (ECO_MATRIX_AUDIT && stats != nullptr) atomicAdd(stats, 1);
+             won = true;
+             mv(s0, s1, (gadd[i] >> 30) & 1);
+         }
+diff --git a/gc_moe/eco/eco_unit_kernel.cu b/gc_moe/eco/eco_unit_kernel.cu
+index c6550ec..8ea81d4 100644
+--- a/gc_moe/eco/eco_unit_kernel.cu
++++ b/gc_moe/eco/eco_unit_kernel.cu
+@@ -1,3 +1,6 @@
++#ifndef ECO_MATRIX_AUDIT
++#define ECO_MATRIX_AUDIT 0
++#endif
+ // ECO plan role of GC MoE: one CTA per rank computes the identical split plan of every rank while the dispatch role
+ // pulls the single-copy experts' tokens and the compute role runs their GEMMs. Bit-exact mirror of
+ // `gc_moe/eco/unit_ref.py`.
+@@ -119,9 +122,14 @@ eco_plan_kernel(const int* meta, uint8_t* buffer, uint16_t* state, int* stats, c
+ 
+     const uint32_t tid = threadIdx.x, lane = tid % 32, warp = tid / 32;
+     // Debug (stats != nullptr): cycles since kernel entry at milestones, stats[kP / kR + 16 ...]
++    if (ECO_MATRIX_AUDIT && stats != nullptr && tid == 0) {
++        uint64_t ns;
++        asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(ns));
++        *reinterpret_cast<uint64_t*>(stats + 2) = ns;
++    }
+     const long long t_entry = clock64();
+     const auto milestone = [&](const uint32_t& slot) {
+-        if (stats != nullptr)
++        if (stats != nullptr and !ECO_MATRIX_AUDIT)
+             atomicAdd(stats + kP / kR + slot, static_cast<int>((clock64() - t_entry) / 16));
+     };
+     auto* signals = reinterpret_cast<uint32_t*>(buffer);
+@@ -138,7 +146,7 @@ eco_plan_kernel(const int* meta, uint8_t* buffer, uint16_t* state, int* stats, c
+         // this early drain ahead of the dispatch role's routing flood instead of queueing behind a ~10us staging
+         // phase; their posted remote stores' fabric drain then stalls only these warps' LSU path.
+         rows_sync();   // route_count[] complete (helpers arrive once counting is done)
+-        if (stats != nullptr and lane == 0)
++        if (!ECO_MATRIX_AUDIT && stats != nullptr and lane == 0)
+             stats[kP / kR + 44 + warp] = 21;
+         constexpr uint32_t kVectors = kE / 8;
+         const uint32_t tag = (epoch / 2) % 3 + 1, tag2 = (tag << 14) | (tag << 30);
+@@ -308,10 +316,10 @@ eco_plan_kernel(const int* meta, uint8_t* buffer, uint16_t* state, int* stats, c
+                 atomicAdd(route_count + e, 1u);
+         }
+         helper_sync();
+-        if (stats != nullptr and lane == 0)
++        if (!ECO_MATRIX_AUDIT && stats != nullptr and lane == 0)
+             stats[kP / kR + 44 + warp] = 10;
+         rows_sync();   // hand route_count[] to the index warps; they issue this rank's remote row stores
+-        if (stats != nullptr and lane == 0)
++        if (!ECO_MATRIX_AUDIT && stats != nullptr and lane == 0)
+             stats[kP / kR + 44 + warp] = 11;
+         if (helper == 0)
+             milestone(16);
+@@ -331,7 +339,7 @@ eco_plan_kernel(const int* meta, uint8_t* buffer, uint16_t* state, int* stats, c
+             };
+             constexpr uint32_t kBatchSrc = 8;
+             for (uint32_t src0 = part; src0 < kR; src0 += kSplit * kBatchSrc) {
+-                if (stats != nullptr and lane == 0)
++                if (!ECO_MATRIX_AUDIT && stats != nullptr and lane == 0)
+                     stats[kP / kR + 80 + warp] = item * 64 + src0;
+                 uint4 w[kBatchSrc];
+                 #pragma unroll
+@@ -370,7 +378,7 @@ eco_plan_kernel(const int* meta, uint8_t* buffer, uint16_t* state, int* stats, c
+             for (uint32_t k = 0; k < 8; ++ k)
+                 atomicAdd(sums + v * 8 + k, sum[k]);
+         }
+-        if (stats != nullptr and lane == 0)
++        if (!ECO_MATRIX_AUDIT && stats != nullptr and lane == 0)
+             stats[kP / kR + 80 + warp] = 0xffff;
+         if (helper == 0)
+             milestone(18);
+@@ -660,7 +668,7 @@ eco_plan_kernel(const int* meta, uint8_t* buffer, uint16_t* state, int* stats, c
+         }
+         if (tid == 0)
+             milestone(37);
+-        if (stats != nullptr and lane == 0)
++        if (!ECO_MATRIX_AUDIT && stats != nullptr and lane == 0)
+             atomicMax(stats + kP / kR + 52 + warp, static_cast<int>((clock64() - t_entry) / 16));
+         // No barrier here: big-expert slots are disjoint from the small experts' and live on the warps
+         // the small pass left idle, so the two passes run concurrently (same split as the cold path).
+@@ -753,7 +761,7 @@ eco_plan_kernel(const int* meta, uint8_t* buffer, uint16_t* state, int* stats, c
+                 atomicAdd(&T0[s / kS], kWB * ((x + kBM - 1) / kBM) + kWA + x);
+         }
+         plan_sync();
+-        if (stats != nullptr) {
++        if (!ECO_MATRIX_AUDIT && stats != nullptr) {
+             if (tid < kR)
+                 stats[kP / kR + 160 + tid] = T0[tid];
+             for (uint32_t s = tid; s < kP; s += kPlanThreads)
+diff --git a/gc_moe/eco/plan.py b/gc_moe/eco/plan.py
+index 35fe2e1..97a8a41 100644
+--- a/gc_moe/eco/plan.py
++++ b/gc_moe/eco/plan.py
+@@ -104,6 +104,7 @@ def compile_eco_plan(num_physical: int, num_ranks: int, num_logical: int, eco_ba
+         'OFF_ECO_TRACE': eco_base + ECO_SIGNAL_OFFSETS['eco_trace'],
+         'OFF_ECO_TRACE_RING': eco_base + ECO_SIGNAL_OFFSETS['eco_trace_ring'],
+         'ECO_TRACE': int(trace),
++        'ECO_MATRIX_AUDIT': int(os.environ.get('GC_SM100_MATRIX_CLOCKS') == '1'),
+     }
+     defines.update(zip(('UNIT_BM', 'UNIT_WB', 'UNIT_WA', 'UNIT_NR', 'UNIT_NRC', 'UNIT_HOP2'), unit))
+     flags = [f'-D{k}={v}u' if k.startswith('OFF_') else f'-D{k}={v}' for k, v in sorted(defines.items())]
+diff --git a/gc_moe/gc/__init__.py b/gc_moe/gc/__init__.py
+index d37a9b5..38397c3 100644
+--- a/gc_moe/gc/__init__.py
++++ b/gc_moe/gc/__init__.py
+@@ -4,6 +4,7 @@ from __future__ import annotations
+ 
+ from typing import Optional, Tuple
+ import types
++import os
+ 
+ import torch
+ import torch.distributed as dist
+@@ -52,9 +53,14 @@ class GCSymmBuffer:
+                                      self.num_max_tokens_per_rank, num_topk,
+                                      hidden, intermediate_hidden, ring_tokens,
+                                      sf_ring_tokens, num_shared_experts, eco=eco)
++        self.clock_offset = None
++        size = self.layout.nbytes
++        if os.environ.get("GC_SM100_MATRIX_CLOCKS") == "1" and base is None:
++            self.clock_offset = align(size, 16) + align(num_experts // group.size() * 4, 8)
++            size = self.clock_offset + 32
+         if base is None:
+             allocator = torch if group.size() == 1 else symm_mem
+-            self.buffer = allocator.empty(self.layout.nbytes, dtype=torch.int8, device='cuda')
++            self.buffer = allocator.empty(size, dtype=torch.int8, device='cuda')
+             self.handle = (types.SimpleNamespace(buffer_ptrs=[self.buffer.data_ptr()])
+                            if group.size() == 1 else symm_mem.rendezvous(self.buffer, group=group))
+             peer_addresses = tuple(int(ptr) for ptr in self.handle.buffer_ptrs)
+diff --git a/gc_moe/impls/sm100_fp8_fp4_gc_moe.py b/gc_moe/impls/sm100_fp8_fp4_gc_moe.py
+index 0e49921..11b18ea 100644
+--- a/gc_moe/impls/sm100_fp8_fp4_gc_moe.py
++++ b/gc_moe/impls/sm100_fp8_fp4_gc_moe.py
+@@ -264,7 +264,7 @@ class GCMoERoleKernel:
+                  nvlink_timeout_secs: int = DEFAULT_NVLINK_BARRIER_TIMEOUT_SECS,
+                  *, role_config, combine_geometry: tuple[int, int, int, int] | None = None,
+                  eco_logical_experts: int = 0, eco_trace: bool = False,
+-                 cta_base: int = 0):
++                 cta_base: int = 0, clock_offset=None):
+         if role_config.role != role or role_config.block_m != block_m:
+             raise ValueError('kernel role/block M differs from its host configuration')
+         math_stages = role_config.num_stages
+@@ -280,6 +280,7 @@ class GCMoERoleKernel:
+             raise ValueError('GC math pipeline needs 2..32 TMA stages')
+         if not 0 < nvlink_timeout_secs <= 2_147_483_647:
+             raise ValueError('NVLink barrier timeout must fit positive INT_MAX seconds')
++        self.clock_offset = clock_offset
+         self.role = role
+         # ECO online split: `topk_idx` holds logical experts, every one of the `num_ranks * local_experts`
+         # physical slots serves one logical expert (EcoMeta), single-copy slots go first on every rank and
+@@ -838,6 +839,10 @@ class GCMoERoleKernel:
+         physical_warp = cute.arch.make_warp_uniform(cute.arch.warp_idx())
+         lane = tid % 32
+ 
++        if cutlass.const_expr(self.clock_offset is not None and self.role != 3):
++            if tid == 0:
++                red_global_min_u64(signals.iterator + self.clock_offset // 4, read_globaltimer())
++
+         if cutlass.const_expr(self.role == 1):
+             if cutlass.const_expr(self.eco_trace):
+                 if tid == 0:
+@@ -1657,6 +1662,9 @@ class GCMoERoleKernel:
+                             k_block = Uint32(k_iter)
+                             cute.arch.mbarrier_wait(data_full + data_stage,
+                                                     data_phase)
++                            if cutlass.const_expr(self.clock_offset is not None):
++                                if k_block == 0 and is_shared == 0 and elect_one_sync():
++                                    red_global_min_u64(signals.iterator + self.clock_offset // 4 + 2, read_globaltimer())
+                             # Keep descriptor layout bits fixed and
+                             # advance only the 16-byte SMEM address field.
+                             weight_desc_start = Uint32(
+@@ -2104,6 +2112,9 @@ class GCMoERoleKernel:
+                                                 dst, words[0], words[1],
+                                                 words[2], words[3])
+                         sync_aligned(256, 2)
++                    if cutlass.const_expr(self.clock_offset is not None):
++                        if task_phase == Uint32(GCBlockPhase.Linear2) and physical_warp == 4 and elect_one_sync():
++                            red_global_max_u64(signals.iterator + self.clock_offset // 4 + 4, read_globaltimer())
+                     is_w1_release = task_phase == Uint32(GCBlockPhase.Linear1)
+                     if cutlass.const_expr(self.shared_experts > 0):
+                         is_w1_release = is_w1_release or \
+@@ -2172,6 +2183,10 @@ class GCMoERoleKernel:
+                 self._role3_combine(signals, rank_idx, num_tokens, y_out,
+                                     block, physical_warp, lane,
+                                     combine_smem, combine_bars)
++                if cutlass.const_expr(self.clock_offset is not None):
++                    if elect_one_sync():
++                        tma_store_wait_0()
++                        red_global_max_u64(signals.iterator + self.clock_offset // 4 + 6, read_globaltimer())
+             if cutlass.const_expr(self.eco_trace):
+                 if elect_one_sync():
+                     self._eco_trace(signals, 15, 2)
+diff --git a/gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py b/gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py
+index 04c2231..427a5c7 100644
+--- a/gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py
++++ b/gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py
+@@ -594,7 +594,7 @@ def prepare_role_binaries(config, y: torch.Tensor,
+     key = _capture_key(config, sym_buffer, context, y, l1_weights, l2_weights,
+                        shared_l1_weights, shared_l2_weights, stats,
+                        nvlink_timeout_secs, role_resources, combine_resources,
+-                       compiler_identity) + ((eco_logical,) if eco else ())
++                       compiler_identity) + (getattr(sym_buffer, "clock_offset", None),) + ((eco_logical,) if eco else ())
+     prepared = _CACHE.get(key)
+     if prepared is None:
+         with COMPILE_LOCK:
+@@ -636,7 +636,8 @@ def prepare_role_binaries(config, y: torch.Tensor,
+                         nvlink_timeout_secs=nvlink_timeout_secs,
+                         role_config=role_configs[index],
+                         combine_geometry=combine_geometry if role == 3 else None,
+-                        eco_logical_experts=eco_logical, eco_trace=eco and _eco_trace_enabled())
++                        eco_logical_experts=eco_logical, eco_trace=eco and _eco_trace_enabled(),
++                        clock_offset=getattr(sym_buffer, "clock_offset", None))
+                     role_kernels.append(role_kernel)
+                 helper_kernel = None
+                 if _eco_helper:
+@@ -773,9 +774,13 @@ def prepare_role_binaries(config, y: torch.Tensor,
+             if torch.cuda.is_current_stream_capturing():
+                 raise RuntimeError('run ECO GC MoE once outside graph capture first')
+             peers = _ECO_PEER_TABLES[key] = torch.tensor(key[1], dtype=torch.int64, device=sym_buffer.buffer.device)
++        audit = getattr(sym_buffer, "eco_auction_audit", None)
++        if audit is not None and (audit.device != device or audit.dtype != torch.int32
++                                  or not audit.is_contiguous() or audit.numel() < 4):
++            raise ValueError("invalid ECO audit buffer")
+         arguments += ((ctypes.c_void_p(eco_meta.data_ptr()), ctypes.c_void_p(sym_buffer.buffer.data_ptr()),
+                        ctypes.c_void_p(eco_state.data_ptr() if eco_state is not None else 0),
+-                       ctypes.c_void_p(0), ctypes.c_void_p(peers.data_ptr()),
++                       ctypes.c_void_p(audit.data_ptr() if audit is not None else 0), ctypes.c_void_p(peers.data_ptr()),
+                        ctypes.c_uint32(sym_buffer.rank_idx), ctypes.c_uint32(config.tokens)),)
+         if _eco_helper:
+             arguments += ((signal_arg, peer_arg, rank_arg, token_arg,

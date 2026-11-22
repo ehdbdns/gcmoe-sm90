@@ -1,0 +1,32 @@
+DeepInfer RR and physical load checks passed
+(Worker_TP0_EP0 pid=661236) INFO 11-22 18:01:37 [kernel_warmup.py:94] Warming up ll_bf16 router GEMM kernels for shapes: ((5120, 384),).
+(Worker_TP6_EP6 pid=661246) INFO 11-22 18:01:38 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP4_EP4 pid=661242) INFO 11-22 18:01:38 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP5_EP5 pid=661245) INFO 11-22 18:01:38 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP7_EP7 pid=661247) INFO 11-22 18:01:38 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP3_EP3 pid=661241) INFO 11-22 18:01:38 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP0_EP0 pid=661236) INFO 11-22 18:01:38 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP2_EP2 pid=661240) INFO 11-22 18:01:38 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP1_EP1 pid=661237) INFO 11-22 18:01:38 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP0_EP0 pid=661236) INFO 11-22 18:01:38 [custom_all_reduce.py:576] Using the MNNVL Lamport all-gather kernel.
+(Worker_TP0_EP0 pid=661236) INFO 11-22 18:01:41 [custom_all_reduce.py:672] Using the MNNVL Lamport reduce-scatter kernel.
+(Worker_TP0_EP0 pid=661236) INFO 11-22 18:01:51 [kernel_warmup.py:255] Skipping FlashInfer autotune because it is disabled.
+(MainProcess pid=644612) INFO 11-22 18:01:51 [core.py:380] init engine (profile, create kv cache, warmup model) took 41.53 s
+(MainProcess pid=644612) INFO 11-22 18:01:51 [kv_cache_utils.py:772] kv cache group sizes [32, 32, 32, 32, 32, 128, 8]
+(MainProcess pid=644612) INFO 11-22 18:01:51 [kv_cache_utils.py:773] kv lcm block sizes 128
+(MainProcess pid=644612) INFO 11-22 18:01:52 [base.py:255] Multi-modal warmup completed in 0.053s
+Traceback (most recent call last):
+  File "/tmp/sm100-native-retry-20261121-1945/scripts/sm100/five_matrix.py", line 205, in <module>
+    main()
+  File "/tmp/sm100-native-retry-20261121-1945/scripts/sm100/five_matrix.py", line 126, in main
+    with np.load(archive) as f:
+         ^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/numpy/lib/_npyio_impl.py", line 454, in load
+    fid = stack.enter_context(open(os.fspath(file), "rb"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/sm100-native-retry-20261121-1945/docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/vanilla/rank0.npz'
+(MainProcess pid=644612) INFO 11-22 18:01:52 [multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(Worker_TP0_EP0 pid=661236) INFO 11-22 18:01:52 [multiproc_executor.py:838] Parent process exited, terminating worker queues
+(MainProcess pid=644612) WARNING 11-22 18:01:57 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=644612) WARNING 11-22 18:02:01 [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=8
+{'bs': 512, 'completed': [], 'strict_pairs': 0, 'total_pairs': 0, 'failures': ['mega: no completed result', 'gc: no completed result', 'mega_rr: no completed result', 'gc_rr: no completed result', 'gc_eco: no completed result']}
