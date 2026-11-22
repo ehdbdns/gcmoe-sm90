@@ -1,0 +1,1099 @@
+{
+ "task": "SM90_BS256_RR_ECO_ABSOLUTE",
+ "execution_sha": "10bde89166a3f93f656bb77f2f7f86981582d68a",
+ "base_sha": "956bb3fa16deb9472a1493c265e69fbba7ff0b55",
+ "arm_order": [
+  "vanilla",
+  "rr",
+  "eco"
+ ],
+ "step": 2,
+ "layers": [
+  0,
+  8,
+  20,
+  32,
+  39
+ ],
+ "ranks": 8,
+ "historical_checks": {
+  "rr": "rr historical workload verified for both windows and all eight ranks",
+  "eco": "eco historical workload verified for both windows and all eight ranks"
+ },
+ "reference": {
+  "path": "docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256",
+  "main_table_ms": {
+   "rr": 35.303,
+   "eco": 35.6
+  }
+ },
+ "samples": {
+  "rr": {
+   "0": {
+    "epoch": 46481,
+    "capture_id": "e7666077fae64fe0924224f13bbc28be",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 428,
+    "tokens": [
+     191.875,
+     166.625,
+     183.5,
+     201.0,
+     204.5,
+     183.25,
+     211.5,
+     193.75
+    ],
+    "slots_owned_sum": {
+     "0": 1535,
+     "1": 1333,
+     "2": 1468,
+     "3": 1608,
+     "4": 1636,
+     "5": 1466,
+     "6": 1692,
+     "7": 1550
+    },
+    "slowest_rank": 6,
+    "slowest_routed_us": 739.266,
+    "slowest_dispatch_to_routed_end_us": 896.673828125,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 191.875,
+      "routed_rows": 1535,
+      "m_blocks": 53,
+      "routed_us": 682.658,
+      "dispatch_to_routed_end_us": 835.5859375
+     },
+     {
+      "rank": 1,
+      "tokens": 166.625,
+      "routed_rows": 1333,
+      "m_blocks": 54,
+      "routed_us": 650.144,
+      "dispatch_to_routed_end_us": 802.2080078125
+     },
+     {
+      "rank": 2,
+      "tokens": 183.5,
+      "routed_rows": 1468,
+      "m_blocks": 52,
+      "routed_us": 661.571,
+      "dispatch_to_routed_end_us": 816.259765625
+     },
+     {
+      "rank": 3,
+      "tokens": 201.0,
+      "routed_rows": 1608,
+      "m_blocks": 52,
+      "routed_us": 680.707,
+      "dispatch_to_routed_end_us": 834.755859375
+     },
+     {
+      "rank": 4,
+      "tokens": 204.5,
+      "routed_rows": 1636,
+      "m_blocks": 56,
+      "routed_us": 705.572,
+      "dispatch_to_routed_end_us": 857.92578125
+     },
+     {
+      "rank": 5,
+      "tokens": 183.25,
+      "routed_rows": 1466,
+      "m_blocks": 54,
+      "routed_us": 659.427,
+      "dispatch_to_routed_end_us": 813.2509765625
+     },
+     {
+      "rank": 6,
+      "tokens": 211.5,
+      "routed_rows": 1692,
+      "m_blocks": 57,
+      "routed_us": 739.266,
+      "dispatch_to_routed_end_us": 896.673828125
+     },
+     {
+      "rank": 7,
+      "tokens": 193.75,
+      "routed_rows": 1550,
+      "m_blocks": 50,
+      "routed_us": 650.016,
+      "dispatch_to_routed_end_us": 805.759765625
+     }
+    ]
+   },
+   "8": {
+    "epoch": 46489,
+    "capture_id": "e7666077fae64fe0924224f13bbc28be",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 416,
+    "tokens": [
+     211.0,
+     186.875,
+     208.0,
+     187.25,
+     191.875,
+     176.625,
+     197.375,
+     177.0
+    ],
+    "slots_owned_sum": {
+     "0": 1688,
+     "1": 1495,
+     "2": 1664,
+     "3": 1498,
+     "4": 1535,
+     "5": 1413,
+     "6": 1579,
+     "7": 1416
+    },
+    "slowest_rank": 2,
+    "slowest_routed_us": 738.724,
+    "slowest_dispatch_to_routed_end_us": 908.4521484375,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 211.0,
+      "routed_rows": 1688,
+      "m_blocks": 55,
+      "routed_us": 736.546,
+      "dispatch_to_routed_end_us": 889.283203125
+     },
+     {
+      "rank": 1,
+      "tokens": 186.875,
+      "routed_rows": 1495,
+      "m_blocks": 51,
+      "routed_us": 674.655,
+      "dispatch_to_routed_end_us": 840.0625
+     },
+     {
+      "rank": 2,
+      "tokens": 208.0,
+      "routed_rows": 1664,
+      "m_blocks": 53,
+      "routed_us": 738.724,
+      "dispatch_to_routed_end_us": 908.4521484375
+     },
+     {
+      "rank": 3,
+      "tokens": 187.25,
+      "routed_rows": 1498,
+      "m_blocks": 50,
+      "routed_us": 679.874,
+      "dispatch_to_routed_end_us": 846.69140625
+     },
+     {
+      "rank": 4,
+      "tokens": 191.875,
+      "routed_rows": 1535,
+      "m_blocks": 52,
+      "routed_us": 692.579,
+      "dispatch_to_routed_end_us": 858.0517578125
+     },
+     {
+      "rank": 5,
+      "tokens": 176.625,
+      "routed_rows": 1413,
+      "m_blocks": 50,
+      "routed_us": 645.89,
+      "dispatch_to_routed_end_us": 812.8330078125
+     },
+     {
+      "rank": 6,
+      "tokens": 197.375,
+      "routed_rows": 1579,
+      "m_blocks": 52,
+      "routed_us": 699.457,
+      "dispatch_to_routed_end_us": 851.9052734375
+     },
+     {
+      "rank": 7,
+      "tokens": 177.0,
+      "routed_rows": 1416,
+      "m_blocks": 53,
+      "routed_us": 678.144,
+      "dispatch_to_routed_end_us": 831.263671875
+     }
+    ]
+   },
+   "20": {
+    "epoch": 46501,
+    "capture_id": "e7666077fae64fe0924224f13bbc28be",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 395,
+    "tokens": [
+     184.0,
+     182.375,
+     195.125,
+     199.375,
+     193.75,
+     212.25,
+     184.125,
+     185.0
+    ],
+    "slots_owned_sum": {
+     "0": 1472,
+     "1": 1459,
+     "2": 1561,
+     "3": 1595,
+     "4": 1550,
+     "5": 1698,
+     "6": 1473,
+     "7": 1480
+    },
+    "slowest_rank": 5,
+    "slowest_routed_us": 747.778,
+    "slowest_dispatch_to_routed_end_us": 913.4423828125,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 184.0,
+      "routed_rows": 1472,
+      "m_blocks": 49,
+      "routed_us": 669.058,
+      "dispatch_to_routed_end_us": 820.5771484375
+     },
+     {
+      "rank": 1,
+      "tokens": 182.375,
+      "routed_rows": 1459,
+      "m_blocks": 50,
+      "routed_us": 656.384,
+      "dispatch_to_routed_end_us": 806.3359375
+     },
+     {
+      "rank": 2,
+      "tokens": 195.125,
+      "routed_rows": 1561,
+      "m_blocks": 47,
+      "routed_us": 670.179,
+      "dispatch_to_routed_end_us": 836.3876953125
+     },
+     {
+      "rank": 3,
+      "tokens": 199.375,
+      "routed_rows": 1595,
+      "m_blocks": 53,
+      "routed_us": 733.859,
+      "dispatch_to_routed_end_us": 885.3486328125
+     },
+     {
+      "rank": 4,
+      "tokens": 193.75,
+      "routed_rows": 1550,
+      "m_blocks": 51,
+      "routed_us": 684.132,
+      "dispatch_to_routed_end_us": 837.98828125
+     },
+     {
+      "rank": 5,
+      "tokens": 212.25,
+      "routed_rows": 1698,
+      "m_blocks": 55,
+      "routed_us": 747.778,
+      "dispatch_to_routed_end_us": 913.4423828125
+     },
+     {
+      "rank": 6,
+      "tokens": 184.125,
+      "routed_rows": 1473,
+      "m_blocks": 42,
+      "routed_us": 620.29,
+      "dispatch_to_routed_end_us": 772.6416015625
+     },
+     {
+      "rank": 7,
+      "tokens": 185.0,
+      "routed_rows": 1480,
+      "m_blocks": 48,
+      "routed_us": 664.704,
+      "dispatch_to_routed_end_us": 819.6474609375
+     }
+    ]
+   },
+   "32": {
+    "epoch": 46513,
+    "capture_id": "e7666077fae64fe0924224f13bbc28be",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 408,
+    "tokens": [
+     193.375,
+     183.375,
+     181.25,
+     210.875,
+     198.0,
+     208.25,
+     182.25,
+     178.625
+    ],
+    "slots_owned_sum": {
+     "0": 1547,
+     "1": 1467,
+     "2": 1450,
+     "3": 1687,
+     "4": 1584,
+     "5": 1666,
+     "6": 1458,
+     "7": 1429
+    },
+    "slowest_rank": 5,
+    "slowest_routed_us": 749.186,
+    "slowest_dispatch_to_routed_end_us": 899.361328125,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 193.375,
+      "routed_rows": 1547,
+      "m_blocks": 53,
+      "routed_us": 706.274,
+      "dispatch_to_routed_end_us": 872.3857421875
+     },
+     {
+      "rank": 1,
+      "tokens": 183.375,
+      "routed_rows": 1467,
+      "m_blocks": 50,
+      "routed_us": 666.528,
+      "dispatch_to_routed_end_us": 833.1201171875
+     },
+     {
+      "rank": 2,
+      "tokens": 181.25,
+      "routed_rows": 1450,
+      "m_blocks": 53,
+      "routed_us": 678.5,
+      "dispatch_to_routed_end_us": 844.0673828125
+     },
+     {
+      "rank": 3,
+      "tokens": 210.875,
+      "routed_rows": 1687,
+      "m_blocks": 51,
+      "routed_us": 721.603,
+      "dispatch_to_routed_end_us": 887.5556640625
+     },
+     {
+      "rank": 4,
+      "tokens": 198.0,
+      "routed_rows": 1584,
+      "m_blocks": 50,
+      "routed_us": 674.34,
+      "dispatch_to_routed_end_us": 826.33984375
+     },
+     {
+      "rank": 5,
+      "tokens": 208.25,
+      "routed_rows": 1666,
+      "m_blocks": 57,
+      "routed_us": 749.186,
+      "dispatch_to_routed_end_us": 899.361328125
+     },
+     {
+      "rank": 6,
+      "tokens": 182.25,
+      "routed_rows": 1458,
+      "m_blocks": 47,
+      "routed_us": 635.905,
+      "dispatch_to_routed_end_us": 788.1943359375
+     },
+     {
+      "rank": 7,
+      "tokens": 178.625,
+      "routed_rows": 1429,
+      "m_blocks": 47,
+      "routed_us": 653.921,
+      "dispatch_to_routed_end_us": 808.6728515625
+     }
+    ]
+   },
+   "39": {
+    "epoch": 46520,
+    "capture_id": "e7666077fae64fe0924224f13bbc28be",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 417,
+    "tokens": [
+     186.375,
+     189.5,
+     188.875,
+     214.25,
+     182.5,
+     183.875,
+     199.0,
+     191.625
+    ],
+    "slots_owned_sum": {
+     "0": 1491,
+     "1": 1516,
+     "2": 1511,
+     "3": 1714,
+     "4": 1460,
+     "5": 1471,
+     "6": 1592,
+     "7": 1533
+    },
+    "slowest_rank": 3,
+    "slowest_routed_us": 720.579,
+    "slowest_dispatch_to_routed_end_us": 871.748046875,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 186.375,
+      "routed_rows": 1491,
+      "m_blocks": 51,
+      "routed_us": 668.513,
+      "dispatch_to_routed_end_us": 820.9931640625
+     },
+     {
+      "rank": 1,
+      "tokens": 189.5,
+      "routed_rows": 1516,
+      "m_blocks": 53,
+      "routed_us": 679.775,
+      "dispatch_to_routed_end_us": 832.19140625
+     },
+     {
+      "rank": 2,
+      "tokens": 188.875,
+      "routed_rows": 1511,
+      "m_blocks": 51,
+      "routed_us": 673.635,
+      "dispatch_to_routed_end_us": 824.068359375
+     },
+     {
+      "rank": 3,
+      "tokens": 214.25,
+      "routed_rows": 1714,
+      "m_blocks": 52,
+      "routed_us": 720.579,
+      "dispatch_to_routed_end_us": 871.748046875
+     },
+     {
+      "rank": 4,
+      "tokens": 182.5,
+      "routed_rows": 1460,
+      "m_blocks": 51,
+      "routed_us": 651.747,
+      "dispatch_to_routed_end_us": 802.1474609375
+     },
+     {
+      "rank": 5,
+      "tokens": 183.875,
+      "routed_rows": 1471,
+      "m_blocks": 54,
+      "routed_us": 668.674,
+      "dispatch_to_routed_end_us": 819.5546875
+     },
+     {
+      "rank": 6,
+      "tokens": 199.0,
+      "routed_rows": 1592,
+      "m_blocks": 54,
+      "routed_us": 697.409,
+      "dispatch_to_routed_end_us": 850.78515625
+     },
+     {
+      "rank": 7,
+      "tokens": 191.625,
+      "routed_rows": 1533,
+      "m_blocks": 51,
+      "routed_us": 680.352,
+      "dispatch_to_routed_end_us": 831.5830078125
+     }
+    ]
+   }
+  },
+  "eco": {
+   "0": {
+    "epoch": 46481,
+    "capture_id": "58b848a7c9af488d851ba8f4cb303d5d",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 393,
+    "tokens": [
+     188.0,
+     189.0,
+     194.0,
+     197.0,
+     190.0,
+     189.0,
+     190.0,
+     199.0
+    ],
+    "slots_owned_sum": {
+     "0": 1504,
+     "1": 1512,
+     "2": 1552,
+     "3": 1576,
+     "4": 1520,
+     "5": 1512,
+     "6": 1520,
+     "7": 1592
+    },
+    "slowest_rank": 1,
+    "slowest_routed_us": 684.127,
+    "slowest_dispatch_to_routed_end_us": 880.126953125,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 188.0,
+      "routed_rows": 1504,
+      "m_blocks": 48,
+      "routed_us": 652.833,
+      "dispatch_to_routed_end_us": 848.7373046875
+     },
+     {
+      "rank": 1,
+      "tokens": 189.0,
+      "routed_rows": 1512,
+      "m_blocks": 51,
+      "routed_us": 684.127,
+      "dispatch_to_routed_end_us": 880.126953125
+     },
+     {
+      "rank": 2,
+      "tokens": 194.0,
+      "routed_rows": 1552,
+      "m_blocks": 50,
+      "routed_us": 683.203,
+      "dispatch_to_routed_end_us": 865.060546875
+     },
+     {
+      "rank": 3,
+      "tokens": 197.0,
+      "routed_rows": 1576,
+      "m_blocks": 47,
+      "routed_us": 647.202,
+      "dispatch_to_routed_end_us": 841.955078125
+     },
+     {
+      "rank": 4,
+      "tokens": 190.0,
+      "routed_rows": 1520,
+      "m_blocks": 52,
+      "routed_us": 680.707,
+      "dispatch_to_routed_end_us": 877.251953125
+     },
+     {
+      "rank": 5,
+      "tokens": 189.0,
+      "routed_rows": 1512,
+      "m_blocks": 48,
+      "routed_us": 650.658,
+      "dispatch_to_routed_end_us": 842.75390625
+     },
+     {
+      "rank": 6,
+      "tokens": 190.0,
+      "routed_rows": 1520,
+      "m_blocks": 49,
+      "routed_us": 672.417,
+      "dispatch_to_routed_end_us": 867.07421875
+     },
+     {
+      "rank": 7,
+      "tokens": 199.0,
+      "routed_rows": 1592,
+      "m_blocks": 48,
+      "routed_us": 663.68,
+      "dispatch_to_routed_end_us": 862.84765625
+     }
+    ]
+   },
+   "8": {
+    "epoch": 46489,
+    "capture_id": "58b848a7c9af488d851ba8f4cb303d5d",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 377,
+    "tokens": [
+     202.0,
+     184.0,
+     194.0,
+     189.0,
+     193.0,
+     178.0,
+     198.0,
+     198.0
+    ],
+    "slots_owned_sum": {
+     "0": 1616,
+     "1": 1472,
+     "2": 1552,
+     "3": 1512,
+     "4": 1544,
+     "5": 1424,
+     "6": 1584,
+     "7": 1584
+    },
+    "slowest_rank": 2,
+    "slowest_routed_us": 691.907,
+    "slowest_dispatch_to_routed_end_us": 879.044921875,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 202.0,
+      "routed_rows": 1616,
+      "m_blocks": 47,
+      "routed_us": 685.218,
+      "dispatch_to_routed_end_us": 883.42578125
+     },
+     {
+      "rank": 1,
+      "tokens": 184.0,
+      "routed_rows": 1472,
+      "m_blocks": 47,
+      "routed_us": 660.671,
+      "dispatch_to_routed_end_us": 849.1181640625
+     },
+     {
+      "rank": 2,
+      "tokens": 194.0,
+      "routed_rows": 1552,
+      "m_blocks": 49,
+      "routed_us": 691.907,
+      "dispatch_to_routed_end_us": 879.044921875
+     },
+     {
+      "rank": 3,
+      "tokens": 189.0,
+      "routed_rows": 1512,
+      "m_blocks": 47,
+      "routed_us": 660.515,
+      "dispatch_to_routed_end_us": 857.1875
+     },
+     {
+      "rank": 4,
+      "tokens": 193.0,
+      "routed_rows": 1544,
+      "m_blocks": 48,
+      "routed_us": 670.723,
+      "dispatch_to_routed_end_us": 867.30078125
+     },
+     {
+      "rank": 5,
+      "tokens": 178.0,
+      "routed_rows": 1424,
+      "m_blocks": 43,
+      "routed_us": 611.041,
+      "dispatch_to_routed_end_us": 801.2822265625
+     },
+     {
+      "rank": 6,
+      "tokens": 198.0,
+      "routed_rows": 1584,
+      "m_blocks": 48,
+      "routed_us": 678.593,
+      "dispatch_to_routed_end_us": 880.9287109375
+     },
+     {
+      "rank": 7,
+      "tokens": 198.0,
+      "routed_rows": 1584,
+      "m_blocks": 48,
+      "routed_us": 689.889,
+      "dispatch_to_routed_end_us": 889.4716796875
+     }
+    ]
+   },
+   "20": {
+    "epoch": 46501,
+    "capture_id": "58b848a7c9af488d851ba8f4cb303d5d",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 362,
+    "tokens": [
+     185.0,
+     183.0,
+     193.0,
+     180.0,
+     202.0,
+     185.0,
+     211.0,
+     197.0
+    ],
+    "slots_owned_sum": {
+     "0": 1480,
+     "1": 1464,
+     "2": 1544,
+     "3": 1440,
+     "4": 1616,
+     "5": 1480,
+     "6": 1688,
+     "7": 1576
+    },
+    "slowest_rank": 3,
+    "slowest_routed_us": 684.835,
+    "slowest_dispatch_to_routed_end_us": 883.01171875,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 185.0,
+      "routed_rows": 1480,
+      "m_blocks": 45,
+      "routed_us": 631.233,
+      "dispatch_to_routed_end_us": 820.0341796875
+     },
+     {
+      "rank": 1,
+      "tokens": 183.0,
+      "routed_rows": 1464,
+      "m_blocks": 47,
+      "routed_us": 649.663,
+      "dispatch_to_routed_end_us": 852.8310546875
+     },
+     {
+      "rank": 2,
+      "tokens": 193.0,
+      "routed_rows": 1544,
+      "m_blocks": 44,
+      "routed_us": 647.971,
+      "dispatch_to_routed_end_us": 838.595703125
+     },
+     {
+      "rank": 3,
+      "tokens": 180.0,
+      "routed_rows": 1440,
+      "m_blocks": 49,
+      "routed_us": 684.835,
+      "dispatch_to_routed_end_us": 883.01171875
+     },
+     {
+      "rank": 4,
+      "tokens": 202.0,
+      "routed_rows": 1616,
+      "m_blocks": 45,
+      "routed_us": 663.555,
+      "dispatch_to_routed_end_us": 862.5634765625
+     },
+     {
+      "rank": 5,
+      "tokens": 185.0,
+      "routed_rows": 1480,
+      "m_blocks": 47,
+      "routed_us": 652.706,
+      "dispatch_to_routed_end_us": 851.970703125
+     },
+     {
+      "rank": 6,
+      "tokens": 211.0,
+      "routed_rows": 1688,
+      "m_blocks": 42,
+      "routed_us": 673.026,
+      "dispatch_to_routed_end_us": 868.642578125
+     },
+     {
+      "rank": 7,
+      "tokens": 197.0,
+      "routed_rows": 1576,
+      "m_blocks": 43,
+      "routed_us": 658.208,
+      "dispatch_to_routed_end_us": 849.3759765625
+     }
+    ]
+   },
+   "32": {
+    "epoch": 46513,
+    "capture_id": "58b848a7c9af488d851ba8f4cb303d5d",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 375,
+    "tokens": [
+     186.0,
+     186.0,
+     190.0,
+     198.0,
+     203.0,
+     187.0,
+     202.0,
+     184.0
+    ],
+    "slots_owned_sum": {
+     "0": 1488,
+     "1": 1488,
+     "2": 1520,
+     "3": 1584,
+     "4": 1624,
+     "5": 1496,
+     "6": 1616,
+     "7": 1472
+    },
+    "slowest_rank": 1,
+    "slowest_routed_us": 684.224,
+    "slowest_dispatch_to_routed_end_us": 878.87890625,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 186.0,
+      "routed_rows": 1488,
+      "m_blocks": 47,
+      "routed_us": 657.634,
+      "dispatch_to_routed_end_us": 852.2255859375
+     },
+     {
+      "rank": 1,
+      "tokens": 186.0,
+      "routed_rows": 1488,
+      "m_blocks": 48,
+      "routed_us": 684.224,
+      "dispatch_to_routed_end_us": 878.87890625
+     },
+     {
+      "rank": 2,
+      "tokens": 190.0,
+      "routed_rows": 1520,
+      "m_blocks": 49,
+      "routed_us": 679.556,
+      "dispatch_to_routed_end_us": 870.1796875
+     },
+     {
+      "rank": 3,
+      "tokens": 198.0,
+      "routed_rows": 1584,
+      "m_blocks": 45,
+      "routed_us": 662.019,
+      "dispatch_to_routed_end_us": 864.515625
+     },
+     {
+      "rank": 4,
+      "tokens": 203.0,
+      "routed_rows": 1624,
+      "m_blocks": 48,
+      "routed_us": 681.699,
+      "dispatch_to_routed_end_us": 887.2685546875
+     },
+     {
+      "rank": 5,
+      "tokens": 187.0,
+      "routed_rows": 1496,
+      "m_blocks": 47,
+      "routed_us": 657.794,
+      "dispatch_to_routed_end_us": 855.9384765625
+     },
+     {
+      "rank": 6,
+      "tokens": 202.0,
+      "routed_rows": 1616,
+      "m_blocks": 46,
+      "routed_us": 670.593,
+      "dispatch_to_routed_end_us": 873.3779296875
+     },
+     {
+      "rank": 7,
+      "tokens": 184.0,
+      "routed_rows": 1472,
+      "m_blocks": 45,
+      "routed_us": 662.337,
+      "dispatch_to_routed_end_us": 856.513671875
+     }
+    ]
+   },
+   "39": {
+    "epoch": 46520,
+    "capture_id": "58b848a7c9af488d851ba8f4cb303d5d",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 385,
+    "tokens": [
+     188.0,
+     181.0,
+     187.0,
+     208.0,
+     200.0,
+     183.0,
+     200.0,
+     189.0
+    ],
+    "slots_owned_sum": {
+     "0": 1504,
+     "1": 1448,
+     "2": 1496,
+     "3": 1664,
+     "4": 1600,
+     "5": 1464,
+     "6": 1600,
+     "7": 1512
+    },
+    "slowest_rank": 3,
+    "slowest_routed_us": 685.091,
+    "slowest_dispatch_to_routed_end_us": 879.171875,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 188.0,
+      "routed_rows": 1504,
+      "m_blocks": 50,
+      "routed_us": 674.242,
+      "dispatch_to_routed_end_us": 866.5302734375
+     },
+     {
+      "rank": 1,
+      "tokens": 181.0,
+      "routed_rows": 1448,
+      "m_blocks": 49,
+      "routed_us": 650.943,
+      "dispatch_to_routed_end_us": 847.51953125
+     },
+     {
+      "rank": 2,
+      "tokens": 187.0,
+      "routed_rows": 1496,
+      "m_blocks": 48,
+      "routed_us": 656.579,
+      "dispatch_to_routed_end_us": 854.8525390625
+     },
+     {
+      "rank": 3,
+      "tokens": 208.0,
+      "routed_rows": 1664,
+      "m_blocks": 47,
+      "routed_us": 685.091,
+      "dispatch_to_routed_end_us": 879.171875
+     },
+     {
+      "rank": 4,
+      "tokens": 200.0,
+      "routed_rows": 1600,
+      "m_blocks": 49,
+      "routed_us": 670.947,
+      "dispatch_to_routed_end_us": 861.572265625
+     },
+     {
+      "rank": 5,
+      "tokens": 183.0,
+      "routed_rows": 1464,
+      "m_blocks": 49,
+      "routed_us": 654.69,
+      "dispatch_to_routed_end_us": 850.33984375
+     },
+     {
+      "rank": 6,
+      "tokens": 200.0,
+      "routed_rows": 1600,
+      "m_blocks": 46,
+      "routed_us": 665.473,
+      "dispatch_to_routed_end_us": 865.984375
+     },
+     {
+      "rank": 7,
+      "tokens": 189.0,
+      "routed_rows": 1512,
+      "m_blocks": 47,
+      "routed_us": 665.92,
+      "dispatch_to_routed_end_us": 863.80859375
+     }
+    ]
+   }
+  }
+ },
+ "raw_sha256_files": {
+  "rr": "raw/rr.sha256",
+  "eco": "raw/eco.sha256"
+ },
+ "capture_workspaces": {
+  "rr": [
+   "/tmp/gcmoe-aligned-bBv2T3Sp"
+  ],
+  "eco": [
+   "/tmp/gcmoe-aligned-eqyr12No"
+  ]
+ },
+ "state_dir": "/tmp/sm90-bs256-trace-pbpMbH4u"
+}
