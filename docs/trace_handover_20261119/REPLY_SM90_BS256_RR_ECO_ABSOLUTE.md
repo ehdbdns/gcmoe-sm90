@@ -205,6 +205,6 @@
 |---|---|
 | 八卡释放 | 三臂全部退出，`nvidia-smi --query-compute-apps` **0 条** |
 | 已归档 | 10 个样本的 4 类文件、日志、SHA256、summary.json、预检 |
-| 保留现场 | `/tmp/sm90-bs256-trace-pbpMbH4u`（KV/回放/raw Kineto，供复查）|
-| 临时 checkout | worktree 在归档核验后由 `git worktree remove` 移除 |
+| 保留现场 | `/tmp/sm90-bs256-trace-pbpMbH4u`，**332 GB**（`kv/` 320 GB + `replay/` + `raw/` 131 MB + `preflight/`），供复查 |
+| 临时 checkout | `/tmp/sm90-bs256-trace-pbpMbH4u/code` 已由 `git worktree remove --force` 移除并 `prune`（主仓 `git worktree list` 仅剩主仓）|
 | 旧现场 | BS256/512/1024 的 state 目录**未触碰** |
