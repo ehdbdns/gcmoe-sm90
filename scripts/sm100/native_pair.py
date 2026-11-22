@@ -25,7 +25,7 @@ def report(root):
             assert (
                 times.shape == (8, 15) and np.isfinite(times).all() and times.min() > 0
             )
-            data.append(statistics.median(times.max(axis=0)))
+            data.append(float(statistics.median(times.max(axis=0))))
         diffs = [
             sum(v["different"] for r in rows for v in r["outputs"]) for rows in arms
         ]
