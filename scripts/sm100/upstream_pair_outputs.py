@@ -23,7 +23,13 @@ class OutputAllocation:
         torch.empty_like = self.original_empty_like
 
     def empty_like(self, source, *args, **kwargs):
-        if self.output is not None and not self.reused and source is self.input:
+        candidate = (
+            source.shape,
+            kwargs.get("dtype", source.dtype),
+            kwargs.get("device", source.device),
+            kwargs.get("layout", source.layout),
+        )
+        if self.output is not None and not self.reused and candidate == self.spec:
             self.reused = True
             return self.output
         tensor = self.original_empty_like(source, *args, **kwargs)
