@@ -49,7 +49,7 @@ assert len(want)==8 and got==want,(want,got)
 PY
 date -Is >> "$root/acquired.log"
 trap 'date -Is >> "$root/released.log"' EXIT
-if [[ ${2:-} == native-pair ]]; then
+if [[ ${2:-} == native-pair || ${2:-} == upstream-pair ]]; then
   export GC_SM100_MATRIX_CLOCKS=0
   unset SM100_MATRIX_OVERLAY GC_MOE_ECO_TRACE
   export DG_JIT_CACHE_DIR="$root/dg-cache"
@@ -57,6 +57,24 @@ if [[ ${2:-} == native-pair ]]; then
   sha256sum "$SM100_V41_MODEL/model.safetensors.index.json" > "$root/weights.sha256"
   nvidia-smi -L > "$root/gpus.txt"
   python -m pip freeze > "$root/versions.txt"
+  if [[ ${2:-} == upstream-pair ]]; then
+    export SM100_UPSTREAM_PAIR="$root/upstream"
+    test "$(git -C "$SM100_UPSTREAM_PAIR" rev-parse HEAD)" = 7902831ec4a6691b6268b308bcff5ec0cb15ec86
+    test -z "$(git -C "$SM100_UPSTREAM_PAIR" status --porcelain)"
+    export PYTHONPATH="$SM100_UPSTREAM_PAIR:$repo/integration:$repo/scripts/sm100"
+    export PATH="$root/dsl-env/bin:$PATH"
+    test "$(command -v python)" = "$root/dsl-env/bin/python"
+    unset GC_MOE_DISPATCH_SMS GC_MOE_PRIMARY_CTX GC_MOE_BALANCED_WORKQUEUES
+    python -c 'import gc_moe,cutlass,os; from pathlib import Path; from importlib.metadata import version; assert Path(os.environ["SM100_UPSTREAM_PAIR"]).resolve() in Path(gc_moe.__file__).resolve().parents; assert version("nvidia-cutlass-dsl") == "4.8.1"; print(gc_moe.__file__,cutlass.__file__)' > "$root/imports.txt"
+    python -m pip freeze > "$root/versions.txt"
+    evidence=docs/sm100_megamoe/v41_native_pair_results
+    sha256sum -c "$evidence/weights.sha256"
+    sha256sum -c "$evidence/measurements.sha256" > "$root/fixture-check.txt"
+    while read -r digest fixture; do
+      ln -s "$fixture" "$root/${fixture##*/}"
+    done < "$evidence/measurements.sha256"
+    test "$(wc -l < "$root/fixture-check.txt")" -eq 24
+  fi
   for arm in mega gc; do
     wait_idle
     code=0

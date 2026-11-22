@@ -75,7 +75,7 @@ def main(root, arm):
         return values
 
     backend = rpc("pair_setup", str(root), arm)
-    if arm == "mega":
+    if arm == "mega" and not os.environ.get("SM100_UPSTREAM_PAIR"):
         path = (
             Path(__file__).resolve().parents[2]
             / "docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/vanilla/rank0.npz"

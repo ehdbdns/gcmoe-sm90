@@ -3,6 +3,7 @@
 from pathlib import Path
 import hashlib
 import inspect
+import os
 
 import torch
 import torch.distributed as dist
@@ -29,6 +30,34 @@ class NativePairWorker(MoeAuditWorker):
         )
         backend = _import_deep_gemm().fp8_fp4_mega_moe.__module__
         assert ("gc_moe" in backend) == (arm == "gc"), backend
+        if os.environ.get("SM100_UPSTREAM_PAIR"):
+            from upstream_pair_outputs import OutputAllocation
+            from functools import wraps
+            import gc_moe
+            from gc_moe.runtime.gc_moe import get_context
+
+            expected = Path(os.environ["SM100_UPSTREAM_PAIR"]).resolve()
+            assert expected in Path(gc_moe.__file__).resolve().parents
+            dg = _import_deep_gemm()
+            fn = dg.fp8_fp4_mega_moe
+            info = dict(rank=self.pair_rank, backend=backend, file=inspect.getfile(fn),
+                        gc_version=gc_moe.__version__, capability=torch.cuda.get_device_capability())
+            if arm == "gc":
+                assert fn is gc_moe.fp8_fp4_gc_moe
+                ctx = get_context(num_ranks=8)
+                info.update(dispatch_sms=ctx.dispatch_sms, compute_sms=ctx.compute_sms,
+                            primary=ctx.primary_ctx_roles)
+            self.output_mode = None
+
+            @wraps(fn)
+            def checked(y, *args, **kwargs):
+                if self.output_mode is not None:
+                    self.output_mode.observe(y)
+                return fn(y, *args, **kwargs)
+
+            dg.fp8_fp4_mega_moe = checked
+            self.output_modes = [OutputAllocation() for _ in self.pair_layers]
+            return info
         return backend
 
     def pair_record(self):
@@ -79,6 +108,18 @@ class NativePairWorker(MoeAuditWorker):
         )
 
         def forward():
+            if hasattr(self, "output_modes"):
+                outputs = []
+                for mode, module, (args, _) in zip(self.output_modes, self.pair_layers, rows, strict=True):
+                    mode.begin()
+                    self.output_mode = mode
+                    try:
+                        with mode:
+                            outputs.append(module(**args))
+                        assert mode.seen, "expert bypassed selected backend"
+                    finally:
+                        self.output_mode = None
+                return outputs
             return [
                 module(**args)
                 for module, (args, _) in zip(self.pair_layers, rows, strict=True)
@@ -86,6 +127,8 @@ class NativePairWorker(MoeAuditWorker):
 
         for _ in range(3):
             eager = forward()
+        if hasattr(self, "output_modes"):
+            eager = [y.clone() for y in eager]
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
             outputs = forward()
