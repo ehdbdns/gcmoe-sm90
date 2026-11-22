@@ -23,7 +23,8 @@ export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_DISABLE_
 export GC_SM100_MATRIX_CLOCKS=1 PYTHONHASHSEED=0
 unset GC_MOE_ECO_UNIT_CFG GC_MOE_ECO_OBJECTIVE GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY
 export PYTHONPATH="$repo/source:$repo/integration:$repo/scripts/sm100"
-unset SM100_DIRECT_512 SM100_PHASE_TRACE
+unset SM100_DIRECT_512 SM100_PHASE_TRACE SM100_QUIET_TRACE
+if [[ ${2:-} == quiet-native-bs512 ]]; then export SM100_QUIET_TRACE=1 SM100_PHASE_TRACE=1; fi
 if [[ ${2:-} == trace-native-bs512 ]]; then export SM100_PHASE_TRACE=1; fi
 if [[ ${2:-} == direct-bs512 || -n ${SM100_PHASE_TRACE:-} ]]; then
   export SM100_DIRECT_512=1
@@ -151,7 +152,12 @@ for bs in "${batches[@]}"; do
     if [[ "$code" != 0 ]]; then rc=1; tail -30 "$dest/model.log"; fi
   done
   if [[ -n ${SM100_PHASE_TRACE:-} ]]; then
-    if [[ $rc == 0 ]]; then python scripts/sm100/native_phase_perfetto.py "$group"; fi
+    if [[ $rc == 0 ]]; then
+      python scripts/sm100/native_phase_perfetto.py "$group"
+      if [[ -n ${SM100_QUIET_TRACE:-} ]]; then
+        python scripts/sm100/native_skew_check.py "$group" "$repo/docs/sm100_megamoe"
+      fi
+    fi
     exit "$rc"
   fi
   PYTHONPATH="${SM100_CLOCKED_UPSTREAM:+$SM100_CLOCKED_UPSTREAM:}$PYTHONPATH" python scripts/sm100/five_report.py "$group" "$bs" || rc=1

@@ -179,14 +179,33 @@ def main():
         t = time.perf_counter()
         tracing = bool(os.getenv("SM100_PHASE_TRACE")) and phase == "measure"
         steps = 3 if tracing else STEPS
+        quiet = tracing and os.getenv("SM100_QUIET_TRACE") == "1"
+        if quiet:
+            steps = 7
+            result["phase_acquisition"] = "step1_cuda_steps2_to_6_anchors_only"
+            result["dense_control"] = []
         for i in range(steps):
-            if tracing and i == 2:
+            if os.getenv("SM100_QUIET_TRACE") == "1" and phase == "stats" and i >= STEPS - 2:
+                rpc("dense_replay_mode", "capture" if i == STEPS - 2 else "validate")
+            if quiet:
+                mode = "on" if i in (1, 2, 4, 6) else "off"
+                evidence = rpc("dense_replay_mode", mode)
+                result["dense_control"].append(dict(step=i, mode=mode, ranks=evidence))
+            if quiet and i == 2:
+                rpc("phase_clock_sample", "before")
+            elif tracing and i == (1 if quiet else 2):
                 rpc("phase_profile_start")
             if step(collect=not direct) != bs:
                 raise ValueError(f"{phase} step {i} is not full decode")
-            if tracing and i == 2:
+            if quiet and i == steps - 1:
+                rpc("phase_clock_sample", "after")
+            elif tracing and i == (1 if quiet else 2):
                 rpc("phase_profile_stop")
             times.append(time.perf_counter() - t)
+        if quiet:
+            result["dense_final"] = rpc("dense_replay_mode", "off")
+        elif phase == "stats" and os.getenv("SM100_QUIET_TRACE") == "1":
+            rpc("dense_replay_mode", "off")
         rpc("matrix_sync")
         elapsed = time.perf_counter() - t
         result[phase] = dict(

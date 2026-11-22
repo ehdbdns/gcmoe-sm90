@@ -4,6 +4,7 @@ from functools import wraps
 import inspect
 import hashlib
 import os
+import time
 from pathlib import Path
 
 import numpy as np
@@ -68,6 +69,9 @@ class FiveWorker:
         self.current = None
         self.prime_inputs = {}
         self.layer_graphs = {}
+        if os.getenv("SM100_QUIET_TRACE") == "1":
+            from native_dense_replay import DenseReplay
+            self.dense_replay = DenseReplay()
         self.graph_checks = []
         dg = _import_deep_gemm()
         self.backend_file = inspect.getfile(dg.fp8_fp4_mega_moe) if os.getenv("SM100_FORMAL_512") else None
@@ -130,6 +134,8 @@ class FiveWorker:
                         (self.audit_scratch[:1] != eager_accepted).sum())))
                 else:
                     graph, target = self.layer_graphs[layer]
+                    if self.host_submit is not None:
+                        self.host_submit[call] = time.monotonic_ns()
                     graph.replay()
                 y.copy_(target)
                 if self.eco_tables is not None and os.getenv("SM100_FORMAL_512"):
@@ -211,7 +217,9 @@ class FiveWorker:
                         self.prefill_diff["first"] = dict(req=req, position=pos,
                             native=int(self.tokens.native[req, pos]), reference=int(self.tokens.table[req, pos]))
 
-        self.steps = 3 if os.getenv("SM100_PHASE_TRACE") and phase == "measure" else STEPS
+        self.steps = STEPS
+        if os.getenv("SM100_PHASE_TRACE") and phase == "measure":
+            self.steps = 7 if os.getenv("SM100_QUIET_TRACE") == "1" else 3
         self.nclocks = 19 if os.getenv("SM100_PHASE_TRACE") else 4
         n = self.steps * LAYERS
         if not DIRECT:
@@ -249,6 +257,8 @@ class FiveWorker:
         )
         assert get_ep_group().rank_in_group == self.rank
         if phase == "measure":
+            self.host_submit = (np.zeros(n, dtype=np.int64)
+                                if os.getenv("SM100_QUIET_TRACE") == "1" else None)
             self.audit_scratch = torch.zeros(per_rank + 32, dtype=torch.int32, device="cuda")
             if self.eco_tables is not None and os.getenv("SM100_FORMAL_512") and not DIRECT:
                 self.plan_counts = torch.empty((n, per_rank), dtype=torch.int32, device="cuda")
@@ -374,6 +384,10 @@ class FiveWorker:
             .reshape(self.steps, LAYERS, -1)
         )
         if phase == "measure":
+            if self.host_submit is not None:
+                if not (np.diff(self.host_submit) > 0).all() or self.host_submit[0] <= 0:
+                    raise ValueError("missing or unordered host graph replay timestamps")
+                result["host_submit_mono_ns"] = self.host_submit.reshape(self.steps, LAYERS)
             result["clocks"] = (
                 self.recv[:, self.local_slots :]
                 .view(torch.int64)
@@ -409,8 +423,10 @@ class MatrixWorker(MoeAuditWorker):
         anchor[(1,)](self.align_clock)
         anchor[(1,)](self.align_clock[1:])
         torch.cuda.synchronize()
-        self.phase_profiler = torch.profiler.profile(activities=[
-            torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA])
+        activities = [torch.profiler.ProfilerActivity.CUDA]
+        if os.getenv("SM100_QUIET_TRACE") != "1":
+            activities.append(torch.profiler.ProfilerActivity.CPU)
+        self.phase_profiler = torch.profiler.profile(activities=activities)
         self.phase_profiler.__enter__()
         anchor[(1,)](self.align_clock)
         torch.cuda.synchronize()
@@ -427,6 +443,32 @@ class MatrixWorker(MoeAuditWorker):
         self.phase_profiler.export_chrome_trace(str(folder / f"profile-rank{rank}.json"))
         np.save(folder / f"anchor-rank{rank}.npy", self.align_clock.cpu().numpy())
         return True
+
+    def phase_clock_sample(self, side):
+        """A short Kineto session outside the clean forward on each side."""
+        from native_phase_clock import anchor
+        if side not in ("before", "after"):
+            raise ValueError(side)
+        matrix = self._matrix
+        value = torch.empty(1, dtype=torch.int64, device="cuda")
+        torch.cuda.synchronize()
+        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CUDA]) as prof:
+            anchor[(1,)](value)
+            torch.cuda.synchronize()
+        # Export both sessions after the clean step. File I/O on a worker must
+        # not delay its arrival at the next model forward.
+        if side == "before":
+            self.pre_clock = (prof, value)
+        else:
+            for name, (capture, tensor) in (("before", self.pre_clock), ("after", (prof, value))):
+                stem = matrix.folder / f"clock-{name}-rank{matrix.rank}"
+                capture.export_chrome_trace(str(stem.with_suffix(".json")))
+                np.save(stem.with_suffix(".npy"), tensor.cpu().numpy())
+            del self.pre_clock
+        return True
+
+    def dense_replay_mode(self, mode):
+        return self._matrix.dense_replay.select(mode)
 
     def matrix_setup(self, root, arm, bs):
         self._matrix = FiveWorker()
