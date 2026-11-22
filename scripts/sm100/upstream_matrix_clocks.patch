@@ -1,0 +1,74 @@
+diff --git a/gc_moe/gc/__init__.py b/gc_moe/gc/__init__.py
+index 3eff800..0531362 100644
+--- a/gc_moe/gc/__init__.py
++++ b/gc_moe/gc/__init__.py
+@@ -58,0 +59 @@ class GCSymmBuffer:
++        self.clock_offset = align(self.layout.nbytes, 16) + align(num_experts // group.size() * 4, 8)
+@@ -61 +62 @@ class GCSymmBuffer:
+-            self.buffer = allocator.empty(self.layout.nbytes, dtype=torch.int8, device='cuda')
++            self.buffer = allocator.empty(self.clock_offset + 32, dtype=torch.int8, device='cuda')
+diff --git a/gc_moe/impls/sm100_fp8_fp4_gc_moe.py b/gc_moe/impls/sm100_fp8_fp4_gc_moe.py
+index ec8337e..8b46eb9 100644
+--- a/gc_moe/impls/sm100_fp8_fp4_gc_moe.py
++++ b/gc_moe/impls/sm100_fp8_fp4_gc_moe.py
+@@ -50,0 +51 @@ from ..ptx.ld_st import (
++    red_global_min_u64, red_global_max_u64,
+@@ -94,0 +96 @@ from ..ptx.utils import (
++    read_globaltimer,
+@@ -274 +276 @@ class GCMoERoleKernel:
+-                 routed_weight_linger: bool = False):
++                 routed_weight_linger: bool = False, clock_offset=None):
+@@ -289,0 +292 @@ class GCMoERoleKernel:
++        self.clock_offset = clock_offset
+@@ -710,0 +714,3 @@ class GCMoERoleKernel:
++        if cutlass.const_expr(self.role != 3):
++            if tid == 0:
++                red_global_min_u64(signals.iterator + self.clock_offset // 4, read_globaltimer())
+@@ -1427,0 +1434,2 @@ class GCMoERoleKernel:
++                            if k_block == 0 and is_shared == 0 and elect_one_sync():
++                                red_global_min_u64(signals.iterator + self.clock_offset // 4 + 2, read_globaltimer())
+@@ -1875,0 +1884,2 @@ class GCMoERoleKernel:
++                    if task_phase == Uint32(GCBlockPhase.Linear2) and physical_warp == 4 and elect_one_sync():
++                        red_global_max_u64(signals.iterator + self.clock_offset // 4 + 4, read_globaltimer())
+@@ -1939,0 +1950,3 @@ class GCMoERoleKernel:
++                if elect_one_sync():
++                    tma_store_wait_0()
++                    red_global_max_u64(signals.iterator + self.clock_offset // 4 + 6, read_globaltimer())
+diff --git a/gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py b/gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py
+index de0cb02..203f518 100644
+--- a/gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py
++++ b/gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py
+@@ -643,0 +644 @@ def prepare_role_binaries(config, y: torch.Tensor,
++                        clock_offset=sym_buffer.clock_offset,
+diff --git a/gc_moe/ptx/ld_st.py b/gc_moe/ptx/ld_st.py
+index 62bba5a..03fbb4a 100644
+--- a/gc_moe/ptx/ld_st.py
++++ b/gc_moe/ptx/ld_st.py
+@@ -484,0 +485,14 @@ def ld_shared_u32x4_sm90(ptr: cute.Pointer, *, loc=None, ip=None):
++
++
++@dsl_user_op
++def red_global_min_u64(ptr: cute.Pointer, value: Uint64, *, loc=None, ip=None) -> None:
++    llvm.inline_asm(None, [ptr.toint(loc=loc, ip=ip).ir_value(), value.ir_value(loc=loc, ip=ip)],
++                    'red.global.min.u64 [$0], $1;', 'l,l',
++                    has_side_effects=True, asm_dialect=llvm.AsmDialect.AD_ATT)
++
++
++@dsl_user_op
++def red_global_max_u64(ptr: cute.Pointer, value: Uint64, *, loc=None, ip=None) -> None:
++    llvm.inline_asm(None, [ptr.toint(loc=loc, ip=ip).ir_value(), value.ir_value(loc=loc, ip=ip)],
++                    'red.global.max.u64 [$0], $1;', 'l,l',
++                    has_side_effects=True, asm_dialect=llvm.AsmDialect.AD_ATT)
+diff --git a/gc_moe/ptx/utils.py b/gc_moe/ptx/utils.py
+index 8efe708..24d1ca3 100644
+--- a/gc_moe/ptx/utils.py
++++ b/gc_moe/ptx/utils.py
+@@ -162,0 +163,8 @@ def sync_weight(*, loc=None, ip=None):
++
++
++@dsl_user_op
++def read_globaltimer(*, loc=None, ip=None) -> Uint64:
++    """Device-wide nanosecond timer (ECO timeline trace)."""
++    return Uint64(llvm.inline_asm(T.i64(), [], 'mov.u64 $0, %globaltimer;', '=l',
++                                  has_side_effects=True, asm_dialect=llvm.AsmDialect.AD_ATT,
++                                  loc=loc, ip=ip))

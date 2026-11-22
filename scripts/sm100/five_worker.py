@@ -1,12 +1,17 @@
 """Worker telemetry and fixed-route replay for eager, full-batch SM100 decode."""
 
 from functools import wraps
+import inspect
 import hashlib
 import os
 from pathlib import Path
 
 import numpy as np
 import torch
+
+if os.getenv("SM100_FORMAL_512"):
+    from stream_checkpoint import install_cache_names
+    install_cache_names()
 
 STEPS, LAYERS = 1000, 40
 
@@ -62,6 +67,13 @@ class FiveWorker:
         self.layer_graphs = {}
         self.graph_checks = []
         dg = _import_deep_gemm()
+        self.backend_file = inspect.getfile(dg.fp8_fp4_mega_moe) if os.getenv("SM100_FORMAL_512") else None
+        if os.getenv("SM100_FORMAL_512") and arm.startswith("gc"):
+            upstream = Path(os.environ["SM100_CLOCKED_UPSTREAM"]).resolve()
+            assert (upstream in Path(self.backend_file).resolve().parents) == (arm != "gc_eco")
+            from gc_moe.runtime.gc_moe import get_context
+            ctx = get_context() if arm == "gc_eco" else get_context(num_ranks=8)
+            self.sm_split = dict(dispatch=ctx.dispatch_sms, compute=ctx.compute_sms)
         self.select_m = dg.get_block_m_for_mega_moe
         if (
             Path(os.environ["SM100_MATRIX_OVERLAY"]).resolve()
@@ -167,6 +179,26 @@ class FiveWorker:
         self.calls = 0
         self.phase = phase
         self.phase_start = self.tokens.positions.clone()
+        if os.getenv("SM100_FORMAL_512"):
+            from stream_checkpoint import checkpoint, named_caches, runner_boundary
+
+            folder = self.root / f"kv-{phase}"
+            folder.mkdir(exist_ok=True)
+            self.boundary = checkpoint(
+                folder, self.rank, self.publisher, named_caches(self.model_runner),
+                runner_boundary(self.model_runner, self.tokens))
+            if phase == "stats":
+                valid = torch.arange(self.tokens.native.shape[1], device="cuda")[None, :] < self.phase_start[:, None]
+                self.prefill_native = tensor_digest(self.tokens.native.masked_fill(~valid, -1))
+                self.prefill_diff = {}
+                if not self.publisher:
+                    diff = (valid & (self.tokens.native != self.tokens.table)).nonzero()
+                    self.prefill_diff["count"] = len(diff)
+                    if len(diff):
+                        req, pos = diff[diff[:, 1].argmin()].tolist()
+                        self.prefill_diff["first"] = dict(req=req, position=pos,
+                            native=int(self.tokens.native[req, pos]), reference=int(self.tokens.table[req, pos]))
+
         n = STEPS * LAYERS
         shape = (n, self.bs // 8, 6)
         self.raw_ids = torch.empty(shape, device="cuda", dtype=torch.int32)
@@ -281,6 +313,21 @@ class FiveWorker:
             batch_order=self.tokens.batch_hash.hexdigest(),
             block_m=int(self.bm),
         )
+        if os.getenv("SM100_FORMAL_512"):
+            offsets = self.phase_start[:, None] + torch.arange(STEPS, device="cuda")
+            window = self.tokens.native.gather(1, offsets)
+            assert window.shape == (self.bs, STEPS) and (window >= 0).all()
+            evidence.update(native_window=tensor_digest(window), kv_boundary=self.boundary,
+                            prefill_native=self.prefill_native, backend_file=self.backend_file,
+                            prefill_difference=self.prefill_diff, sm_split=getattr(self, "sm_split", None))
+            if not self.publisher:
+                reference = self.tokens.table.gather(1, offsets)
+                diff = (window != reference).nonzero()
+                evidence["native_diff"] = len(diff)
+                if len(diff):
+                    req, step = diff[diff[:, 1].argmin()].tolist()
+                    evidence["first_native_diff"] = dict(req=req, step=step,
+                        native=int(window[req, step]), reference=int(reference[req, step]))
         if phase == "measure":
             evidence["validated_layer_graphs"] = len(self.layer_graphs)
             evidence["native"] = tensor_digest(self.tokens.native)

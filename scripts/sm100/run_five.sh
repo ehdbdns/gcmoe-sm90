@@ -23,6 +23,17 @@ export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_DISABLE_
 export GC_SM100_MATRIX_CLOCKS=1 PYTHONHASHSEED=0
 unset GC_MOE_ECO_UNIT_CFG GC_MOE_ECO_OBJECTIVE GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY
 export PYTHONPATH="$repo/source:$repo/integration:$repo/scripts/sm100"
+if [[ ${2:-} == formal-bs512 ]]; then
+  export SM100_FORMAL_512=1 SM100_MATRIX_BS=512 GC_MOE_DISPATCH_SMS=8
+  export PATH="$root/dsl-env/bin:$PATH"
+  test "$(command -v python)" = "$root/dsl-env/bin/python"
+  export SM100_CLOCKED_UPSTREAM="$root/upstream"
+  test "$(git -C "$root/upstream" rev-parse HEAD)" = 7902831ec4a6691b6268b308bcff5ec0cb15ec86
+  git -C "$root/upstream" diff --exit-code HEAD
+  git -C "$root/upstream" apply --unidiff-zero "$repo/scripts/sm100/upstream_matrix_clocks.patch"
+  python -c 'from importlib.metadata import version; assert version("nvidia-cutlass-dsl") == "4.8.1"'
+  unset GC_MOE_PRIMARY_CTX GC_MOE_BALANCED_WORKQUEUES
+fi
 expected=$(python -c 'import json,re; d=json.load(open("docs/sm100_megamoe/ENV.json"));print(",".join(re.findall(r"GPU-[0-9A-Fa-f-]{36}",d["commands"]["gpu_list"]["output"])))')
 test "$(tr , '\n' <<< "$expected" | sort -u | wc -l)" = 8
 # Preserve a scheduler/container restriction. Check the actual UUIDs before any model.
@@ -100,7 +111,11 @@ sha256sum "$SM100_V41_MODEL/model.safetensors.index.json" > "$root/weights.sha25
 python scripts/sm100/check_v41_rr.py | tee "$root/rr-preflight.log"
 rc=0
 batches=(256 512 1024 2048)
-if [[ ${SM100_MATRIX_BS:-} == 1024 ]]; then batches=(1024); fi
+case ${SM100_MATRIX_BS:-} in
+  '') ;;
+  256|512|1024|2048) batches=("$SM100_MATRIX_BS") ;;
+  *) exit 2 ;;
+esac
 for bs in "${batches[@]}"; do
   group="$root/bs$bs"
   mkdir -p "$group"
@@ -113,7 +128,11 @@ for bs in "${batches[@]}"; do
     wait_idle
     code=0
     date -Is > "$dest/start"
-    python -u scripts/sm100/five_matrix.py "$group" "$arm" "$bs" > "$dest/model.log" 2>&1 || code=$?
+    arm_path="$PYTHONPATH"
+    if [[ ${SM100_FORMAL_512:-} == 1 && ( $arm == gc || $arm == gc_rr ) ]]; then
+      arm_path="$SM100_CLOCKED_UPSTREAM:$arm_path"
+    fi
+    PYTHONPATH="$arm_path" python -u scripts/sm100/five_matrix.py "$group" "$arm" "$bs" > "$dest/model.log" 2>&1 || code=$?
     date -Is > "$dest/end"
     echo "$code" > "$dest/exit-code"
     if [[ "$code" != 0 ]]; then rc=1; tail -30 "$dest/model.log"; fi

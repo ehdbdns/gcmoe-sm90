@@ -4,6 +4,7 @@ import argparse
 import csv
 from itertools import combinations
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -116,6 +117,8 @@ def summarize(root, bs):
                 routed_cta_max_pp=routed_max,
                 accepted=accepted,
             )
+            if os.getenv("SM100_FORMAL_512"):
+                del row["ms_per_step"], row["vs_mega_time_pct"]
             checks[arm] = all(
                 obs["replay_ids"] == base["logical_ids"]
                 and obs["replay_weights"] == base["gate_weights"]
@@ -125,6 +128,11 @@ def summarize(root, bs):
                     run[phase]["ranks"], ref[phase]["ranks"], strict=True
                 )
             )
+            if os.getenv("SM100_FORMAL_512"):
+                checks[arm] &= all(
+                    x["kv_boundary"] == y["kv_boundary"]
+                    for phase in ("stats", "measure")
+                    for x, y in zip(run[phase]["ranks"], ref[phase]["ranks"], strict=True))
             if not checks[arm]:
                 raise ValueError("route or token replay mismatch")
             rows.append(row)
@@ -154,6 +162,13 @@ def summarize(root, bs):
             and same_plan
             and ra["prompt_sha256"] == rb["prompt_sha256"]
         )
+        strict = controlled and equal_native and equal_gates
+        if os.getenv("SM100_FORMAL_512"):
+            equal_native = all(
+                x["native_window"] == y["native_window"] and x["prefill_native"] == y["prefill_native"]
+                for phase in ("stats", "measure")
+                for x, y in zip(ra[phase]["ranks"], rb[phase]["ranks"], strict=True))
+            strict = controlled and equal_native
         pairs.append(
             dict(
                 arm_a=a,
@@ -161,9 +176,13 @@ def summarize(root, bs):
                 controlled_replay=controlled,
                 native_token_equal=equal_native,
                 native_gate_equal=equal_gates,
-                strict=controlled and equal_native and equal_gates,
+                strict=strict,
             )
         )
+    if os.getenv("SM100_FORMAL_512") and rows:
+        baseline = next((r["moe_graph_ms"] for r in rows if r["arm"] == "mega"), None)
+        for row in rows:
+            row["moe_change_vs_mega_pct"] = 100 * (row["moe_graph_ms"] / baseline - 1) if baseline else None
     write(root / "metrics.csv", rows)
     write(root / "pairs.csv", pairs)
     summary = dict(

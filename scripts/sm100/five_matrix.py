@@ -63,6 +63,13 @@ def main():
         GC_MOE_MATRIX_BS=str(bs),
         GC_MOE_MATRIX_ARM="vanilla" if publisher else "consumer",
     )
+    if os.getenv("SM100_FORMAL_512"):
+        assert bs == 512
+        if publisher:
+            import shutil
+            required = 2 * 8 * (32 << 30) + (38 << 30)
+            if shutil.disk_usage(root).free < required:
+                raise RuntimeError("BS512 needs 550 GiB free on the private run filesystem")
     assert torch.cuda.device_count() == 8 and all(
         torch.cuda.get_device_capability(i) == (10, 3) for i in range(8)
     )
@@ -92,6 +99,7 @@ def main():
         ),
         dtype="bfloat16",
         gpu_memory_utilization=0.8,
+        **({"kv_cache_memory_bytes": 32 << 30} if os.getenv("SM100_FORMAL_512") else {}),
         seed=0,
         async_scheduling=False,
     )
