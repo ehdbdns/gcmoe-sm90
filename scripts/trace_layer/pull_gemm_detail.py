@@ -313,7 +313,7 @@ def analyze(capture_dir, deliver_dir, require_streamed_blocks=False, require_bat
         coarse = json.loads((deliver_dir / f'{stem}.perfetto.json').read_text())
         spans = [event for event in coarse['traceEvents'] if event.get('ph') == 'X']
         by_rank = {row['rank']: row for row in counts['ranks']}
-        require(len(spans) == RANKS * 7
+        require(len(spans) == RANKS * (6 if manifest.get("arm") == "rr" else 7)
                 and len({(event['args']['rank'], event['name']) for event in spans}) == len(spans)
                 and all(event['args']['epoch'] == epoch
                         and event['args']['step'] == counts['step']

@@ -21,8 +21,9 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def read_calls(trace, layers, dispatch_grid, rank):
-    kernels = {name: [] for name in ROLES}
+def read_calls(trace, layers, dispatch_grid, rank, eco=True):
+    roles = [r for r in ROLES if eco or r != 'plan']
+    kernels = {name: [] for name in roles}
     for index, event in enumerate(trace['traceEvents']):
         name = event.get('name', '').lower()
         if event.get('cat') != 'kernel' or 'gc_moe' not in name:
@@ -61,7 +62,7 @@ def read_calls(trace, layers, dispatch_grid, rank):
                     and role not in calls[index],
                     f'rank {rank}: overlapping or incomplete call at raw row {event["row"]}')
             calls[index][role] = event
-    require(all(set(call) == set(ROLES) for call in calls),
+    require(all(set(call) == set(roles) for call in calls),
             f'rank {rank}: incomplete layer windows')
     return calls
 
@@ -70,7 +71,7 @@ def read_worker_trace(capture_dir, capture, dispatch_grid, rank):
     trace = json.loads((capture_dir / f'rank{rank}.json').read_text())
     require(trace.get('gcmoe_capture') == {'id': capture['id'], 'rank': rank},
             f'rank {rank}: torch trace is from another capture')
-    return read_calls(trace, capture['layers'], dispatch_grid, rank), trace.get('baseTimeNanoseconds')
+    return read_calls(trace, capture['layers'], dispatch_grid, rank, capture.get('arm') != 'rr'), trace.get('baseTimeNanoseconds')
 
 
 def clock_residuals(call, dispatch, pull_end, routed, combine):
@@ -130,13 +131,13 @@ def resolve_epochs(capture_dir, capture, dispatch_grid):
 
 
 def layer_timing(call, stamps, has_work, context):
-    d, s, r, p, c = (call[role] for role in ROLES)
+    d, s, r, p, c = (call.get(role) for role in ROLES)
     dispatch, push_end, pull, pull_end, routed, first_claim, combine = (
         stamps[i] & UNSET for i in (10, 3, 4, 5, 14, 15, 12))
     ordered = (dispatch, push_end, pull, pull_end)
     require(all(value not in (0, UNSET) for value in (*ordered, routed, combine))
             and tuple(sorted(ordered)) == ordered, f'{context}: invalid dispatch stamps')
-    require(c['ts'] >= max(r['end'], d['end'], p['end'], s['end']),
+    require(c['ts'] >= max(v['end'] for k,v in call.items() if k != 'combine'),
             f'{context}: combine overlaps a producer')
     if stamps[22] >= 32:
         require(r['ts'] >= s['end'], f'{context}: routed starts before shared completes')
@@ -161,7 +162,7 @@ def layer_timing(call, stamps, has_work, context):
         'count exchange': (d['ts'], pull_start, 'dispatch'),
         'pull token': (pull_start, d['end'], 'dispatch'),
         'shared L1+L2': (s['ts'], s['end'], 'shared'),
-        'ECO plan': (p['ts'], p['end'], 'plan'),
+        **({'ECO plan': (p['ts'], p['end'], 'plan')} if p else {}),
         'wait token': (r['ts'], gemm_start, 'routed'),
         'GEMM': (gemm_start, r['end'], 'routed'),
         'combine': (c['ts'], c['end'], 'combine'),
@@ -233,7 +234,7 @@ def build(capture_dir, layers, dispatch_grid, require_overlap=False):
         require(sum(sum(row['owned']) for row in rows) == sum(input_tokens) * topk,
                 f'epoch {epoch}: routed token counts do not conserve top-k routes')
         plan = rows[0]['stamps'][24:32]
-        require(all(value >= 0 for value in plan) and sum(plan) > 0
+        require(capture.get('arm') == 'rr' or all(value >= 0 for value in plan) and sum(plan) > 0
                 and all(row['stamps'][24:32] == plan for row in rows),
                 f'epoch {epoch}: missing or divergent ECO scores')
 
@@ -256,7 +257,7 @@ def build(capture_dir, layers, dispatch_grid, require_overlap=False):
             segments, checks = layer_timing(call, row['stamps'], bool(sum(counts)), context)
             metrics = dict(rank=rank, tokens=sum(counts) / replication,
                            routed_rows=sum(counts), m_blocks=sum((q + block_m - 1) // block_m for q in counts),
-                           block_m=block_m, plan_cost=plan[rank],
+                           block_m=block_m, plan_cost=None if capture.get('arm') == 'rr' else plan[rank],
                            routed_us=call['routed']['dur'],
                            dispatch_to_routed_end_us=call['routed']['end'] - call['dispatch']['ts'])
             result['ranks'].append(dict(metrics, slots_owned=counts, raw_kernels=call,
@@ -286,7 +287,8 @@ def build(capture_dir, layers, dispatch_grid, require_overlap=False):
             and rank['checks']['drawn_pull_gemm_overlap_us'] > 0]
         require(not require_overlap or result['pull_gemm_overlap_ranks'],
                 f'epoch {epoch}: no rank has both measured and visible pull/GEMM overlap')
-        result['graph_plan_accuracy'] = measure_plan(result['ranks'])
+        if capture.get('arm') != 'rr':
+            result['graph_plan_accuracy'] = measure_plan(result['ranks'])
         yield result, dict(traceEvents=events)
 
 

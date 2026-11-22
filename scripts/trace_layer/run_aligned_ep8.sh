@@ -81,6 +81,10 @@ if [[ $variant == --study-main20 ]]; then
     *) exit 2 ;;
   esac
 fi
+if [[ -n ${GC_BS256_TRACE_DIR:-} ]]; then
+  [[ $variant == --study-main20 && $GC_MOE_MATRIX_BS == 256 && $GC_MOE_MATRIX_ARM =~ ^(rr|eco)$ ]] || exit 2
+  export GC_MOE_FINE_TRACE=1 GC_MOE_FINE_FLOOR=1 GC_MOE_FINE_EPOCHS=1 GC_MOE_FINE_RECS=4194304 GC_MOE_FINE_MIN_EPOCH=0
+fi
 fine_args=()
 if [[ $variant == --fine-trace || $variant == --study-fine || $variant == --study-paired ]]; then
   export GC_MOE_FINE_TRACE=1 GC_MOE_FINE_FLOOR=1 GC_MOE_FINE_EPOCHS=1
