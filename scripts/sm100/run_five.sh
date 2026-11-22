@@ -49,6 +49,23 @@ assert len(want)==8 and got==want,(want,got)
 PY
 date -Is >> "$root/acquired.log"
 trap 'date -Is >> "$root/released.log"' EXIT
+if [[ ${2:-} == native-pair ]]; then
+  export GC_SM100_MATRIX_CLOCKS=0
+  unset SM100_MATRIX_OVERLAY GC_MOE_ECO_TRACE
+  export DG_JIT_CACHE_DIR="$root/dg-cache"
+  test ! -e "$root/mega.json" && test ! -e "$root/gc.json" || exit 2
+  sha256sum "$SM100_V41_MODEL/model.safetensors.index.json" > "$root/weights.sha256"
+  nvidia-smi -L > "$root/gpus.txt"
+  python -m pip freeze > "$root/versions.txt"
+  for arm in mega gc; do
+    wait_idle
+    code=0
+    python -u scripts/sm100/native_pair.py "$root" "$arm" > "$root/$arm.log" 2>&1 || code=$?
+    echo "$code" > "$root/$arm.exit-code"
+    if [[ $code != 0 ]]; then tail -40 "$root/$arm.log"; exit "$code"; fi
+  done
+  exit 0
+fi
 export SM100_MATRIX_OVERLAY="$root/overlay"
 if [[ ! -e "$root/overlay.ready" ]]; then
   tmp=$(mktemp -d "$root/package-XXXXXXXX")
