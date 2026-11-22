@@ -1,6 +1,7 @@
 """Prepare a run-private copy of the installed MegaMoE package with CTA clocks."""
 
 import argparse
+import os
 from pathlib import Path
 import shutil
 
@@ -81,5 +82,10 @@ def fp8_fp4_mega_moe(*args, **kwargs):
     return _matrix_original(*args, **kwargs)
 """)
     header = dest / "include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh"
-    header.write_text(instrument(header.read_text()))
+    source = instrument(header.read_text())
+    if os.getenv("SM100_PHASE_TRACE"):
+        from native_phase_instrument import mega
+        source = mega(source)
+        api.write_text(api.read_text().replace("nbytes()-end < 32", "nbytes()-end < 152"))
+    header.write_text(source)
     print(f"private instrumented package {src} -> {dest}")

@@ -23,13 +23,14 @@ export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_DISABLE_
 export GC_SM100_MATRIX_CLOCKS=1 PYTHONHASHSEED=0
 unset GC_MOE_ECO_UNIT_CFG GC_MOE_ECO_OBJECTIVE GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY
 export PYTHONPATH="$repo/source:$repo/integration:$repo/scripts/sm100"
-unset SM100_DIRECT_512
-if [[ ${2:-} == direct-bs512 ]]; then
+unset SM100_DIRECT_512 SM100_PHASE_TRACE
+if [[ ${2:-} == trace-native-bs512 ]]; then export SM100_PHASE_TRACE=1; fi
+if [[ ${2:-} == direct-bs512 || -n ${SM100_PHASE_TRACE:-} ]]; then
   export SM100_DIRECT_512=1
   fixture=docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/vanilla/rank0.npz
   echo "ceaa52dc3f3b09fa95e08c59b83b56b97d90b8335b3437a506cb5dbd42fe09f2  $fixture" | sha256sum -c -
 fi
-if [[ ${2:-} == formal-bs512 || ${2:-} == direct-bs512 ]]; then
+if [[ ${2:-} == formal-bs512 || ${SM100_DIRECT_512:-} == 1 ]]; then
   export SM100_FORMAL_512=1 SM100_MATRIX_BS=512 GC_MOE_DISPATCH_SMS=8
   export PATH="$root/dsl-env/bin:$PATH"
   test "$(command -v python)" = "$root/dsl-env/bin/python"
@@ -37,6 +38,7 @@ if [[ ${2:-} == formal-bs512 || ${2:-} == direct-bs512 ]]; then
   test "$(git -C "$root/upstream" rev-parse HEAD)" = fb8b65fa829c97962eb2dbc9a4ad8b759b9cd736
   git -C "$root/upstream" diff --exit-code HEAD
   git -C "$root/upstream" apply "$repo/scripts/sm100/natureal_matrix_audit.patch"
+  if [[ -n ${SM100_PHASE_TRACE:-} ]]; then python scripts/sm100/native_phase_instrument.py "$root/upstream"; fi
   cp -R "$repo/source/gc_moe/eplb" "$root/upstream/gc_moe/"
   cp "$repo/source/gc_moe/eco/"meta_sm{90,100}.py "$root/upstream/gc_moe/eco/"
   unset GC_MOE_ECO_BLOCK_M GC_MOE_ECO_PLAN_DISPATCH GC_MOE_ECO_HELPER GC_MOE_ECO_TRACE
@@ -128,7 +130,9 @@ esac
 for bs in "${batches[@]}"; do
   group="$root/bs$bs"
   mkdir -p "$group"
-  for arm in mega gc mega_rr gc_rr gc_eco; do
+  arms=(mega gc mega_rr gc_rr gc_eco)
+  if [[ -n ${SM100_PHASE_TRACE:-} ]]; then arms=(mega gc); fi
+  for arm in "${arms[@]}"; do
     dest="$group/$arm"
     mkdir -p "$dest"
     if [[ -e "$dest/result.json" && -f "$dest/exit-code" && $(cat "$dest/exit-code") == 0 ]]; then continue; fi
@@ -146,6 +150,10 @@ for bs in "${batches[@]}"; do
     echo "$code" > "$dest/exit-code"
     if [[ "$code" != 0 ]]; then rc=1; tail -30 "$dest/model.log"; fi
   done
+  if [[ -n ${SM100_PHASE_TRACE:-} ]]; then
+    if [[ $rc == 0 ]]; then python scripts/sm100/native_phase_perfetto.py "$group"; fi
+    exit "$rc"
+  fi
   PYTHONPATH="${SM100_CLOCKED_UPSTREAM:+$SM100_CLOCKED_UPSTREAM:}$PYTHONPATH" python scripts/sm100/five_report.py "$group" "$bs" || rc=1
 done
 python scripts/sm100/five_collect.py "$root" "${batches[@]}"

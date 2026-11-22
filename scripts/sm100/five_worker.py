@@ -211,7 +211,9 @@ class FiveWorker:
                         self.prefill_diff["first"] = dict(req=req, position=pos,
                             native=int(self.tokens.native[req, pos]), reference=int(self.tokens.table[req, pos]))
 
-        n = STEPS * LAYERS
+        self.steps = 3 if os.getenv("SM100_PHASE_TRACE") and phase == "measure" else STEPS
+        self.nclocks = 19 if os.getenv("SM100_PHASE_TRACE") else 4
+        n = self.steps * LAYERS
         if not DIRECT:
             shape = (n, self.bs // 8, 6)
             self.raw_ids = torch.empty(shape, device="cuda", dtype=torch.int32)
@@ -229,14 +231,14 @@ class FiveWorker:
         if self.arm.startswith("gc"):
             buf = self.experts[0].get_symm_buffer()
             self.kernel_scratch = buf.buffer.narrow(
-                0, buf.clock_offset - per_rank * 4, per_rank * 4 + 32
+                0, buf.clock_offset - per_rank * 4, per_rank * 4 + self.nclocks * 8
             ).view(torch.int32)
         else:
             self.kernel_scratch = torch.empty(
-                per_rank + 8, device="cuda", dtype=torch.int32
+                per_rank + 2 * self.nclocks, device="cuda", dtype=torch.int32
             )
-        self.recv = torch.zeros((n, per_rank + 8), dtype=torch.int32, device="cuda")
-        self.recv[:, per_rank:].view(torch.int64)[:, :2].fill_(-1)
+        self.recv = torch.zeros((n, per_rank + 2 * self.nclocks), dtype=torch.int32, device="cuda")
+        self._reset_clock_minima(per_rank)
         self.bm = self.select_m(
             8,
             384 if self.eco_tables is not None else 8 * per_rank,
@@ -269,9 +271,14 @@ class FiveWorker:
                 raise RuntimeError(f"MoE eager/replay mismatch (outputs, counts, accepts): {mismatches.tolist()}")
             self.calls = 0
             self.recv.zero_()
-            self.recv[:, per_rank:].view(torch.int64)[:, :2].fill_(-1)
+            self._reset_clock_minima(per_rank)
         torch.cuda.synchronize()
         return True
+
+    def _reset_clock_minima(self, per_rank):
+        clocks = self.recv[:, per_rank:].view(torch.int64)
+        clocks[:, :2].fill_(-1)
+        clocks[:, 4::2].fill_(-1)
 
     def five_eco(self, filename):
         from gc_moe import get_symm_buffer_for_gc_moe
@@ -321,7 +328,7 @@ class FiveWorker:
         self.five_sync()
         phase = self.phase
         self.phase = None
-        assert self.calls == STEPS * LAYERS
+        assert self.calls == self.steps * LAYERS
         if DIRECT:
             evidence = dict(block_m=int(self.bm), backend_file=self.backend_file,
                             sm_split=getattr(self, "sm_split", None),
@@ -364,7 +371,7 @@ class FiveWorker:
             counts=self.recv[:, : self.local_slots]
             .cpu()
             .numpy()
-            .reshape(STEPS, LAYERS, -1)
+            .reshape(self.steps, LAYERS, -1)
         )
         if phase == "measure":
             result["clocks"] = (
@@ -372,7 +379,7 @@ class FiveWorker:
                 .view(torch.int64)
                 .cpu()
                 .numpy()
-                .reshape(STEPS, LAYERS, 4)
+                .reshape(self.steps, LAYERS, self.nclocks)
             )
         if phase == "measure":
             if self.eco_tables is not None:
@@ -396,6 +403,31 @@ from v41_gc_worker import MoeAuditWorker
 
 
 class MatrixWorker(MoeAuditWorker):
+    def phase_profile_start(self):
+        from native_phase_clock import anchor
+        self.align_clock = torch.zeros(2, dtype=torch.int64, device="cuda")
+        anchor[(1,)](self.align_clock)
+        anchor[(1,)](self.align_clock[1:])
+        torch.cuda.synchronize()
+        self.phase_profiler = torch.profiler.profile(activities=[
+            torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA])
+        self.phase_profiler.__enter__()
+        anchor[(1,)](self.align_clock)
+        torch.cuda.synchronize()
+        return True
+
+    def phase_profile_stop(self):
+        from native_phase_clock import anchor
+        torch.cuda.synchronize()
+        anchor[(1,)](self.align_clock[1:])
+        torch.cuda.synchronize()
+        self.phase_profiler.__exit__(None, None, None)
+        folder = self._matrix.folder
+        rank = self._matrix.rank
+        self.phase_profiler.export_chrome_trace(str(folder / f"profile-rank{rank}.json"))
+        np.save(folder / f"anchor-rank{rank}.npy", self.align_clock.cpu().numpy())
+        return True
+
     def matrix_setup(self, root, arm, bs):
         self._matrix = FiveWorker()
         self._matrix.model_runner = self.model_runner

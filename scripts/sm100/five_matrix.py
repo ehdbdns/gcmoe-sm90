@@ -177,14 +177,20 @@ def main():
         rr_before = rpc("inspect_rr_calls")
         times = []
         t = time.perf_counter()
-        for i in range(STEPS):
+        tracing = bool(os.getenv("SM100_PHASE_TRACE")) and phase == "measure"
+        steps = 3 if tracing else STEPS
+        for i in range(steps):
+            if tracing and i == 2:
+                rpc("phase_profile_start")
             if step(collect=not direct) != bs:
                 raise ValueError(f"{phase} step {i} is not full decode")
+            if tracing and i == 2:
+                rpc("phase_profile_stop")
             times.append(time.perf_counter() - t)
         rpc("matrix_sync")
         elapsed = time.perf_counter() - t
         result[phase] = dict(
-            wall_ms=1000 * elapsed / STEPS,
+            wall_ms=1000 * elapsed / steps,
             cumulative_seconds=times,
             ranks=rpc("matrix_finish"),
         )
@@ -193,8 +199,8 @@ def main():
             a - b for a, b in zip(rr_after, rr_before, strict=True)
         ]
         expect_rr = eplb and (arm != "gc_eco" or phase == "stats")
-        assert result[phase]["rr_calls"] == [STEPS * 40 * int(expect_rr)] * 8
-        if publisher and phase == "stats":
+        assert result[phase]["rr_calls"] == [steps * 40 * int(expect_rr)] * 8
+        if publisher and phase == "stats" and not os.getenv("SM100_PHASE_TRACE"):
             make_plan(root, bs)
     if direct:
         result["workload"] = "native greedy decode"
