@@ -5,6 +5,8 @@ import sys
 
 import numpy as np
 
+from native_phase_overview import write_overview
+
 LAYERS = (0, 8, 20, 32, 39)
 PHASES = (("MoE", 0, 3), ("entry to first routed MMA", 0, 1),
           ("dispatch: source indices and count exchange incl. barrier", 4, 5),
@@ -85,9 +87,11 @@ def build(root):
             prefix = dest / f"step002_layer{layer:02}"
             for r in range(8):
                 events.append(dict(ph="M", pid=r, tid=0, name="process_name", args={"name": f"{arm} rank {r}"}))
-            prefix.with_suffix(".perfetto.json").write_text(json.dumps(dict(traceEvents=events, displayTimeUnit="ns")))
-            prefix.with_suffix(".counts.json").write_text(json.dumps(dict(step=2, layer=layer, arm=arm,
-                baseTimeNanoseconds=base, phases=PHASES, ranks=rows), indent=2))
+            trace = dict(traceEvents=events, displayTimeUnit="ns")
+            counts = dict(step=2, layer=layer, arm=arm, baseTimeNanoseconds=base, phases=PHASES, ranks=rows)
+            prefix.with_suffix(".perfetto.json").write_text(json.dumps(trace))
+            prefix.with_suffix(".counts.json").write_text(json.dumps(counts, indent=2))
+            write_overview(folder, prefix.name, counts, trace)
 
 
 if __name__ == "__main__":

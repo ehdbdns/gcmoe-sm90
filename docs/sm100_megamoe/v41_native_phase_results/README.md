@@ -1,5 +1,17 @@
 # V41 原生阶段 Perfetto 结果
 
+## BS512 第 2 步 · 四轨总览
+
+每个 rank 展开为 dispatch、shared、routed、combine 四行。单击色块可看本 rank 的路由 token 数与 M 块数。wait token 从 MoE 入口画到首个 routed MMA，期间可以运行 shared。GEMM 到末次 routed 输出结束，包含 push。dispatch 在首个 pull 处切换颜色，其他 CTA 可能仍在做 count exchange。
+
+| 层 | MegaMoE | GCMoE |
+|---:|---|---|
+| 0 | [Mega](mega/overview/step002_layer00.perfetto.json) | [GC](gc/overview/step002_layer00.perfetto.json) |
+| 8 | [Mega](mega/overview/step002_layer08.perfetto.json) | [GC](gc/overview/step002_layer08.perfetto.json) |
+| 20 | [Mega](mega/overview/step002_layer20.perfetto.json) | [GC](gc/overview/step002_layer20.perfetto.json) |
+| 32 | [Mega](mega/overview/step002_layer32.perfetto.json) | [GC](gc/overview/step002_layer32.perfetto.json) |
+| 39 | [Mega](mega/overview/step002_layer39.perfetto.json) | [GC](gc/overview/step002_layer39.perfetto.json) |
+
 本目录只包含 **SM100** 执行结果。任务书为 `../V41_NATIVE_PHASE_PERFETTO.md`，
 SHA256 `86b8b2a1eea3a1c566af27bfbe48c7637437b048e9d95f3987ce90f46d4fcf41`。
 
