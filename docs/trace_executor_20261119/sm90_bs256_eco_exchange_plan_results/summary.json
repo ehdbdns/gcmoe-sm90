@@ -1,0 +1,961 @@
+{
+ "task": "SM90_BS256_ECO_EXCHANGE_AND_PLAN",
+ "trial_workspace": "/tmp/sm90-bs256-eco-jBhVwZVo",
+ "execution_sha": "368ae25779707a33029e3a9702b0440dd5843aba",
+ "arms": {
+  "baseline": {
+   "measurement_dir": "/tmp/gcmoe-aligned-nahvIwg4",
+   "stats_ms": 99.15303651196882,
+   "measured_ms": 93.91515201097354,
+   "controls": {
+    "VLLM_MULTI_STREAM_GEMM_TOKEN_THRESHOLD": "0",
+    "GC_MOE_ECO_NULL_PLAN": "0",
+    "GC_MOE_ECO_NOSPLIT": "0",
+    "GC_MOE_ECO_COSTFN": "2",
+    "GC_MOE_SM90_SM_REUSE": "0"
+   },
+   "prefill_steps": 117
+  },
+  "split": {
+   "measurement_dir": "/tmp/gcmoe-aligned-BCxxmrlU",
+   "stats_ms": 100.14252991601825,
+   "measured_ms": 92.72878411086276,
+   "controls": {
+    "VLLM_MULTI_STREAM_GEMM_TOKEN_THRESHOLD": "0",
+    "GC_MOE_ECO_NULL_PLAN": "0",
+    "GC_MOE_ECO_NOSPLIT": "0",
+    "GC_MOE_ECO_COSTFN": "2",
+    "GC_MOE_SM90_SPLIT_EXCHANGE": "1",
+    "GC_MOE_SM90_SM_REUSE": "0"
+   },
+   "prefill_steps": 117
+  }
+ },
+ "samples": {
+  "baseline": {
+   "0": {
+    "epoch": 46481,
+    "capture_id": "a814f62702f64327ae502f3499dc1cae",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 25.12,
+     "pull token": 142.88,
+     "shared L1+L2": 194.55,
+     "ECO plan": 108.48,
+     "wait token": 2.12,
+     "GEMM": 665.5,
+     "combine": 35.64
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 393,
+    "slowest_rank": 2,
+    "slowest_tokens": 194.0,
+    "slowest_routed_rows": 1552,
+    "slowest_m_blocks": 50,
+    "slowest_active_slots": 49,
+    "slowest_first_claim_us": 196,
+    "slowest_pull_complete_us": 160,
+    "slowest_routed_exit_us": 879.4912109375,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 188.0,
+      "routed_rows": 1504,
+      "m_blocks": 48,
+      "active_slots": 47
+     },
+     {
+      "rank": 1,
+      "tokens": 189.0,
+      "routed_rows": 1512,
+      "m_blocks": 51,
+      "active_slots": 50
+     },
+     {
+      "rank": 2,
+      "tokens": 194.0,
+      "routed_rows": 1552,
+      "m_blocks": 50,
+      "active_slots": 49
+     },
+     {
+      "rank": 3,
+      "tokens": 197.0,
+      "routed_rows": 1576,
+      "m_blocks": 47,
+      "active_slots": 46
+     },
+     {
+      "rank": 4,
+      "tokens": 190.0,
+      "routed_rows": 1520,
+      "m_blocks": 52,
+      "active_slots": 47
+     },
+     {
+      "rank": 5,
+      "tokens": 189.0,
+      "routed_rows": 1512,
+      "m_blocks": 48,
+      "active_slots": 45
+     },
+     {
+      "rank": 6,
+      "tokens": 190.0,
+      "routed_rows": 1520,
+      "m_blocks": 49,
+      "active_slots": 45
+     },
+     {
+      "rank": 7,
+      "tokens": 199.0,
+      "routed_rows": 1592,
+      "m_blocks": 48,
+      "active_slots": 43
+     }
+    ]
+   },
+   "8": {
+    "epoch": 46489,
+    "capture_id": "a814f62702f64327ae502f3499dc1cae",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 22.88,
+     "pull token": 173.38,
+     "shared L1+L2": 195.37,
+     "ECO plan": 118.12,
+     "wait token": 2.12,
+     "GEMM": 664.98,
+     "combine": 41.36
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 377,
+    "slowest_rank": 7,
+    "slowest_tokens": 198.0,
+    "slowest_routed_rows": 1584,
+    "slowest_m_blocks": 48,
+    "slowest_active_slots": 40,
+    "slowest_first_claim_us": 196,
+    "slowest_pull_complete_us": 212,
+    "slowest_routed_exit_us": 885.6650390625,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 202.0,
+      "routed_rows": 1616,
+      "m_blocks": 47,
+      "active_slots": 43
+     },
+     {
+      "rank": 1,
+      "tokens": 184.0,
+      "routed_rows": 1472,
+      "m_blocks": 47,
+      "active_slots": 44
+     },
+     {
+      "rank": 2,
+      "tokens": 194.0,
+      "routed_rows": 1552,
+      "m_blocks": 49,
+      "active_slots": 43
+     },
+     {
+      "rank": 3,
+      "tokens": 189.0,
+      "routed_rows": 1512,
+      "m_blocks": 47,
+      "active_slots": 44
+     },
+     {
+      "rank": 4,
+      "tokens": 193.0,
+      "routed_rows": 1544,
+      "m_blocks": 48,
+      "active_slots": 44
+     },
+     {
+      "rank": 5,
+      "tokens": 178.0,
+      "routed_rows": 1424,
+      "m_blocks": 43,
+      "active_slots": 37
+     },
+     {
+      "rank": 6,
+      "tokens": 198.0,
+      "routed_rows": 1584,
+      "m_blocks": 48,
+      "active_slots": 43
+     },
+     {
+      "rank": 7,
+      "tokens": 198.0,
+      "routed_rows": 1584,
+      "m_blocks": 48,
+      "active_slots": 40
+     }
+    ]
+   },
+   "20": {
+    "epoch": 46501,
+    "capture_id": "a814f62702f64327ae502f3499dc1cae",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 26.0,
+     "pull token": 191.66,
+     "shared L1+L2": 196.52,
+     "ECO plan": 126.22,
+     "wait token": 2.0,
+     "GEMM": 656.57,
+     "combine": 42.04
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 362,
+    "slowest_rank": 3,
+    "slowest_tokens": 180.0,
+    "slowest_routed_rows": 1440,
+    "slowest_m_blocks": 49,
+    "slowest_active_slots": 44,
+    "slowest_first_claim_us": 194,
+    "slowest_pull_complete_us": 194,
+    "slowest_routed_exit_us": 880.6748046875,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 185.0,
+      "routed_rows": 1480,
+      "m_blocks": 45,
+      "active_slots": 39
+     },
+     {
+      "rank": 1,
+      "tokens": 183.0,
+      "routed_rows": 1464,
+      "m_blocks": 47,
+      "active_slots": 42
+     },
+     {
+      "rank": 2,
+      "tokens": 193.0,
+      "routed_rows": 1544,
+      "m_blocks": 44,
+      "active_slots": 37
+     },
+     {
+      "rank": 3,
+      "tokens": 180.0,
+      "routed_rows": 1440,
+      "m_blocks": 49,
+      "active_slots": 44
+     },
+     {
+      "rank": 4,
+      "tokens": 202.0,
+      "routed_rows": 1616,
+      "m_blocks": 45,
+      "active_slots": 40
+     },
+     {
+      "rank": 5,
+      "tokens": 185.0,
+      "routed_rows": 1480,
+      "m_blocks": 47,
+      "active_slots": 43
+     },
+     {
+      "rank": 6,
+      "tokens": 211.0,
+      "routed_rows": 1688,
+      "m_blocks": 42,
+      "active_slots": 34
+     },
+     {
+      "rank": 7,
+      "tokens": 197.0,
+      "routed_rows": 1576,
+      "m_blocks": 43,
+      "active_slots": 39
+     }
+    ]
+   },
+   "32": {
+    "epoch": 46513,
+    "capture_id": "a814f62702f64327ae502f3499dc1cae",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 24.5,
+     "pull token": 175.2,
+     "shared L1+L2": 196.82,
+     "ECO plan": 118.18,
+     "wait token": 2.12,
+     "GEMM": 667.5,
+     "combine": 37.91
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 375,
+    "slowest_rank": 4,
+    "slowest_tokens": 203.0,
+    "slowest_routed_rows": 1624,
+    "slowest_m_blocks": 48,
+    "slowest_active_slots": 42,
+    "slowest_first_claim_us": 200,
+    "slowest_pull_complete_us": 187,
+    "slowest_routed_exit_us": 888.611328125,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 186.0,
+      "routed_rows": 1488,
+      "m_blocks": 47,
+      "active_slots": 42
+     },
+     {
+      "rank": 1,
+      "tokens": 186.0,
+      "routed_rows": 1488,
+      "m_blocks": 48,
+      "active_slots": 40
+     },
+     {
+      "rank": 2,
+      "tokens": 190.0,
+      "routed_rows": 1520,
+      "m_blocks": 49,
+      "active_slots": 44
+     },
+     {
+      "rank": 3,
+      "tokens": 198.0,
+      "routed_rows": 1584,
+      "m_blocks": 45,
+      "active_slots": 40
+     },
+     {
+      "rank": 4,
+      "tokens": 203.0,
+      "routed_rows": 1624,
+      "m_blocks": 48,
+      "active_slots": 42
+     },
+     {
+      "rank": 5,
+      "tokens": 187.0,
+      "routed_rows": 1496,
+      "m_blocks": 47,
+      "active_slots": 43
+     },
+     {
+      "rank": 6,
+      "tokens": 202.0,
+      "routed_rows": 1616,
+      "m_blocks": 46,
+      "active_slots": 40
+     },
+     {
+      "rank": 7,
+      "tokens": 184.0,
+      "routed_rows": 1472,
+      "m_blocks": 45,
+      "active_slots": 37
+     }
+    ]
+   },
+   "39": {
+    "epoch": 46520,
+    "capture_id": "a814f62702f64327ae502f3499dc1cae",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 23.5,
+     "pull token": 152.77,
+     "shared L1+L2": 196.01,
+     "ECO plan": 110.17,
+     "wait token": 2.12,
+     "GEMM": 664.54,
+     "combine": 30.7
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 385,
+    "slowest_rank": 3,
+    "slowest_tokens": 208.0,
+    "slowest_routed_rows": 1664,
+    "slowest_m_blocks": 47,
+    "slowest_active_slots": 43,
+    "slowest_first_claim_us": 193,
+    "slowest_pull_complete_us": 201,
+    "slowest_routed_exit_us": 876.03515625,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 188.0,
+      "routed_rows": 1504,
+      "m_blocks": 50,
+      "active_slots": 45
+     },
+     {
+      "rank": 1,
+      "tokens": 181.0,
+      "routed_rows": 1448,
+      "m_blocks": 49,
+      "active_slots": 47
+     },
+     {
+      "rank": 2,
+      "tokens": 187.0,
+      "routed_rows": 1496,
+      "m_blocks": 48,
+      "active_slots": 46
+     },
+     {
+      "rank": 3,
+      "tokens": 208.0,
+      "routed_rows": 1664,
+      "m_blocks": 47,
+      "active_slots": 43
+     },
+     {
+      "rank": 4,
+      "tokens": 200.0,
+      "routed_rows": 1600,
+      "m_blocks": 49,
+      "active_slots": 44
+     },
+     {
+      "rank": 5,
+      "tokens": 183.0,
+      "routed_rows": 1464,
+      "m_blocks": 49,
+      "active_slots": 46
+     },
+     {
+      "rank": 6,
+      "tokens": 200.0,
+      "routed_rows": 1600,
+      "m_blocks": 46,
+      "active_slots": 42
+     },
+     {
+      "rank": 7,
+      "tokens": 189.0,
+      "routed_rows": 1512,
+      "m_blocks": 47,
+      "active_slots": 43
+     }
+    ]
+   }
+  },
+  "split": {
+   "0": {
+    "epoch": 46481,
+    "capture_id": "58f7e8e8ed66412fb3a895940ec69ad8",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 28.25,
+     "pull token": 169.99,
+     "shared L1+L2": 194.97,
+     "ECO plan": 142.7,
+     "wait token": 2.12,
+     "GEMM": 666.87,
+     "combine": 40.3
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 393,
+    "slowest_rank": 2,
+    "slowest_tokens": 194.0,
+    "slowest_routed_rows": 1552,
+    "slowest_m_blocks": 50,
+    "slowest_active_slots": 49,
+    "slowest_first_claim_us": 194,
+    "slowest_pull_complete_us": 176,
+    "slowest_routed_exit_us": 877.2216796875,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 188.0,
+      "routed_rows": 1504,
+      "m_blocks": 48,
+      "active_slots": 47
+     },
+     {
+      "rank": 1,
+      "tokens": 189.0,
+      "routed_rows": 1512,
+      "m_blocks": 51,
+      "active_slots": 50
+     },
+     {
+      "rank": 2,
+      "tokens": 194.0,
+      "routed_rows": 1552,
+      "m_blocks": 50,
+      "active_slots": 49
+     },
+     {
+      "rank": 3,
+      "tokens": 197.0,
+      "routed_rows": 1576,
+      "m_blocks": 47,
+      "active_slots": 46
+     },
+     {
+      "rank": 4,
+      "tokens": 190.0,
+      "routed_rows": 1520,
+      "m_blocks": 52,
+      "active_slots": 47
+     },
+     {
+      "rank": 5,
+      "tokens": 189.0,
+      "routed_rows": 1512,
+      "m_blocks": 48,
+      "active_slots": 45
+     },
+     {
+      "rank": 6,
+      "tokens": 190.0,
+      "routed_rows": 1520,
+      "m_blocks": 49,
+      "active_slots": 45
+     },
+     {
+      "rank": 7,
+      "tokens": 199.0,
+      "routed_rows": 1592,
+      "m_blocks": 48,
+      "active_slots": 43
+     }
+    ]
+   },
+   "8": {
+    "epoch": 46489,
+    "capture_id": "58f7e8e8ed66412fb3a895940ec69ad8",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 19.62,
+     "pull token": 209.3,
+     "shared L1+L2": 196.36,
+     "ECO plan": 150.04,
+     "wait token": 2.0,
+     "GEMM": 665.12,
+     "combine": 38.21
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 377,
+    "slowest_rank": 0,
+    "slowest_tokens": 202.0,
+    "slowest_routed_rows": 1616,
+    "slowest_m_blocks": 47,
+    "slowest_active_slots": 43,
+    "slowest_first_claim_us": 200,
+    "slowest_pull_complete_us": 239,
+    "slowest_routed_exit_us": 883.10546875,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 202.0,
+      "routed_rows": 1616,
+      "m_blocks": 47,
+      "active_slots": 43
+     },
+     {
+      "rank": 1,
+      "tokens": 184.0,
+      "routed_rows": 1472,
+      "m_blocks": 47,
+      "active_slots": 44
+     },
+     {
+      "rank": 2,
+      "tokens": 194.0,
+      "routed_rows": 1552,
+      "m_blocks": 49,
+      "active_slots": 43
+     },
+     {
+      "rank": 3,
+      "tokens": 189.0,
+      "routed_rows": 1512,
+      "m_blocks": 47,
+      "active_slots": 44
+     },
+     {
+      "rank": 4,
+      "tokens": 193.0,
+      "routed_rows": 1544,
+      "m_blocks": 48,
+      "active_slots": 44
+     },
+     {
+      "rank": 5,
+      "tokens": 178.0,
+      "routed_rows": 1424,
+      "m_blocks": 43,
+      "active_slots": 37
+     },
+     {
+      "rank": 6,
+      "tokens": 198.0,
+      "routed_rows": 1584,
+      "m_blocks": 48,
+      "active_slots": 43
+     },
+     {
+      "rank": 7,
+      "tokens": 198.0,
+      "routed_rows": 1584,
+      "m_blocks": 48,
+      "active_slots": 40
+     }
+    ]
+   },
+   "20": {
+    "epoch": 46501,
+    "capture_id": "58f7e8e8ed66412fb3a895940ec69ad8",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 19.62,
+     "pull token": 235.42,
+     "shared L1+L2": 195.86,
+     "ECO plan": 160.07,
+     "wait token": 2.38,
+     "GEMM": 655.99,
+     "combine": 45.26
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 362,
+    "slowest_rank": 3,
+    "slowest_tokens": 180.0,
+    "slowest_routed_rows": 1440,
+    "slowest_m_blocks": 49,
+    "slowest_active_slots": 44,
+    "slowest_first_claim_us": 194,
+    "slowest_pull_complete_us": 221,
+    "slowest_routed_exit_us": 880.3876953125,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 185.0,
+      "routed_rows": 1480,
+      "m_blocks": 45,
+      "active_slots": 39
+     },
+     {
+      "rank": 1,
+      "tokens": 183.0,
+      "routed_rows": 1464,
+      "m_blocks": 47,
+      "active_slots": 42
+     },
+     {
+      "rank": 2,
+      "tokens": 193.0,
+      "routed_rows": 1544,
+      "m_blocks": 44,
+      "active_slots": 37
+     },
+     {
+      "rank": 3,
+      "tokens": 180.0,
+      "routed_rows": 1440,
+      "m_blocks": 49,
+      "active_slots": 44
+     },
+     {
+      "rank": 4,
+      "tokens": 202.0,
+      "routed_rows": 1616,
+      "m_blocks": 45,
+      "active_slots": 40
+     },
+     {
+      "rank": 5,
+      "tokens": 185.0,
+      "routed_rows": 1480,
+      "m_blocks": 47,
+      "active_slots": 43
+     },
+     {
+      "rank": 6,
+      "tokens": 211.0,
+      "routed_rows": 1688,
+      "m_blocks": 42,
+      "active_slots": 34
+     },
+     {
+      "rank": 7,
+      "tokens": 197.0,
+      "routed_rows": 1576,
+      "m_blocks": 43,
+      "active_slots": 39
+     }
+    ]
+   },
+   "32": {
+    "epoch": 46513,
+    "capture_id": "58f7e8e8ed66412fb3a895940ec69ad8",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 19.25,
+     "pull token": 209.87,
+     "shared L1+L2": 195.81,
+     "ECO plan": 148.41,
+     "wait token": 2.12,
+     "GEMM": 667.42,
+     "combine": 43.24
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 375,
+    "slowest_rank": 2,
+    "slowest_tokens": 190.0,
+    "slowest_routed_rows": 1520,
+    "slowest_m_blocks": 49,
+    "slowest_active_slots": 44,
+    "slowest_first_claim_us": 203,
+    "slowest_pull_complete_us": 217,
+    "slowest_routed_exit_us": 890.244140625,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 186.0,
+      "routed_rows": 1488,
+      "m_blocks": 47,
+      "active_slots": 42
+     },
+     {
+      "rank": 1,
+      "tokens": 186.0,
+      "routed_rows": 1488,
+      "m_blocks": 48,
+      "active_slots": 40
+     },
+     {
+      "rank": 2,
+      "tokens": 190.0,
+      "routed_rows": 1520,
+      "m_blocks": 49,
+      "active_slots": 44
+     },
+     {
+      "rank": 3,
+      "tokens": 198.0,
+      "routed_rows": 1584,
+      "m_blocks": 45,
+      "active_slots": 40
+     },
+     {
+      "rank": 4,
+      "tokens": 203.0,
+      "routed_rows": 1624,
+      "m_blocks": 48,
+      "active_slots": 42
+     },
+     {
+      "rank": 5,
+      "tokens": 187.0,
+      "routed_rows": 1496,
+      "m_blocks": 47,
+      "active_slots": 43
+     },
+     {
+      "rank": 6,
+      "tokens": 202.0,
+      "routed_rows": 1616,
+      "m_blocks": 46,
+      "active_slots": 40
+     },
+     {
+      "rank": 7,
+      "tokens": 184.0,
+      "routed_rows": 1472,
+      "m_blocks": 45,
+      "active_slots": 37
+     }
+    ]
+   },
+   "39": {
+    "epoch": 46520,
+    "capture_id": "58f7e8e8ed66412fb3a895940ec69ad8",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 21.38,
+     "pull token": 186.88,
+     "shared L1+L2": 195.46,
+     "ECO plan": 140.55,
+     "wait token": 2.0,
+     "GEMM": 663.99,
+     "combine": 34.17
+    },
+    "routed_rows_total": 12288,
+    "m_blocks_total": 385,
+    "slowest_rank": 3,
+    "slowest_tokens": 208.0,
+    "slowest_routed_rows": 1664,
+    "slowest_m_blocks": 47,
+    "slowest_active_slots": 43,
+    "slowest_first_claim_us": 197,
+    "slowest_pull_complete_us": 232,
+    "slowest_routed_exit_us": 879.748046875,
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 188.0,
+      "routed_rows": 1504,
+      "m_blocks": 50,
+      "active_slots": 45
+     },
+     {
+      "rank": 1,
+      "tokens": 181.0,
+      "routed_rows": 1448,
+      "m_blocks": 49,
+      "active_slots": 47
+     },
+     {
+      "rank": 2,
+      "tokens": 187.0,
+      "routed_rows": 1496,
+      "m_blocks": 48,
+      "active_slots": 46
+     },
+     {
+      "rank": 3,
+      "tokens": 208.0,
+      "routed_rows": 1664,
+      "m_blocks": 47,
+      "active_slots": 43
+     },
+     {
+      "rank": 4,
+      "tokens": 200.0,
+      "routed_rows": 1600,
+      "m_blocks": 49,
+      "active_slots": 44
+     },
+     {
+      "rank": 5,
+      "tokens": 183.0,
+      "routed_rows": 1464,
+      "m_blocks": 49,
+      "active_slots": 46
+     },
+     {
+      "rank": 6,
+      "tokens": 200.0,
+      "routed_rows": 1600,
+      "m_blocks": 46,
+      "active_slots": 42
+     },
+     {
+      "rank": 7,
+      "tokens": 189.0,
+      "routed_rows": 1512,
+      "m_blocks": 47,
+      "active_slots": 43
+     }
+    ]
+   }
+  }
+ },
+ "dispatch": {
+  "status": "failed before model launch",
+  "error": "CUDA cannot isolate one SM from the dispatch partition",
+  "stage": "GreenContextPair construction (plan_dispatch split)",
+  "driver": "580.105.08",
+  "gpus": "8x NVIDIA H20",
+  "exit_code": 1,
+  "raw": "/tmp/sm90-bs256-eco-jBhVwZVo/dispatch/runner.log",
+  "expected": "runtime prints dispatch=5 plan=1 compute=72",
+  "note": "the requested re-split produced groups!=1 or plan smCount!=1 or dispatch smCount+1 != 5; driver rejected isolating a single SM"
+ }
+}

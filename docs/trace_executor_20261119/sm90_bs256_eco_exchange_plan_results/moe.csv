@@ -1,0 +1,13 @@
+arm,steps,graph_to_first_ms,first_to_last_ms,last_to_combine_ms,moe_ms,moe_change_pct_vs_baseline
+baseline,999,8.029938738738744,25.701819291291304,2.067592872872873,35.79935090290292,0.0
+baseline,1000,8.030000224000005,25.702020960000016,2.0677073600000004,35.79972854400002,0.0
+split,999,8.043285813813817,25.73909291691694,2.073020124124122,35.855398854854876,0.1565613636514529
+split,1000,8.043299648000003,25.739486784000015,2.072956543999998,35.855742976000016,0.15646608026971265
+Traceback (most recent call last):
+  File "/tmp/eco_publish/repo/scripts/trace_layer/bs256_eco_times.py", line 30, in <module>
+    steps = step_times(Path((root / trial / 'measurement.path').read_text().strip()))
+  File "/opt/conda310/lib/python3.10/pathlib.py", line 1134, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+  File "/opt/conda310/lib/python3.10/pathlib.py", line 1119, in open
+    return self._accessor.open(self, mode, buffering, encoding, errors,
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/sm90-bs256-eco-jBhVwZVo/dispatch/measurement.path'
