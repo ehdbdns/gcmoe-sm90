@@ -57,6 +57,7 @@ def main():
     dest = root / arm
     assert bs in (256, 512, 1024, 2048)
     publisher = arm == "mega"
+    direct = os.getenv("SM100_DIRECT_512") == "1"
     os.environ.update(
         GC_MOE_V41_ENGINE="gc" if arm.startswith("gc") else "mega",
         GC_MOE_V41_DEEPINFER_RR=str(int("_" in arm)),
@@ -65,7 +66,7 @@ def main():
     )
     if os.getenv("SM100_FORMAL_512"):
         assert bs == 512
-        if publisher:
+        if publisher and not direct:
             import shutil
             required = 2 * 8 * (32 << 30) + (38 << 30)
             if shutil.disk_usage(root).free < required:
@@ -135,11 +136,12 @@ def main():
     for i, ids in enumerate(prompts):
         engine.add_request(f"req{i}", {"prompt_token_ids": ids}, params)
 
-    def step():
+    def step(collect=True):
         n = 0
         for o in engine.step():
             ids = o.outputs[0].token_ids
-            buf[o.request_id].extend(ids)
+            if collect:
+                buf[o.request_id].extend(ids)
             n += len(ids)
         return n
 
@@ -176,7 +178,7 @@ def main():
         times = []
         t = time.perf_counter()
         for i in range(STEPS):
-            if step() != bs:
+            if step(collect=not direct) != bs:
                 raise ValueError(f"{phase} step {i} is not full decode")
             times.append(time.perf_counter() - t)
         rpc("matrix_sync")
@@ -194,7 +196,9 @@ def main():
         assert result[phase]["rr_calls"] == [STEPS * 40 * int(expect_rr)] * 8
         if publisher and phase == "stats":
             make_plan(root, bs)
-    if publisher:
+    if direct:
+        result["workload"] = "native greedy decode"
+    elif publisher:
         (root / "tokens.json").write_text(json.dumps(dict(tokens=buf)))
     else:
         assert buf == json.loads((root / "tokens.json").read_text())["tokens"]

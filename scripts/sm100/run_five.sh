@@ -23,7 +23,13 @@ export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_DISABLE_
 export GC_SM100_MATRIX_CLOCKS=1 PYTHONHASHSEED=0
 unset GC_MOE_ECO_UNIT_CFG GC_MOE_ECO_OBJECTIVE GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY
 export PYTHONPATH="$repo/source:$repo/integration:$repo/scripts/sm100"
-if [[ ${2:-} == formal-bs512 ]]; then
+unset SM100_DIRECT_512
+if [[ ${2:-} == direct-bs512 ]]; then
+  export SM100_DIRECT_512=1
+  fixture=docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/vanilla/rank0.npz
+  echo "ceaa52dc3f3b09fa95e08c59b83b56b97d90b8335b3437a506cb5dbd42fe09f2  $fixture" | sha256sum -c -
+fi
+if [[ ${2:-} == formal-bs512 || ${2:-} == direct-bs512 ]]; then
   export SM100_FORMAL_512=1 SM100_MATRIX_BS=512 GC_MOE_DISPATCH_SMS=8
   export PATH="$root/dsl-env/bin:$PATH"
   test "$(command -v python)" = "$root/dsl-env/bin/python"
@@ -140,7 +146,7 @@ for bs in "${batches[@]}"; do
     echo "$code" > "$dest/exit-code"
     if [[ "$code" != 0 ]]; then rc=1; tail -30 "$dest/model.log"; fi
   done
-  python scripts/sm100/five_report.py "$group" "$bs" || rc=1
+  PYTHONPATH="${SM100_CLOCKED_UPSTREAM:+$SM100_CLOCKED_UPSTREAM:}$PYTHONPATH" python scripts/sm100/five_report.py "$group" "$bs" || rc=1
 done
 python scripts/sm100/five_collect.py "$root" "${batches[@]}"
 exit "$rc"

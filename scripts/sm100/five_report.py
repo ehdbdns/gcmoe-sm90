@@ -45,6 +45,7 @@ def check_counts(counts, reference, layout):
 
 
 def summarize(root, bs):
+    direct = os.getenv("SM100_DIRECT_512") == "1"
     runs = {}
     rows = []
     checks = {}
@@ -70,7 +71,8 @@ def summarize(root, bs):
                 else np.tile(np.arange(384), (40, 1))
             )
             # Stats use the initial placement; all moved arms verify it via route tape.
-            check_counts(counts, reference_counts(root, "measure"), layout)
+            if not direct:
+                check_counts(counts, reference_counts(root, "measure"), layout)
             blocks = ((counts + bm - 1) // bm).sum(3)
             tokens = counts.sum(3)
             active = (counts > 0).sum(3)
@@ -119,6 +121,14 @@ def summarize(root, bs):
             )
             if os.getenv("SM100_FORMAL_512"):
                 del row["ms_per_step"], row["vs_mega_time_pct"]
+            if direct:
+                if run.get("workload") != "native greedy decode" or not all(
+                    r["validated_layer_graphs"] == 40 for r in meas["ranks"]
+                ):
+                    raise ValueError("missing direct decode or layer graph validation")
+                rows.append(row)
+                runs[arm] = run
+                continue
             checks[arm] = all(
                 obs["replay_ids"] == base["logical_ids"]
                 and obs["replay_weights"] == base["gate_weights"]
@@ -140,7 +150,7 @@ def summarize(root, bs):
         except Exception as exc:
             failures.append(f"{arm}: {type(exc).__name__}: {exc}")
     pairs = []
-    for a, b in combinations(runs, 2):
+    for a, b in combinations(() if direct else runs, 2):
         ra, rb = runs[a], runs[b]
         equal_native = all(
             x["native"] == y["native"]
@@ -202,6 +212,8 @@ def summarize(root, bs):
     )
     (root / "summary.json").write_text(json.dumps(summary, indent=2))
     print(summary)
+    if direct:
+        return not failures and len(rows) == len(ARMS)
     return not failures and len(pairs) == 10 and all(p["strict"] for p in pairs)
 
 

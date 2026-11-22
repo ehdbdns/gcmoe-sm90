@@ -9,7 +9,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
-if os.getenv("SM100_FORMAL_512"):
+DIRECT = os.getenv("SM100_DIRECT_512") == "1"
+
+if os.getenv("SM100_FORMAL_512") and not DIRECT:
     from stream_checkpoint import install_cache_names
     install_cache_names()
 
@@ -53,7 +55,8 @@ class FiveWorker:
         self.publisher = arm == "mega"
         self.rank = torch.distributed.get_rank()
         self.folder = self.root / arm
-        self.tokens = install(self.model_runner, self.root, capacity=2128)
+        if not DIRECT:
+            self.tokens = install(self.model_runner, self.root, capacity=2128)
         self.experts = [
             m.experts
             for n, m in self.get_model().named_modules()
@@ -123,7 +126,7 @@ class FiveWorker:
                     self.layer_graphs[layer] = graph, target
                     graph.replay()
                     self.graph_checks.append(torch.stack((
-                        (target != reference).sum(), (counters != eager_counts).sum(),
+                        (target != reference).sum() + (~torch.isfinite(target)).sum(), (counters != eager_counts).sum(),
                         (self.audit_scratch[:1] != eager_accepted).sum())))
                 else:
                     graph, target = self.layer_graphs[layer]
@@ -133,7 +136,8 @@ class FiveWorker:
                     plan_start = self.audit_scratch[2:4].view(torch.int64)
                     start = scratch[self.local_slots:self.local_slots + 2].view(torch.int64)
                     start.copy_(torch.minimum(start, plan_start))
-                    self.plan_counts[call].copy_(self.quota_view)
+                    if not DIRECT:
+                        self.plan_counts[call].copy_(self.quota_view)
                 self.auction[call].copy_(self.audit_scratch[0])
                 self.recv[call].copy_(scratch)
                 return None
@@ -169,6 +173,8 @@ class FiveWorker:
                     topk_ids.detach().clone(),
                     dict(kwargs),
                 )
+            if DIRECT:
+                return forward(hidden_states, topk_weights, topk_ids, **kwargs)
             self.raw_ids[call].copy_(topk_ids)
             self.raw_weights[call].copy_(topk_weights)
             ids = self.bank_ids[call].to(topk_ids.dtype)
@@ -183,8 +189,9 @@ class FiveWorker:
 
         self.calls = 0
         self.phase = phase
-        self.phase_start = self.tokens.positions.clone()
-        if os.getenv("SM100_FORMAL_512"):
+        if not DIRECT:
+            self.phase_start = self.tokens.positions.clone()
+        if os.getenv("SM100_FORMAL_512") and not DIRECT:
             from stream_checkpoint import checkpoint, named_caches, runner_boundary
 
             folder = self.root / f"kv-{phase}"
@@ -205,17 +212,18 @@ class FiveWorker:
                             native=int(self.tokens.native[req, pos]), reference=int(self.tokens.table[req, pos]))
 
         n = STEPS * LAYERS
-        shape = (n, self.bs // 8, 6)
-        self.raw_ids = torch.empty(shape, device="cuda", dtype=torch.int32)
-        self.raw_weights = torch.empty(shape, device="cuda", dtype=torch.float32)
-        path = self.root / f"{phase}-routes-{self.rank}.pt"
-        if self.publisher:
-            self.bank_ids, self.bank_weights = self.raw_ids, self.raw_weights
-        else:
-            self.bank_ids, self.bank_weights = torch.load(
-                path, map_location=self.raw_ids.device, weights_only=True
-            )
-            assert self.bank_ids.shape == self.bank_weights.shape == shape
+        if not DIRECT:
+            shape = (n, self.bs // 8, 6)
+            self.raw_ids = torch.empty(shape, device="cuda", dtype=torch.int32)
+            self.raw_weights = torch.empty(shape, device="cuda", dtype=torch.float32)
+            path = self.root / f"{phase}-routes-{self.rank}.pt"
+            if self.publisher:
+                self.bank_ids, self.bank_weights = self.raw_ids, self.raw_weights
+            else:
+                self.bank_ids, self.bank_weights = torch.load(
+                    path, map_location=self.raw_ids.device, weights_only=True
+                )
+                assert self.bank_ids.shape == self.bank_weights.shape == shape
         per_rank = self.experts[0].num_local_experts
         self.local_slots = per_rank
         if self.arm.startswith("gc"):
@@ -240,7 +248,7 @@ class FiveWorker:
         assert get_ep_group().rank_in_group == self.rank
         if phase == "measure":
             self.audit_scratch = torch.zeros(per_rank + 32, dtype=torch.int32, device="cuda")
-            if self.eco_tables is not None and os.getenv("SM100_FORMAL_512"):
+            if self.eco_tables is not None and os.getenv("SM100_FORMAL_512") and not DIRECT:
                 self.plan_counts = torch.empty((n, per_rank), dtype=torch.int32, device="cuda")
             self.auction = torch.zeros(n, dtype=torch.int32, device="cuda")
         if phase == "measure":
@@ -314,39 +322,44 @@ class FiveWorker:
         phase = self.phase
         self.phase = None
         assert self.calls == STEPS * LAYERS
-        assert torch.all(self.tokens.positions - self.phase_start == STEPS).item()
-        path = self.root / f"{phase}-routes-{self.rank}.pt"
-        if self.publisher:
-            torch.save((self.bank_ids.cpu(), self.bank_weights.cpu()), path)
-        evidence = dict(
-            logical_ids=tensor_digest(self.raw_ids),
-            gate_weights=tensor_digest(self.raw_weights),
-            replay_ids=tensor_digest(self.bank_ids),
-            replay_weights=tensor_digest(self.bank_weights),
-            batch_order=self.tokens.batch_hash.hexdigest(),
-            block_m=int(self.bm),
-        )
-        if os.getenv("SM100_FORMAL_512"):
-            offsets = self.phase_start[:, None] + torch.arange(STEPS, device="cuda")
-            window = self.tokens.native.gather(1, offsets)
-            assert window.shape == (self.bs, STEPS) and (window >= 0).all()
-            evidence.update(native_window=tensor_digest(window), kv_boundary=self.boundary,
-                            prefill_native=self.prefill_native, backend_file=self.backend_file,
-                            prefill_difference=self.prefill_diff, sm_split=getattr(self, "sm_split", None))
-            if not self.publisher:
-                reference = self.tokens.table.gather(1, offsets)
-                diff = (window != reference).nonzero()
-                evidence["native_diff"] = len(diff)
-                if len(diff):
-                    req, step = diff[diff[:, 1].argmin()].tolist()
-                    evidence["first_native_diff"] = dict(req=req, step=step,
-                        native=int(window[req, step]), reference=int(reference[req, step]))
-        if phase == "measure":
-            evidence["validated_layer_graphs"] = len(self.layer_graphs)
-            evidence["native"] = tensor_digest(self.tokens.native)
-        evidence["first_gate_difference"] = None if self.publisher else first_gate_difference(
-            self.raw_ids, self.bank_ids, self.raw_weights, self.bank_weights)
-        del self.bank_ids, self.bank_weights, self.raw_ids, self.raw_weights
+        if DIRECT:
+            evidence = dict(block_m=int(self.bm), backend_file=self.backend_file,
+                            sm_split=getattr(self, "sm_split", None),
+                            validated_layer_graphs=len(self.layer_graphs))
+        else:
+            assert torch.all(self.tokens.positions - self.phase_start == STEPS).item()
+            path = self.root / f"{phase}-routes-{self.rank}.pt"
+            if self.publisher:
+                torch.save((self.bank_ids.cpu(), self.bank_weights.cpu()), path)
+            evidence = dict(
+                logical_ids=tensor_digest(self.raw_ids),
+                gate_weights=tensor_digest(self.raw_weights),
+                replay_ids=tensor_digest(self.bank_ids),
+                replay_weights=tensor_digest(self.bank_weights),
+                batch_order=self.tokens.batch_hash.hexdigest(),
+                block_m=int(self.bm),
+            )
+            if os.getenv("SM100_FORMAL_512"):
+                offsets = self.phase_start[:, None] + torch.arange(STEPS, device="cuda")
+                window = self.tokens.native.gather(1, offsets)
+                assert window.shape == (self.bs, STEPS) and (window >= 0).all()
+                evidence.update(native_window=tensor_digest(window), kv_boundary=self.boundary,
+                                prefill_native=self.prefill_native, backend_file=self.backend_file,
+                                prefill_difference=self.prefill_diff, sm_split=getattr(self, "sm_split", None))
+                if not self.publisher:
+                    reference = self.tokens.table.gather(1, offsets)
+                    diff = (window != reference).nonzero()
+                    evidence["native_diff"] = len(diff)
+                    if len(diff):
+                        req, step = diff[diff[:, 1].argmin()].tolist()
+                        evidence["first_native_diff"] = dict(req=req, step=step,
+                            native=int(window[req, step]), reference=int(reference[req, step]))
+            if phase == "measure":
+                evidence["validated_layer_graphs"] = len(self.layer_graphs)
+                evidence["native"] = tensor_digest(self.tokens.native)
+            evidence["first_gate_difference"] = None if self.publisher else first_gate_difference(
+                self.raw_ids, self.bank_ids, self.raw_weights, self.bank_weights)
+            del self.bank_ids, self.bank_weights, self.raw_ids, self.raw_weights
         result = dict(
             counts=self.recv[:, : self.local_slots]
             .cpu()
@@ -364,11 +377,12 @@ class FiveWorker:
         if phase == "measure":
             if self.eco_tables is not None:
                 if os.getenv("SM100_FORMAL_512"):
-                    if not torch.equal(self.plan_counts, self.recv[:, :self.local_slots]):
+                    if not DIRECT and not torch.equal(self.plan_counts, self.recv[:, :self.local_slots]):
                         raise ValueError("physical receive counts differ from auction quotas")
                     from gc_moe.eco.plan import eco_unit_config
                     evidence["eco_unit_config"] = eco_unit_config(8, self.bm, 64)
-                    evidence["verified_local_quota_rows"] = STEPS * LAYERS
+                    if not DIRECT:
+                        evidence["verified_local_quota_rows"] = STEPS * LAYERS
                 result["accepted"] = (
                     self.auction.cpu().numpy().reshape(STEPS, LAYERS)
                 )
