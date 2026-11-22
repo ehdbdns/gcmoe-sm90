@@ -2485,7 +2485,8 @@ class SM90GCMoERoleKernel:
                                               Uint32(warp * warp_row_bytes), pull_bar, phases)
                         if lane == 0:
                             index = Uint64(expert) * self.rows + Uint64(row)
-                            meta = cell(dst, Uint64(self.off_route_meta) + index * 12, Uint32)
+                            meta = cute.make_ptr(Uint32, dst + Uint64(self.off_route_meta) + index * 12,
+                                                 cute.AddressSpace.gmem, assumed_align=4)
                             meta[0] = rank
                             meta[1] = token
                             meta[2] = Uint32(route) % Uint32(self.topk)

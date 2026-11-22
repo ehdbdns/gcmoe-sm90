@@ -31,7 +31,12 @@ T = int(os.environ.get('TL_TOKENS', '32'))
 HOT_BLOCKS = os.environ.get('TL_HOT_BLOCKS') == '1'
 
 
+CHECK_PUSH_RETURN = os.environ.get('TL_CHECK_PUSH_RETURN') == '1'
+
+
 def main():
+    if CHECK_PUSH_RETURN and not HOT_BLOCKS:
+        raise ValueError('push return-address check requires TL_HOT_BLOCKS=1')
     lr = int(os.environ['LOCAL_RANK'])
     torch.cuda.set_device(lr)
     dev = torch.device(f'cuda:{lr}')
@@ -78,6 +83,9 @@ def main():
             tw[-1], ti[-1] = torch.topk(sc[-1], TOPK, largest=True, sorted=False)
     else:
         tw, ti = torch.topk(sc, TOPK, dim=-1, largest=True, sorted=False)
+    if CHECK_PUSH_RETURN:
+        ti = ti.roll(rank % TOPK, dims=1)
+        tw = tw.roll(rank % TOPK, dims=1)
     weights = torch.softmax(tw, -1)
 
     buf = gc_moe.get_symm_buffer_for_gc_moe_sm90(
@@ -114,6 +122,10 @@ def main():
     except Exception as exc:  # noqa: BLE001
         print(f'[cap] CAPTURE FAILED rank{rank}: {type(exc).__name__}: {exc}', flush=True)
         raise
+    if CHECK_PUSH_RETURN:
+        buf.route_meta.zero_()
+        torch.cuda.synchronize()
+        dist.barrier(group=group)
     for _ in range(2):
         g.replay()
     torch.cuda.synchronize()
@@ -124,6 +136,12 @@ def main():
         if rank == owner:
             count = int(buf.expert_count[local].item())
             assert count == R * T - 1 and count > 64 and count % 64, (rank, count)
+            if CHECK_PUSH_RETURN:
+                observed = sorted(map(tuple, buf.route_meta[local, :count].cpu().tolist()))
+                expected = [(src, tok, src % TOPK) for src in range(R) for tok in range(T)
+                            if (src, tok) != (0, T - 1)]
+                assert observed == expected, (observed[:20], expected[:20])
+                print(f'PUSH_RETURN_OK owner={owner} rows={count}', flush=True)
         digest = hashlib.sha256(out.view(torch.int16).cpu().numpy().tobytes()).hexdigest()
         print(f'STREAM_CHECK rank={rank} sha256={digest}', flush=True)
         dist.barrier()
