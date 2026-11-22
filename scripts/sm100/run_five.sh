@@ -64,7 +64,9 @@ nvidia-smi -L > "$root/gpus.txt"
 sha256sum "$SM100_V41_MODEL/model.safetensors.index.json" > "$root/weights.sha256"
 python scripts/sm100/check_v41_rr.py | tee "$root/rr-preflight.log"
 rc=0
-for bs in 256 512 1024 2048; do
+batches=(256 512 1024 2048)
+if [[ ${SM100_MATRIX_BS:-} == 1024 ]]; then batches=(1024); fi
+for bs in "${batches[@]}"; do
   group="$root/bs$bs"
   mkdir -p "$group"
   for arm in mega gc mega_rr gc_rr gc_eco; do
@@ -83,5 +85,5 @@ for bs in 256 512 1024 2048; do
   done
   python scripts/sm100/five_report.py "$group" "$bs" || rc=1
 done
-python scripts/sm100/five_collect.py "$root"
+python scripts/sm100/five_collect.py "$root" "${batches[@]}"
 exit "$rc"

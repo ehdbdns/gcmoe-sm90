@@ -18,6 +18,23 @@ def tensor_digest(tensor):
     return digest.hexdigest()
 
 
+def first_gate_difference(native_ids, replay_ids, native_weights, replay_weights):
+    for start in range(0, len(native_ids), 256):
+        part = slice(start, start + 256)
+        different = ((native_ids[part] != replay_ids[part])
+                     | (native_weights[part] != replay_weights[part]))
+        if different.any().item():
+            offset, token, choice = different.nonzero()[0].tolist()
+            call = start + offset
+            index = call, token, choice
+            return dict(step=call // LAYERS, layer=call % LAYERS, local_token=token,
+                        choice=choice, native_id=native_ids[index].item(),
+                        replay_id=replay_ids[index].item(),
+                        native_weight=native_weights[index].item(),
+                        replay_weight=replay_weights[index].item())
+    return None
+
+
 class FiveWorker:
     def five_sync(self):
         torch.cuda.synchronize()
@@ -42,6 +59,8 @@ class FiveWorker:
         self.eco_tables = None
         self.current = None
         self.prime_inputs = {}
+        self.layer_graphs = {}
+        self.graph_checks = []
         dg = _import_deep_gemm()
         self.select_m = dg.get_block_m_for_mega_moe
         if (
@@ -69,7 +88,38 @@ class FiveWorker:
             if self.eco_tables is not None:
                 meta, state = self.eco_tables[layer]
                 kwargs.update(eco_meta=meta, eco_state=state, eco_logical_experts=384)
-                buf.eco_auction_audit = self.auction[call]
+                buf.eco_auction_audit = self.audit_scratch
+            if self.phase == "measure":
+                self.audit_scratch.zero_()
+                if layer not in self.layer_graphs:
+                    # The same layer always reads the same symmetric input, packed
+                    # weights and plan state. Only their contents change per step.
+                    target = torch.empty_like(y)
+                    if self.eco_tables is not None:
+                        old_state = state.clone()
+                    original_launch(target, l1, l2, buf, *args, **kwargs)
+                    reference = target.clone()
+                    eager_counts = counters.clone()
+                    eager_accepted = self.audit_scratch[:1].clone()
+                    if self.eco_tables is not None:
+                        state.copy_(old_state)
+                    scratch.copy_(self.recv[call])
+                    self.audit_scratch.zero_()
+                    graph = torch.cuda.CUDAGraph()
+                    with torch.cuda.graph(graph):
+                        original_launch(target, l1, l2, buf, *args, **kwargs)
+                    self.layer_graphs[layer] = graph, target
+                    graph.replay()
+                    self.graph_checks.append(torch.stack((
+                        (target != reference).sum(), (counters != eager_counts).sum(),
+                        (self.audit_scratch[:1] != eager_accepted).sum())))
+                else:
+                    graph, target = self.layer_graphs[layer]
+                    graph.replay()
+                y.copy_(target)
+                self.auction[call].copy_(self.audit_scratch[0])
+                self.recv[call].copy_(scratch)
+                return None
             result = original_launch(y, l1, l2, buf, *args, **kwargs)
             self.recv[call].copy_(scratch)
             return result
@@ -151,10 +201,9 @@ class FiveWorker:
             "fp8xfp4",
         )
         assert get_ep_group().rank_in_group == self.rank
-        if phase == "measure" and self.eco_tables is not None:
-            self.auction = torch.zeros(
-                (n, per_rank + 32), dtype=torch.int32, device="cuda"
-            )
+        if phase == "measure":
+            self.audit_scratch = torch.zeros(per_rank + 32, dtype=torch.int32, device="cuda")
+            self.auction = torch.zeros(n, dtype=torch.int32, device="cuda")
         if phase == "measure":
             # Warm each real packed weight address, shape, instrumentation and JIT before
             # the clock starts. Standalone expert calls do not step the model or its KV.
@@ -166,6 +215,11 @@ class FiveWorker:
                 for _, state in self.eco_tables:
                     state.zero_()
                 self.auction.zero_()
+            assert len(self.layer_graphs) == LAYERS
+            mismatches = torch.stack(self.graph_checks).sum(dim=0)
+            torch.distributed.all_reduce(mismatches)
+            if mismatches.any().item():
+                raise RuntimeError(f"MoE eager/replay mismatch (outputs, counts, accepts): {mismatches.tolist()}")
             self.calls = 0
             self.recv.zero_()
             self.recv[:, per_rank:].view(torch.int64)[:, :2].fill_(-1)
@@ -228,7 +282,10 @@ class FiveWorker:
             block_m=int(self.bm),
         )
         if phase == "measure":
+            evidence["validated_layer_graphs"] = len(self.layer_graphs)
             evidence["native"] = tensor_digest(self.tokens.native)
+        evidence["first_gate_difference"] = None if self.publisher else first_gate_difference(
+            self.raw_ids, self.bank_ids, self.raw_weights, self.bank_weights)
         del self.bank_ids, self.bank_weights, self.raw_ids, self.raw_weights
         result = dict(
             counts=self.recv[:, : self.local_slots]
@@ -247,7 +304,7 @@ class FiveWorker:
         if phase == "measure":
             if self.eco_tables is not None:
                 result["accepted"] = (
-                    self.auction[:, 0].cpu().numpy().reshape(STEPS, LAYERS)
+                    self.auction.cpu().numpy().reshape(STEPS, LAYERS)
                 )
                 del self.auction
         np.savez_compressed(self.folder / f"{phase}-rank{self.rank}.npz", **result)

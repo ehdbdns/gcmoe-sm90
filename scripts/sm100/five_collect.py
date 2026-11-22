@@ -8,7 +8,7 @@ import shutil
 import sys
 
 
-def collect(root):
+def collect(root, batches=(256, 512, 1024, 2048)):
     dest = root / "delivery"
     dest.mkdir(exist_ok=True)
     for name in (
@@ -26,7 +26,7 @@ def collect(root):
     totals = {"metrics": [], "pairs": []}
     status = []
     with (dest / "rank-files.sha256").open("w") as manifest:
-        for bs in (256, 512, 1024, 2048):
+        for bs in batches:
             group = root / f"bs{bs}"
             sub = dest / group.name
             sub.mkdir(exist_ok=True)
@@ -67,4 +67,4 @@ def collect(root):
 
 
 if __name__ == "__main__":
-    collect(Path(sys.argv[1]))
+    collect(Path(sys.argv[1]), tuple(map(int, sys.argv[2:])) or (256, 512, 1024, 2048))
