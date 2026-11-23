@@ -1,0 +1,32 @@
+docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/vanilla/rank0.npz: OK
+DeepInfer RR and physical load checks passed
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]     return func(*args, **kwargs)
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 883, in compile_or_warm_up_model
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]     cuda_graph_memory_bytes = self.model_runner.capture_model()
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]     return func(*args, **kwargs)
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu/model_runner.py", line 1049, in capture_model
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]     self.cudagraph_manager.capture(
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu/cudagraph_utils.py", line 749, in capture
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]     super().capture(create_forward_fn, progress_bar_desc)
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]     return func(*args, **kwargs)
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu/cudagraph_utils.py", line 475, in capture
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]     with torch.cuda.graph(
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]          ^^^^^^^^^^^^^^^^^
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/torch/cuda/graphs.py", line 477, in __exit__
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]     self.cuda_graph.capture_end()
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]   File "/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv/lib/python3.12/site-packages/torch/cuda/graphs.py", line 169, in capture_end
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058]     super().capture_end()
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058] torch.AcceleratorError: CUDA error: operation failed due to a previous error during capture
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058] Search for `cudaErrorStreamCaptureInvalidated' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058] For more detailed error information, run with CUDA_LOG_FILE=stderr
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058] 
+(Worker_TP6_EP6 pid=1575859) ERROR 11-23 17:07:28 [multiproc_executor.py:1058] 
+(MainProcess pid=1557145) WARNING 11-23 17:07:33 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=1557145) WARNING 11-23 17:07:37 [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=8

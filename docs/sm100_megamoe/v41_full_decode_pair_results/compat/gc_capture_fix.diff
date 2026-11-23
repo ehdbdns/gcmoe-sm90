@@ -1,0 +1,14 @@
+diff --git a/gc_moe/runtime/gc_moe.py b/gc_moe/runtime/gc_moe.py
+index ce966b4..f2814d6 100644
+--- a/gc_moe/runtime/gc_moe.py
++++ b/gc_moe/runtime/gc_moe.py
+@@ -248,7 +248,8 @@ class _ChildGraph:
+                     _ok(cu.cuGraphKernelNodeSetAttribute(
+                         node, cu.CUkernelNodeAttrID.CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION, attr))
+                 nodes.append(node)
+-            self.instantiate()
++            if not torch.cuda.is_current_stream_capturing():
++                self.instantiate()
+         except Exception:
+             try:
+                 self.close()
