@@ -245,6 +245,7 @@ def rank_detail(row, fine, epoch):
                 m_blocks=row['m_blocks'], active_slots=sum(n > 0 for n in slots),
                 dispatch_ctas=row['raw_kernels']['dispatch']['grid'],
                 routed_ctas=row['raw_kernels']['routed']['grid'],
+                placement=[dict(role=rec[2], cta=rec[3], sm=rec[4]) for rec in rows if rec[1] == 27],
                 first_claim_us=claim, pull_complete_us=pull_end,
                 routed_exit_us=routed_end, fine_events=len(rows),
                 hot_slot=max(ordered_slots, key=lambda item: item['owned']),

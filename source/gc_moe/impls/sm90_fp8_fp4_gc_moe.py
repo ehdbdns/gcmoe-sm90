@@ -31,7 +31,7 @@ from ..ptx.tma import (
 )
 from ..ptx.utils import (
     fence_gpu, fence_sys, sync_loader, sync_math, sync_tile,
-    sync_activation, sync_weight, read_globaltimer, sync_aligned,
+    sync_activation, sync_weight, read_globaltimer, read_smid, sync_aligned,
     elect_one_sync, warp_first_set_bit,
 )
 from ..scheduler.sm90_gc_moe import claim_sm90_task
@@ -74,6 +74,7 @@ def wait_count(ptr: cute.Pointer, target: Uint32):
 class SM90GCMoERoleKernel:
     def __init__(self, config, layout, role, schedule, has_stats, routed_n_factor=1):
         self.role = role
+        self.plan_dispatch = bool(getattr(config, "plan_dispatch", False))
         self.direct_route_scan = schedule.direct_route_scan
         self.ranks = config.ranks
         # Logical experts per rank (for stats / weight layout) vs physical slots
@@ -302,6 +303,8 @@ class SM90GCMoERoleKernel:
             # That split is what lets the counts overlap the static tables.
             self.grid, self.threads = 1, 512
             self.smem = self.eco_smem if self.eco else 0
+        elif role == 7:
+            self.grid, self.threads, self.smem = 1, 32, 0
         elif role == 6:
             # [SM-REUSE] Same resources as role 2 (the routed compute role): it
             # runs the same math, only its CTA count and green context differ,
@@ -1216,6 +1219,9 @@ class SM90GCMoERoleKernel:
         bm = self.max_m
         ready = self._field(base, 'eco_ready', Uint32)
         epoch = ld_acquire_gpu_u32(self._field(base, 'header', Uint32))
+        if cutlass.const_expr(self.plan_dispatch):
+            if tid == 0:
+                st_release_u32(ready + 3, epoch + Uint32(1), False)
         # [T17-PERLAYER] read/write THIS layer's row of the warm-plan state.
         # Must come AFTER `epoch` is read: the row is (epoch - 1) % n_layers.
         state = self._eco_state_ptr(base, epoch)
@@ -4875,6 +4881,8 @@ class SM90GCMoERoleKernel:
                     eco_rd = self._field(base, 'eco_ready', Uint32)
                     eco_rd[0] = Uint32(0)
                     eco_rd[1] = Uint32(0)
+                    if cutlass.const_expr(self.plan_dispatch):
+                        eco_rd[3] = Uint32(0)
                     # NOTE: eco_rd[2] ("counts consumed") must NOT be cleared
                     # here -- the next dispatch compares it against epoch-1 and
                     # relies on it surviving the combine stage.
@@ -5001,7 +5009,7 @@ class SM90GCMoERoleKernel:
         call_epoch = Uint32(0)
         if cutlass.const_expr(self.long_cost):
             # Read this invocation's tag before combine can advance the header.
-            if cutlass.const_expr(self.role in (1, 4, 5, 3)):
+            if cutlass.const_expr(self.role in (1, 4, 5, 3, 7)):
                 call_epoch = ld_acquire_gpu_u32(self._field(base, 'header', Uint32))
                 if cutlass.const_expr(self.role != 3):
                     if cute.arch.thread_idx()[0] == 0:
@@ -5010,6 +5018,11 @@ class SM90GCMoERoleKernel:
                     if cute.arch.thread_idx()[0] == 0 and cute.arch.block_idx()[0] == 0:
                         row = self._long_row(base, call_epoch)
                         row[4] = Uint64(call_epoch)
+        if cutlass.const_expr(self.plan_dispatch and self.eco and self.fine_trace and self.role in (1, 5)):
+            if cute.arch.thread_idx()[0] == 0:
+                epoch = ld_acquire_gpu_u32(self._field(base, 'header', Uint32))
+                self._fine(base, epoch, 27, Uint32(self.role), Uint32(cute.arch.block_idx()[0]),
+                           read_smid(), Uint32(0))
         if cutlass.const_expr(self.role == 1):
             if cutlass.const_expr(self.direct_route_scan):
                 self._dispatch_direct(base, peers, rank, tokens, stats)
@@ -5036,6 +5049,10 @@ class SM90GCMoERoleKernel:
             alloc = cutlass.utils.SmemAllocator()
             slab = cute.recast_ptr(alloc.allocate(self.smem, 1024), dtype=Uint8)
             self._compute_shared(base, slab, tokens, sw1, ss1, sw2, ss2, clamp)
+        elif cutlass.const_expr(self.role == 7):
+            if cute.arch.thread_idx()[0] == 0:
+                epoch = ld_acquire_gpu_u32(self._field(base, 'header', Uint32))
+                wait_epoch(self._field(base, 'eco_ready', Uint32) + 3, epoch + Uint32(1), False)
         elif cutlass.const_expr(self.role == 6):
             # [SM-REUSE] helper consumer that parks on "pull finished" and then
             # joins the global task queue.

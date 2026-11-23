@@ -30,7 +30,7 @@ def capture_step(engine, arm):
                     dispatch_transport=('source_push' if os.getenv('GC_MOE_SM90_SINGLE_PUSH') == '1' else 'pull'),
                     decode_tokens=256, gemm_start='first_valid_cta_claim',
                     ranks=rpc('_gc_moe_profile_snapshot', args=(start,)))
-    capture = resolve_epochs(raw, manifest, 5 if os.getenv("GC_MOE_SM90_PLAN_DISPATCH") == "1" else 24)
+    capture = resolve_epochs(raw, manifest, 20 if os.getenv("GC_MOE_SM90_PLAN_DISPATCH") == "1" else 24)
     assert capture['first_epoch'] == start
     (raw/'capture.json').write_text(json.dumps(capture))
     epochs = [start + layer for layer in LAYERS]

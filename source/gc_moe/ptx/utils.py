@@ -157,6 +157,13 @@ def sync_weight(*, loc=None, ip=None):
 
 
 @dsl_user_op
+def read_smid(*, loc=None, ip=None) -> Uint32:
+    return Uint32(llvm.inline_asm(T.i32(), [], 'mov.u32 $0, %smid;', '=r',
+                                  has_side_effects=True, asm_dialect=llvm.AsmDialect.AD_ATT,
+                                  loc=loc, ip=ip))
+
+
+@dsl_user_op
 def read_globaltimer(*, loc=None, ip=None) -> Uint64:
     """Device-wide nanosecond timer (ECO timeline trace)."""
     return Uint64(llvm.inline_asm(T.i64(), [], 'mov.u64 $0, %globaltimer;', '=l',

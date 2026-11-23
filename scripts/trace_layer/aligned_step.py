@@ -30,7 +30,12 @@ def read_calls(trace, layers, dispatch_grid, rank, eco=True):
             continue
         grid, _, _ = event['args']['grid']
         block, _, _ = event['args']['block']
-        if (grid, block) == (1, 512):
+        if (grid, block) == (1, 32) and eco and dispatch_grid == 20:
+            role = 'admission'
+            if role not in kernels:
+                roles.append(role)
+                kernels[role] = []
+        elif (grid, block) == (1, 512):
             role = 'plan'
         elif block == 256:
             role = 'dispatch' if grid == dispatch_grid else 'shared'
@@ -180,7 +185,7 @@ def measure_plan(ranks):
     """Compare rank shares within one layer and epoch (signed error in percentage points)."""
     for row in ranks:
         call = row['raw_kernels']
-        root = min(('dispatch', 'shared', 'plan'), key=lambda role: call[role]['ts'])
+        root = min((k for k in ('dispatch', 'shared', 'plan', 'admission') if k in call), key=lambda role: call[role]['ts'])
         start, end = call[root]['ts'], call['combine']['end']
         require(start <= call['routed']['ts'] and end > start, 'invalid MoE graph span')
         row.update(graph_root=root, graph_start_us=start, combine_end_us=end, moe_us=end - start)
@@ -272,6 +277,11 @@ def build(capture_dir, layers, dispatch_grid, require_overlap=False):
             for track, role in enumerate(ROLES, start=1):
                 events.append(dict(ph='M', name='thread_name', pid=rank, tid=track,
                                    args={'name': role}))
+            if 'admission' in call:
+                gate = call['admission']
+                events.append(dict(ph='X', name='wait for resident plan CTA', cat='admission',
+                                   pid=rank, tid=6, ts=gate['ts'] + offsets[rank] - origin,
+                                   dur=gate['dur']))
             for name, (start, end, role) in segments.items():
                 # [PERFETTO-US] Perfetto's Chrome-JSON importer parses ts/dur as
                 # MICROSECONDS by default. `displayTimeUnit` only has an effect

@@ -207,12 +207,11 @@ class _ChildGraph:
         # set again. Check the INVARIANTS instead -- dispatch first, finalize
         # last, everything else unique and known.
         _r = tuple(x.role for x in binaries)
-        if (not _r or _r[0] != 1 or _r[-1] != 3
+        prefix = (5, 7, 1) if owner.plan_dispatch else (1,)
+        if (_r[:len(prefix)] != prefix or _r[-1] != 3
                 or len(set(_r)) != len(_r)
-                or not set(_r) <= {1, 2, 3, 4, 5, 6}):
-            raise ValueError(
-                f'unexpected role set {_r}: need dispatch (1) first, finalize '
-                f'(3) last, and only roles 1..6')
+                or not set(_r) <= ({1, 2, 3, 4, 5, 6, 7} if owner.plan_dispatch else {1, 2, 3, 4, 5, 6})):
+            raise ValueError(f'unexpected SM90 role order {_r} for plan_dispatch={owner.plan_dispatch}')
         if len(arguments) != len(binaries):
             raise ValueError('expected one argument vector per role')
         self.graph = None
@@ -238,7 +237,7 @@ class _ChildGraph:
                 # heuristics) so both can be resident at the same time.
                 # [SM-REUSE] role 6 must live in the DISPATCH green context
                 # (contexts[0]) so it inherits those 6 SMs once pull is done.
-                _ctx_idx = 0 if (index == 0 or binary.role == 6) else 1
+                _ctx_idx = 0 if binary.role in (1, 6, 7) else 1
                 if binary.role == 5 and owner.plan_dispatch:
                     _ctx_idx = 0
                 params.kernel.ctx = owner.contexts[_ctx_idx]
@@ -248,7 +247,7 @@ class _ChildGraph:
                 params.kernel.blockDimY = params.kernel.blockDimZ = 1
                 params.kernel.sharedMemBytes = binary.smem_bytes
                 params.kernel.kernelParams = arguments[index].pointer
-                # Dispatch remains an independent root. A compute policy may
+                # Dispatch can start once the communication plan is resident. A compute policy may
                 # retire local SE before routed begins; its original device
                 # queues still acquire every required dispatch publication.
                 # Finalize/cleanup always joins every local producer.

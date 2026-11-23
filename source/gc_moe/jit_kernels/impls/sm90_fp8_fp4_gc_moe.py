@@ -108,6 +108,8 @@ def _role_specs(config, layout, schedule, has_stats):
     # (combine depends on every producer finishing).
     if getattr(config, 'sm_reuse', False):
         roles = roles[:-1] + (6,) + roles[-1:]
+    if eco and config.plan_dispatch:
+        roles = (5, 7) + tuple(role for role in roles if role != 5)
     specs = []
     for role in roles:
         if role == 6:
@@ -149,6 +151,10 @@ def _role_specs(config, layout, schedule, has_stats):
             specs.append((k, (6, _sched6.smem[1],
                               _sched6.threads[1], _grid6, ())))
             continue
+        if role == 7:
+            gate = SM90GCMoERoleKernel(config, layout, role, schedule, has_stats)
+            specs.append((gate, (role, gate.smem, gate.threads, gate.grid, ())))
+            continue
         if role == 5:
             k = SM90GCMoERoleKernel(config, layout, 5, schedule, has_stats)
             # [ECO-WARP] thread count comes from the kernel (512 since the
@@ -162,6 +168,8 @@ def _role_specs(config, layout, schedule, has_stats):
         kernel = SM90GCMoERoleKernel(role_config, layout, role, role_schedule, has_stats,
                                     routed_n_factor=routed.n_factor if role == 2 else 1)
         wait_for = (4,) if config.shared_experts and role == 2 and schedule.tile_m >= 32 else ()
+        if role == 1 and eco and config.plan_dispatch:
+            wait_for = (7,)
         specs.append((kernel, (role, role_schedule.smem[index], role_schedule.threads[index],
                                role_schedule.grids[index], wait_for)))
     return tuple(specs)

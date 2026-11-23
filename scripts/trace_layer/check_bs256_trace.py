@@ -76,6 +76,14 @@ if len(sys.argv) == 5:
                             for s in r['pull_slots'] if s['copies'] > 1 and s['owned']}
                 same('replica push rows by physical destination', dict(delivered), expected)
             for rank in detail['ranks']:
+                if trial == 'dispatch':
+                    places = rank['placement']
+                    plan = [p['sm'] for p in places if p['role'] == 5]
+                    dispatch = [p for p in places if p['role'] == 1]
+                    same('one plan CTA', len(plan), 1)
+                    same('dispatch CTA coverage', sorted(p['cta'] for p in dispatch), list(range(20)))
+                    same('distinct plan and dispatch SMs', all(p['sm'] != plan[0] for p in dispatch), True)
+                    same('five dispatch SMs', len({p['sm'] for p in dispatch}), 5)
                 if trial == 'single_push':
                     for release in rank['block_releases']:
                         same('async destination snapshot', 'declared_sources' in release,
@@ -89,7 +97,9 @@ if len(sys.argv) == 5:
                 same('replica exchange spans', len(rank['replica_exchange']), int(trial == 'split'))
         for row in c['ranks']:
             if trial:
-                expected = (5, 72, 72, 1) if trial == 'dispatch' else (24, 71, 71, 1)
+                expected = (20, 72, 72, 1) if trial == 'dispatch' else (24, 71, 71, 1)
+                if trial == 'dispatch':
+                    same('dispatch after plan admission', row['raw_kernels']['admission']['end'] <= row['raw_kernels']['dispatch']['ts'], True)
                 same('launch grids', tuple(row['raw_kernels'][k]['grid']
                      for k in ('dispatch', 'shared', 'routed', 'plan')), expected)
             with np.load(old/f'rank{row["rank"]}.npz') as a:

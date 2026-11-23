@@ -173,7 +173,7 @@ class SM90GCBufferLayout:
             # [ECO-DBUF] two tokens only: [0]=counts, [1]=plan. The old
             # [2]="counts consumed" is unused since `eco_counts` became
             # double buffered (SM100's `gen = epoch & 1`).
-            reserve('eco_ready', (3,), 'int32', 4)          # [0]=counts [1]=plan
+            reserve('eco_ready', (4,), 'int32', 4)          # counts, quota, consumed, plan resident
             # [ECO-SM90] Dedicated per-LOGICAL-expert histogram for the plan.
             # SM100 keeps this in shared memory (`route_count[kE]`); on SM90 the
             # plan is a separate CTA, so it lives in gmem. Deliberately NOT

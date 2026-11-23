@@ -38,7 +38,7 @@ for trial in "${trials[@]}"; do
     single_push) export GC_MOE_SM90_SINGLE_PUSH=1 ;;
     source_index) export GC_MOE_SM90_SOURCE_INDEX_PULL=1 ;;
     split) export GC_MOE_SM90_SPLIT_EXCHANGE=1 ;;
-    dispatch) export GC_MOE_SM90_PLAN_DISPATCH=1; grid=5 ;;
+    dispatch) export GC_MOE_SM90_PLAN_DISPATCH=1; grid=20 ;;
   esac
   dir="$work/$trial"
   export GC_MOE_FIXED_DIR="$dir/replay" GC_BS256_TRACE_DIR="$dir/raw"
