@@ -92,4 +92,4 @@ sha256sum "$area"/wheels/*.whl
 echo "$area/site"
 ```
 
-CPU 回执追加 wheel 路径及 SHA、编译日志、子模块版本或首错。正式运行使用单进程私有包路径。重启后的 HCA 按实际 ACTIVE 端口及 GPU/NIC 拓扑核对，启动器须显式传入 NCCL_IB_HCA 与 NVSHMEM_HCA_LIST。模型和原始请求文件恢复后，记录 MODEL、DATASET 的实际路径及 SHA。仅有 kv/ 和 replay/ 不视为模型和请求源已经恢复。
+CPU 回执追加 wheel 路径及 SHA、编译日志、子模块版本或首错。正式运行使用单进程私有包路径。重启后的 HCA 按实际 ACTIVE 端口及 GPU/NIC 拓扑核对，启动器须显式传入 NCCL_IB_HCA 与 NVSHMEM_HCA_LIST。194709d 已找到模型和请求文件。正式启动器使用同目录 sm90_h20_bs256_mega_gc_eight_results/model_paths.txt 中的新挂载路径，按 model_and_dataset.sha256 校验。
