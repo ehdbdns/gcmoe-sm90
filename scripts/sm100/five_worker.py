@@ -424,7 +424,7 @@ class MatrixWorker(MoeAuditWorker):
         anchor[(1,)](self.align_clock[1:])
         torch.cuda.synchronize()
         activities = [torch.profiler.ProfilerActivity.CUDA]
-        if os.getenv("SM100_QUIET_TRACE") != "1":
+        if os.getenv("SM100_QUIET_TRACE") != "1" or os.getenv("SM100_L20_HOST_TRACE") == "1":
             activities.append(torch.profiler.ProfilerActivity.CPU)
         self.phase_profiler = torch.profiler.profile(activities=activities)
         self.phase_profiler.__enter__()
