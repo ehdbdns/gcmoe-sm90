@@ -255,6 +255,8 @@ def rank_detail(row, fine, epoch):
                 tile_counts=dict(Counter(item['phase'] for item in tile_rows)),
                 active_compute_ctas=active_ctas(tile_rows),
                 replica_timing=replica_timing, quota_publications=quota_edges,
+                replica_sends=[dict(span(a, b), physical=a[2], cta=a[3], rows=a[4])
+                               for a, b in pair_records(rows, 25, 26, lambda rec: rec[2])],
                 singleton_sends=[dict(span(a, b), cta=a[2], rows=b[3])
                                  for a, b in pair_records(rows, 22, 23, lambda rec: rec[2])],
                 replica_exchange=[span(a, b) for a, b in pair_records(rows, 18, 19, lambda rec: rec[2])],
@@ -265,8 +267,9 @@ def rank_detail(row, fine, epoch):
 
 def overlay(trace, details):
     events = trace['traceEvents'].copy()
+    all_push = any(e.get('name') == 'local route preparation' for e in events)
     anchors = {event['args']['rank']: event['ts'] for event in events
-               if event.get('ph') == 'X' and event['name'] == 'count exchange'}
+               if event.get('ph') == 'X' and event['name'] in ('count exchange', 'local route preparation')}
     require(set(anchors) == set(range(RANKS)), 'Perfetto missing rank dispatch anchors')
     for rank in details:
         r = rank['rank']
@@ -281,13 +284,17 @@ def overlay(trace, details):
                                    args={'name': f'{title} {cta}'}))
             for item in rank[key]:
                 name = f'slot {item["slot"]}'
-                if key == 'pull_slots' and rank.get('singleton_sends') and item['copies'] == 1:
+                if key == 'pull_slots' and rank.get('singleton_sends') and (item['copies'] == 1 or all_push):
                     name += ' · finalize pushed slot'
                 if key == 'tiles':
                     name = f'L{item["phase"]} · ' + name + f' M{item["m_block"]} N{item["ntile"]}'
                 events.append(dict(ph='X', name=name, cat=key, pid=r, tid=offset + item['cta'],
                                    ts=anchors[r] + item['start_us'],
                                    dur=item['end_us'] - item['start_us'], args=item))
+        for item in rank.get('replica_sends', []):
+            events.append(dict(ph='X', name='replica activation push', cat='dispatch', pid=r,
+                               tid=850 + item['cta'], ts=anchors[r] + item['start_us'],
+                               dur=item['end_us'] - item['start_us'], args=item))
         for item in rank.get('singleton_sends', []):
             tid = 800 + item['cta']
             events.append(dict(ph='M', name='thread_name', pid=r, tid=tid,

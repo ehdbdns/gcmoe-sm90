@@ -67,12 +67,19 @@ if len(sys.argv) == 5:
                 owned = sum(slot['owned'] for rank in detail['ranks']
                             for slot in rank['pull_slots'] if slot['copies'] == 1)
                 same('singleton pushed versus owned rows across all ranks', sent, owned)
+                from collections import Counter
+                delivered = Counter()
+                for source in detail['ranks']:
+                    for span in source['replica_sends']:
+                        delivered[span['physical']] += span['rows']
+                expected = {s['global_slot']: s['owned'] for r in detail['ranks']
+                            for s in r['pull_slots'] if s['copies'] > 1 and s['owned']}
+                same('replica push rows by physical destination', dict(delivered), expected)
             for rank in detail['ranks']:
                 if trial == 'single_push':
-                    singleton = {s['slot'] for s in rank['pull_slots'] if s['copies'] == 1}
                     for release in rank['block_releases']:
-                        same('async singleton snapshot', 'declared_sources' in release,
-                             release['phase'] == 1 and release['slot'] in singleton)
+                        same('async destination snapshot', 'declared_sources' in release,
+                             release['phase'] == 1)
                 same('singleton sender CTAs', sorted(s['cta'] for s in rank['singleton_sends']),
                      list(range(8)) if trial == 'single_push' else [])
                 if trial == 'source_index' or (trial == 'baseline' and os.getenv('SM90_CHECK_INDEX_TIMING')):

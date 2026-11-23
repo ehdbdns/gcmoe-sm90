@@ -260,6 +260,9 @@ def build(capture_dir, layers, dispatch_grid, require_overlap=False):
                            block_m=block_m, plan_cost=None if capture.get('arm') == 'rr' else plan[rank],
                            routed_us=call['routed']['dur'],
                            dispatch_to_routed_end_us=call['routed']['end'] - call['dispatch']['ts'])
+            if capture.get('dispatch_transport') == 'source_push':
+                segments['local route preparation'] = segments.pop('count exchange')
+                segments['source push and destination completion'] = segments.pop('pull token')
             result['ranks'].append(dict(metrics, slots_owned=counts, raw_kernels=call,
                                         raw_stamps=row['stamps'], checks=checks,
                                         segment_us={name: end - start

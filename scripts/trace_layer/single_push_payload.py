@@ -21,7 +21,16 @@ def verify_rows(buf, physical_to_logical, sources, rank):
     ranks, tokens, choices = ids.shape
     counts = buf.expert_count.cpu().tolist()
     seen = torch.zeros(ranks * tokens * choices, dtype=torch.int32)
+    starts = buf.eco_quota_start.cpu().tolist()
+    quotas = buf.eco_quota.cpu().tolist()
     for local, count in enumerate(counts):
+        physical = rank * len(counts) + local
+        logical = physical_to_logical[physical]
+        routes = (ids == logical).nonzero()  # source rank, token, top-k canonical order
+        if list(physical_to_logical).count(logical) > 1:
+            wanted = routes[starts[physical]:starts[physical] + quotas[physical]]
+            meta = buf.route_meta[local, :count].cpu().tolist()
+            assert sorted(meta) == wanted.tolist(), (rank, local, 'quota ownership')
         if not 0 <= count <= ranks * tokens:
             raise AssertionError(f'invalid slot count: rank={rank} slot={local} count={count}')
         if not count:
@@ -47,7 +56,11 @@ def verify_push_replays(buf, graph, out, placement, raw, scores, hot, topk, quan
     assert ranks == 8 and tokens == 17 and buf.layout.fixed_route_order and buf.layout.single_push
     # For each token choose distinct non-hot alternatives. Use different input
     # bytes, gate slots and scale magnitudes across ranks and generations.
-    keep = scores.topk(topk, dim=1).indices
+    replica = max(set(placement), key=list(placement).count)
+    assert list(placement).count(replica) > 1 and replica != hot
+    alternatives = scores.clone()
+    alternatives[:, replica] = -torch.inf
+    keep = alternatives.topk(topk, dim=1).indices
     assert (keep != hot).all()
     order = ((rank + ranks - 1) % ranks) * tokens + torch.arange(tokens, device=raw.device)
     owner, local = divmod(list(placement).index(hot), len(placement) // ranks)
@@ -56,6 +69,7 @@ def verify_push_replays(buf, graph, out, placement, raw, scores, hot, topk, quan
     for generation, target in enumerate((135, 0, 64, 65)):
         ids = keep.clone()
         ids[order < target, 0] = hot
+        ids[:, 1] = replica
         ids = ids.roll((rank + generation) % topk, dims=1)
         weights = (scores.gather(1, ids).masked_fill(ids == hot, 1.0)
                    + torch.arange(topk, device=raw.device) * 0.125).softmax(-1)
