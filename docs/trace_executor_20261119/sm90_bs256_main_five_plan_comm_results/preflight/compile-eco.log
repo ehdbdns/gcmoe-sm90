@@ -1,0 +1,5 @@
+SM90 ECO plan context=communication communication_sms=6 compute_sms=72
+schedule SM90RoleConfig(grids=(20, 72, 288), tile_m=64, threads=(256, 384, 384), smem=(43008, 199680, 0), direct_route_scan=False)
+roles [(5, 53248, 512, 1), (7, 0, 32, 1), (1, 43008, 256, 20), (4, 199680, 256, 72), (2, 199680, 384, 72), (3, 0, 384, 288)]
+eco role 5 cost=2 slack=11469
+compiled roles [5, 7, 1, 4, 2, 3] in 17.9s
