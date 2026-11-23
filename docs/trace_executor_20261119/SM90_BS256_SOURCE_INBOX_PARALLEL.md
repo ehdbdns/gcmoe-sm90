@@ -4,7 +4,7 @@
 
 ## 执行命令
 
-沿用上轮八卡预约、HCA 和可见 GPU 设置，确认八卡空闲后开始。在执行机原仓库运行下列命令。脚本校验同组 GPU、历史参考和两窗口 KV 清单。保留现场默认在 /tmp/sm90-bs256-trace-pbpMbH4u；如果该现场已搬迁，先将 SM90_RETAINED 指向含同一份 kv/ 和 replay/ 的目录。记录 Trial workspace 和两臂的 Capture workspace。
+SM90 为共享机器。每次只申请本任务指定的八张卡。启动任何 GPU 预检、编译探测或实验前，先核对八卡 UUID 和预约状态，确认整组空闲并取得整组使用权，再复查占用并启动。任一卡已有作业、已被他人预约或状态无法确认时，在 CPU 侧等待并重查。等待期间让出整组卡，保留他人进程。任务结束、失败或中止时及时释放本任务的 GPU 进程和预约。沿用上轮 HCA 设置和八卡 UUID，重新确认本轮使用权。在执行机原仓库运行下列命令。脚本校验同组 GPU、历史参考和两窗口 KV 清单。保留现场默认在 /tmp/sm90-bs256-trace-pbpMbH4u；如果该现场已搬迁，先将 SM90_RETAINED 指向含同一份 kv/ 和 replay/ 的目录。记录 Trial workspace 和两臂的 Capture workspace。
 
 ```bash
 set -euo pipefail
