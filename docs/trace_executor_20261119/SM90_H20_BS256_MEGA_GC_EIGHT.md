@@ -53,3 +53,7 @@ source scripts/env.sh
 ```
 
 大型 KV、回放和逐 rank 原始包留在私有持久盘，记录绝对路径、文件大小和 SHA256。把 summary.csv、verification.json、输入与转换摘要、各臂状态和必要的首错日志推回 docs/trace_executor_20261119/sm90_h20_bs256_mega_gc_eight_results/ 新的 formal 子目录。把正式回执追加到 docs/trace_handover_20261119/REPLY_SM90_H20_BS256_MEGA_GC_EIGHT.md，注明任务 SHA、八行结果或失败原因，以及退卡状态。回执提交中只包含本轮证据，推送 main 后核对远端 SHA。结束时释放自有进程、工作树和预约；保留复核所需原始文件、历史参考、私有 wheel 和其他用户资源。
+
+## 6a44e35 回执后的重跑
+
+从上面的启动命令重新取任务书 revision，新建独立输出目录，执行同一套八臂。第 2 臂上次在图捕获时终止，没有可续用的本轮参考。执行者已修复的 workspace 分配保留。八臂的注意力都使用 env3 中 vLLM 自带的 DeepGEMM，只有 1、5 臂的 routed 专家加载指定的官方 wheel。不要把其 site 加到 PYTHONPATH，也不要改共享环境中的 sparse indexer。启动器先在独立 CPU 进程检查实际模块来源和两个扩展的共存情况。私有扩展若加载失败，保留 mega-import.log，继续六条 GC 臂。正式回执附 attention-import.log、mega-import.log 和各臂状态。取卡与退卡规则同上。

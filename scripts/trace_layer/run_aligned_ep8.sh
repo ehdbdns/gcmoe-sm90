@@ -56,7 +56,6 @@ if [[ $variant == --study-paired || $variant == --study-long-cost || $variant ==
   export VLLM_ENABLE_V1_MULTIPROCESSING=0
   export PYTHONPATH="$PWD/source:$analysis_dir/../../patches:$analysis_dir/../../integration"
 fi
-if [[ -n ${SM90_EIGHT_ARM:-} ]]; then export PYTHONPATH="$PYTHONPATH:${SM90_DG_SITE:?}"; fi
 if [[ -n ${GC_MOE_FIXED_DIR:-} ]]; then
   export GC_MOE_ECO_NOSPLIT=0 GC_MOE_ECO_TOKENS_ONLY=0 GC_MOE_ECO_BLOCKS_ONLY=0
   export GC_MOE_ECO_NULL_PLAN=0 GC_MOE_ECO_NO_AUCTION=0 GC_MOE_SM90_BLOCK_READY=0

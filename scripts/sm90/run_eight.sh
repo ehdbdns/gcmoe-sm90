@@ -17,6 +17,10 @@ py="$GC_ENV/bin/python"
 sha256sum -c docs/trace_executor_20261119/sm90_h20_bs256_mega_gc_eight_results/model_and_dataset.sha256 > "$out/input.sha256.log"
 echo "7c848494dbd01daa77ea80765888073cb63b85d7f74054fbcead404598ddf61e  $wheels/deep_gemm-2.8.2+7292e7b-cp310-cp310-linux_x86_64.whl" | sha256sum -c -
 CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=4 "$py" scripts/sm90/check_mega_weights.py "$MODEL" > "$out/conversion.jsonl"
+# A private-extension import failure only blocks the two routed Mega arms.
+CUDA_VISIBLE_DEVICES='' "$py" integration/sm90_deepgemm.py > "$out/attention-import.log" 2>&1
+mega_import=0
+CUDA_VISIBLE_DEVICES='' "$py" integration/sm90_deepgemm.py mega > "$out/mega-import.log" 2>&1 || mega_import=$?
 for nic in mlx5_{4,5,9,17,21,29}; do
   grep -qw ACTIVE "/sys/class/infiniband/$nic/ports/1/state"
 done
@@ -50,6 +54,10 @@ for id in 2 3 4 6 7 8 1 5; do
   if [[ $id != 2 && ! -f "$out/arm2/complete" ]]; then echo publisher_failed > "$dst/skipped"; continue; fi
   if [[ $id == 7 || $id == 8 ]]; then
     if [[ ! -s "$GC_MOE_FIXED_DIR/placement.json" ]]; then echo missing_rr_placement > "$dst/skipped"; continue; fi
+  fi
+  if [[ ($id == 1 || $id == 5) && $mega_import != 0 ]]; then
+    echo private_extension_import_failed > "$dst/skipped"
+    continue
   fi
   case $id in
     1|2|3) export GC_MOE_MATRIX_ARM=vanilla ;;

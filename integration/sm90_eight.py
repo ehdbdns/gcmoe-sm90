@@ -1,10 +1,11 @@
 """SM90 eight-arm model adapters. Enabled only by the eight-arm launcher."""
-import os
 from functools import wraps
 
 import torch
 import triton
 import triton.language as tl
+
+from sm90_deepgemm import mega_backend
 
 
 @triton.jit
@@ -51,7 +52,6 @@ def install_clocks(model, buf):
 
 
 def mega_weights(w13, s13, w2, s2):
-    import deep_gemm
     from gc_moe.sm90_gc import _scale_codes
     from sm90_mega_weights import convert_projection
 
@@ -66,15 +66,12 @@ def mega_weights(w13, s13, w2, s2):
             sf[i].copy_(si)
         return w, sf
 
-    return deep_gemm.transform_weights_for_mega_moe_sm90(grouped(w13, s13), grouped(w2, s2))
+    return mega_backend().transform_weights_for_mega_moe_sm90(grouped(w13, s13), grouped(w2, s2))
 
 
 def init_mega(buf, hidden, intermediate):
-    import deep_gemm
-    from pathlib import Path
-    if Path(os.environ["SM90_DG_SITE"]).resolve() not in Path(deep_gemm.__file__).resolve().parents:
-        raise RuntimeError(f"wrong official DeepGEMM import: {deep_gemm.__file__}")
-    buf.mega = deep_gemm.get_symm_buffer_for_sm90_mega_moe(
+    buf.mega_backend = mega_backend()
+    buf.mega = buf.mega_backend.get_symm_buffer_for_sm90_mega_moe(
         buf.group, buf.physical, buf.num_max_tokens_per_rank, buf.num_topk, hidden, intermediate)
     buf.mega.topk_idx.fill_(-1)
     buf.mega.topk_weights.zero_()
@@ -104,9 +101,8 @@ def _record_received(received, total, epoch, last, ring, history,
 
 
 def launch_mega(buf, pair, output, tokens, stats):
-    import deep_gemm
     target = buf.mega
-    deep_gemm.fp8_mega_moe(output[:tokens], *pair, target, cumulative_local_expert_recv_stats=buf.mega_received,
+    buf.mega_backend.fp8_mega_moe(output[:tokens], *pair, target, cumulative_local_expert_recv_stats=buf.mega_received,
                           recipe=(128, 128, 128), activation="swiglu", activation_clamp=10., fast_math=True)
     counts = buf.mega_received
     history = getattr(buf, "placement_history", None)
