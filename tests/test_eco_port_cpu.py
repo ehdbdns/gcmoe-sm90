@@ -104,7 +104,7 @@ def main():
                                        clamp=10., fast_math=True, physical=6, eco_logical_experts=eco)
                 schedule = get_sm90_role_config(config, context)
                 assert schedule.direct_route_scan == (eco == 0)
-                assert schedule.grids[0] == (24 if eco else 3)
+                assert schedule.grids[0] == ((20 if config.plan_dispatch else 24) if eco else 3)
     print('ECO_PORT_CPU PASS')
 
 

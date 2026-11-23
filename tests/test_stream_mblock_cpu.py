@@ -41,9 +41,9 @@ def main():
             first_row = geom.smem[0] - 384 - (geom.threads[0] // 32) * warp_bytes
             assert first_row >= (2 * conf.ranks + 2) * 4, (hidden, first_row)
             assert geom.grids[0] * (geom.smem[0] + 1024) <= context.dispatch_sms * 228 * 1024
-        assert (schedule.grids[0], schedule.smem[0]) == (24, 43008)
+        assert (schedule.grids[0], schedule.smem[0]) == (20 if conf.plan_dispatch else 24, 43008)
         specs = _role_specs(conf, stream, schedule, True)
-        assert [spec[0] for _, spec in specs] == [1, 4, 2, 5, 3]
+        assert [spec[0] for _, spec in specs] == ([5, 7, 1, 4, 2, 3] if conf.plan_dispatch else [1, 4, 2, 5, 3])
         routed = next(kernel for kernel, spec in specs if spec[0] == 2)
         assert (routed.l1_tiles, routed.l2_tiles) == (18, 20)
         assert routed.stream_blocks and not routed.block_ready

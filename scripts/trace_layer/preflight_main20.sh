@@ -25,7 +25,7 @@ export GC_MOE_SM90_PULL_TMA=1 GC_MOE_IR_STEP=0 GC_MOE_SM90_DISPATCH_SMS=6 SMOKE_
 arms=(vanilla random rr)
 case ${GC_MOE_MATRIX_SIZE:-20} in
   20) ;;
-  24) arms+=(eco_linear) ;;
+  24) if [[ ${GC_MOE_MAIN_FINE_ONLY:-0} != 1 ]]; then arms+=(eco_linear); fi ;;
   *) exit 2 ;;
 esac
 arms+=(eco eco_smr)
@@ -42,6 +42,10 @@ for arm in "${arms[@]}"; do
   roles='[1, 4, 2, 3]'
   if [[ $eco == 1 ]]; then roles='[1, 4, 2, 5, 3]'; fi
   if [[ $arm == eco_smr ]]; then roles='[1, 4, 2, 5, 6, 3]'; fi
+  if [[ $eco == 1 && ${GC_MOE_SM90_PLAN_DISPATCH:-1} == 1 ]]; then
+    roles='[5, 7, 1, 4, 2, 3]'
+    if [[ $reuse == 1 ]]; then roles='[5, 7, 1, 4, 2, 6, 3]'; fi
+  fi
   grep -Fq "compiled roles $roles" "$out/compile-$arm.log"
 done
 for reuse in 0 1; do

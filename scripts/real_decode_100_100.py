@@ -1159,6 +1159,8 @@ def main():
                     raise ValueError('the captured step did not generate one token per sequence')
                 dispatch_grid = 4 * int(os.environ.get('GC_MOE_SM90_DISPATCH_PARTITION_SMS',
                                                        os.environ.get('GC_MOE_SM90_DISPATCH_SMS', '4')))
+                if os.getenv("GC_MOE_ECO") == "1" and os.getenv("GC_MOE_SM90_PLAN_DISPATCH", "1") == "1":
+                    dispatch_grid -= 4
                 capture = resolve_epochs(directory, manifest, dispatch_grid)
             except (KeyError, OSError, ValueError) as exc:
                 (directory / 'capture.invalid.json').write_text(json.dumps(dict(manifest, error=str(exc))))

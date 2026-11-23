@@ -24,7 +24,10 @@ switches = {'single_push': 'GC_MOE_SM90_SINGLE_PUSH', 'source_index': 'GC_MOE_SM
 if trial:
     same('known trial', trial in ('baseline', *switches), True)
     for variant, key in switches.items():
-        same(key, after['controls'].get(key), '1' if trial == variant else None)
+        value = after['controls'].get(key)
+        if key == 'GC_MOE_SM90_PLAN_DISPATCH' and value == '0':
+            value = None
+        same(key, value, '1' if trial == variant else None)
 for key in set(before['controls']) | set(after['controls']):
     if trial and key in switches.values():
         continue

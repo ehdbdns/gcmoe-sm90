@@ -114,8 +114,13 @@ else
   fi
   GC_MOE_STEP_PROFILE=1 SMOKE_ECO_WB=26 "$GC_ENV/bin/python" scripts/smoke_compile_eco.py \
     2>&1 | tee "$out/compile-aligned.log"
-  grep -Fq 'compiled roles [1, 2, 5, 3]' "$out/compile-base.log"
-  grep -Fq 'compiled roles [1, 4, 2, 5, 3]' "$out/compile-aligned.log"
+  if [[ ${GC_MOE_SM90_PLAN_DISPATCH:-1} == 1 ]]; then
+    base_roles='[5, 7, 1, 2, 3]'; aligned_roles='[5, 7, 1, 4, 2, 3]'
+  else
+    base_roles='[1, 2, 5, 3]'; aligned_roles='[1, 4, 2, 5, 3]'
+  fi
+  grep -Fq "compiled roles $base_roles" "$out/compile-base.log"
+  grep -Fq "compiled roles $aligned_roles" "$out/compile-aligned.log"
   git rev-parse HEAD > "$out/execution.sha"
 
   if [ "$GC_MOE_SM90_STREAM_M_BLOCKS" = 1 ]; then
@@ -173,10 +178,12 @@ for rank in {0..7}; do
 done
 
 step="4: parse and verify"
+dispatch_grid=24
+if [[ $GC_MOE_ECO == 1 && ${GC_MOE_SM90_PLAN_DISPATCH:-1} == 1 ]]; then dispatch_grid=20; fi
 overlap_args=(--require-pull-overlap)
 if (( study )); then overlap_args=(); fi
 "$GC_ENV/bin/python" "$analysis_dir/aligned_step.py" "$out/raw" "$out/deliver" \
-  --layers "${layers[@]}" --dispatch-grid 24 "${overlap_args[@]}" \
+  --layers "${layers[@]}" --dispatch-grid "$dispatch_grid" "${overlap_args[@]}" \
   2>&1 | tee "$out/parse.log"
 test "$(find "$out/deliver" -maxdepth 1 -name '*.perfetto.json' | wc -l)" -eq "${#layers[@]}"
 test "$(find "$out/deliver" -maxdepth 1 -name '*.counts.json' | wc -l)" -eq "${#layers[@]}"

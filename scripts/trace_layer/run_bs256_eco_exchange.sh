@@ -33,6 +33,7 @@ fi
 for trial in "${trials[@]}"; do
   export SM90_ECO_TRIAL="$trial"
   unset GC_MOE_SM90_SINGLE_PUSH GC_MOE_SM90_SOURCE_INDEX_PULL GC_MOE_SM90_SPLIT_EXCHANGE GC_MOE_SM90_PLAN_DISPATCH
+  export GC_MOE_SM90_PLAN_DISPATCH=0
   grid=24
   case "$trial" in
     single_push) export GC_MOE_SM90_SINGLE_PUSH=1 ;;

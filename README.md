@@ -11,6 +11,8 @@ DeepSeek-V4.1-Flash，TP=EP=8，M64，六臂均开启 stream 和稳定的 prefil
 
 `eco_linear` 使用线性 cost（slack 90），`eco` 使用逐 valid 的 fine cost（slack 11469），`eco_smr` 在 fine cost 上开启 SM-reuse。下表每档采用同一次完整六臂实验。
 
+当前 SM90 ECO 默认将 plan 放在通信分区，`GC_MOE_SM90_PLAN_DISPATCH=0` 可复现原 compute 分区配置。下表是原配置的历史测量。[BS256 五臂重测任务书](docs/trace_executor_20261119/SM90_BS256_MAIN_FIVE_PLAN_COMM.md)
+
 | BS | 臂 | 完整 MoE（ms/步） | MoE 耗时变化（相对 vanilla） | token IR | 总 M 块 | 峰值 M 块 | 活跃物理槽 | M 块 IR | routed 误差 | graph 误差 | 拍卖成交数 |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 256 | vanilla | 40.415 | 0.00% | 1.407 | 371.66 | 56.58 | 292.12 | 1.219 | 0.0919 | 1.9275 | — |

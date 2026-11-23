@@ -270,8 +270,8 @@ def auction_metrics(auction):
     )
 
 
-def analyze_group(root, bs, sha, with_linear=False):
-    arms = ARMS24 if with_linear else ARMS
+def analyze_group(root, bs, sha, with_linear=False, fine_only=False):
+    arms = ARMS24 if with_linear and not fine_only else ARMS
     rows = []
     layers = []
     auctions = []
@@ -293,6 +293,11 @@ def analyze_group(root, bs, sha, with_linear=False):
         control, placement, native, warm, counts, v, auction, host = arm_data(
             group / arm, bs, arm, sha, with_linear
         )
+        if fine_only:
+            require(control["config"].get("GC_MOE_SM90_PLAN_DISPATCH") == "1", "wrong plan context control")
+            if arm.startswith("eco"):
+                marker = "SM90 ECO plan context=communication communication_sms=6 compute_sms=72"
+                require(marker in (group / arm / "runner.log").read_text(), "missing communication context evidence")
         require(all(a["demand"] == demand_hash for a in control["stats"]), "EPLB demand hash mismatch")
         if reference is None:
             reference = control
@@ -363,6 +368,8 @@ def analyze_group(root, bs, sha, with_linear=False):
                 strict_pair_comparable=(diff == 0 and warm == reference_warm),
             )
         )
+        if fine_only:
+            rows[-1]["moe_change_pct_vs_vanilla"] = 100 * (rows[-1]["moe_ms_per_step"] / rows[0]["moe_ms_per_step"] - 1)
         if with_linear:
             rows[-1].update(
                 primary_price=("linear" if score_index else "fine"),
@@ -446,9 +453,10 @@ def analyze_group(root, bs, sha, with_linear=False):
     return rows, layers, auctions, pairs
 
 
-def report(root, batches, with_linear=None):
+def report(root, batches, with_linear=None, fine_only=False):
     if with_linear is None:
         source = load(root / f"bs{batches[0]}" / "vanilla" / "run.json")
+        fine_only = fine_only or source["controls"].get("GC_MOE_MAIN_FINE_ONLY") == "1"
         with_linear = source["controls"].get("GC_MOE_MATRIX_SIZE", "20") == "24"
     sha = (root / "measurement.sha").read_text().strip()
     rows = []
@@ -456,7 +464,7 @@ def report(root, batches, with_linear=None):
     auctions = []
     pairs = []
     for bs in batches:
-        a, b, c, d = analyze_group(root, bs, sha, with_linear)
+        a, b, c, d = analyze_group(root, bs, sha, with_linear, fine_only)
         rows.extend(a)
         layers.extend(b)
         auctions.extend(c)
@@ -466,7 +474,10 @@ def report(root, batches, with_linear=None):
     write_rows(out / "layers.csv", layers)
     write_rows(out / "auction.csv", auctions)
     write_rows(out / "pairs.csv", pairs)
-    if with_linear:
+    if fine_only:
+        require(len(rows) == 5 and len(pairs) == 10 and all(p["strict_pair_comparable"] for p in pairs),
+                "five-arm workload parity failed")
+    if with_linear and not fine_only:
         write_rows(
             out / "cost_pairs.csv", [p for p in pairs if (p["arm_a"], p["arm_b"]) == ("eco_linear", "eco")]
         )
@@ -482,5 +493,6 @@ if __name__ == "__main__":
         default=None,
         help="require all 24 arms and audit the active prices",
     )
+    p.add_argument("--fine-only", action="store_true", help="five BS256 arms with full main24 audits")
     args = p.parse_args()
-    report(args.root, [args.bs] if args.bs else BATCHES, args.with_linear)
+    report(args.root, [args.bs] if args.bs else BATCHES, args.with_linear, args.fine_only)

@@ -18,7 +18,14 @@ arms=(vanilla random rr)
 report_args=()
 case ${GC_MOE_MATRIX_SIZE:-20} in
   20) ;;
-  24) arms+=(eco_linear); report_args+=(--with-linear) ;;
+  24)
+    if [[ ${GC_MOE_MAIN_FINE_ONLY:-0} == 1 ]]; then
+      [[ ${GC_MAIN24_SINGLE_BS:-} == 256 && ${GC_STEP_BOUNDARY:-0} == 0 && ${GC_COST_HOST_PROBE:-0} == 0 ]] || exit 2
+      export GC_MOE_SM90_PLAN_DISPATCH=1
+      report_args+=(--fine-only)
+    else
+      arms+=(eco_linear); report_args+=(--with-linear)
+    fi ;;
   *) exit 2 ;;
 esac
 arms+=(eco eco_smr)
