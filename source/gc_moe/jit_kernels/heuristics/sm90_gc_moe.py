@@ -103,7 +103,12 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
         # All dispatch CTAs must reach the grid barrier. Large hidden widths
         # fit only three staging windows per SM90 SM (228 KiB; 1 KiB reserved per CTA).
         resident = min(4, (228 * 1024) // (dispatch_smem + 1024))
-        dispatch_grid = dispatch_sms * resident
+        if getattr(config, 'eco_logical_experts', 0) and getattr(config, 'plan_dispatch', False):
+            # Even if CUDA spreads dispatch across distinct SMs, one full SM
+            # remains available for plan. A dispatch grid barrier waits on all CTAs.
+            dispatch_grid = dispatch_sms - 1
+        else:
+            dispatch_grid = dispatch_sms * resident
 
     return SM90RoleConfig((dispatch_grid,
                            routed_grid, combine_grid),

@@ -89,7 +89,7 @@ if len(sys.argv) == 5:
                 same('replica exchange spans', len(rank['replica_exchange']), int(trial == 'split'))
         for row in c['ranks']:
             if trial:
-                expected = (20, 72, 72, 1) if trial == 'dispatch' else (24, 71, 71, 1)
+                expected = (5, 72, 72, 1) if trial == 'dispatch' else (24, 71, 71, 1)
                 same('launch grids', tuple(row['raw_kernels'][k]['grid']
                      for k in ('dispatch', 'shared', 'routed', 'plan')), expected)
             with np.load(old/f'rank{row["rank"]}.npz') as a:

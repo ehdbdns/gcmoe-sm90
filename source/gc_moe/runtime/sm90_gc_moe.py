@@ -240,7 +240,7 @@ class _ChildGraph:
                 # (contexts[0]) so it inherits those 6 SMs once pull is done.
                 _ctx_idx = 0 if (index == 0 or binary.role == 6) else 1
                 if binary.role == 5 and owner.plan_dispatch:
-                    _ctx_idx = 2
+                    _ctx_idx = 0
                 params.kernel.ctx = owner.contexts[_ctx_idx]
                 params.kernel.gridDimX = binary.grid
                 params.kernel.gridDimY = params.kernel.gridDimZ = 1
@@ -330,7 +330,6 @@ class GreenContextPair:
         os.environ.setdefault('GC_MOE_SM90_DISPATCH_PARTITION_SMS',
                               str(self.dispatch_sms))
         self.plan_dispatch = plan_dispatch
-        self.dispatch_parent = None
         parts = (communication, compute)
         if self.compute_sms < 32 or self.compute_sms % 2 or \
                 self.dispatch_sms <= 1 or self.compute_sms + self.dispatch_sms != total:
@@ -347,17 +346,8 @@ class GreenContextPair:
         _LIVE_PAIRS[id(self)] = self
         try:
             if plan_dispatch:
-                # CUDA only permits a second split after the first resource
-                # has been materialized as a green context and queried again.
-                self.dispatch_parent = green_resources.make_green(self.device, communication, None)
-                parent = _ok(cu.cuGreenCtxGetDevResource(self.dispatch_parent, green_resources._SM))
-                flag = cu.CUdevSmResourceSplitByCount_flags.CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING
-                plan, groups, dispatch = _ok(cu.cuDevSmResourceSplitByCount(1, parent, flag, 1))
-                if groups != 1 or plan[0].sm.smCount != 1 or dispatch.sm.smCount + 1 != self.dispatch_sms:
-                    raise RuntimeError('CUDA cannot isolate one SM from the dispatch partition')
-                self.dispatch_sms = dispatch.sm.smCount
-                parts = (dispatch, compute, plan[0])
-                print(f'SM90 ECO partitions: dispatch={self.dispatch_sms} plan=1 compute={self.compute_sms}', flush=True)
+                print(f'SM90 ECO plan context=communication communication_sms={self.dispatch_sms} '
+                      f'compute_sms={self.compute_sms}', flush=True)
             for part in parts:
                 green = green_resources.make_green(self.device, part, workqueue)
                 self.green.append(green)
@@ -491,9 +481,6 @@ class GreenContextPair:
                 _ok(cu.cuStreamDestroy(stream))
             for green in reversed(self.green):
                 _ok(cu.cuGreenCtxDestroy(green))
-            if self.dispatch_parent is not None:
-                _ok(cu.cuGreenCtxDestroy(self.dispatch_parent))
-                self.dispatch_parent = None
             self.retirement.clear()
             self.streams.clear()
             self.contexts.clear()
