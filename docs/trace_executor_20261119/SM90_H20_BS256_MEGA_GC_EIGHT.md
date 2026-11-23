@@ -93,3 +93,13 @@ echo "$area/site"
 ```
 
 CPU 回执追加 wheel 路径及 SHA、编译日志、子模块版本或首错。正式运行使用单进程私有包路径。重启后的 HCA 按实际 ACTIVE 端口及 GPU/NIC 拓扑核对，启动器须显式传入 NCCL_IB_HCA 与 NVSHMEM_HCA_LIST。194709d 已找到模型和请求文件。正式启动器使用sm90_h20_bs256_mega_gc_eight_results/model_and_dataset.sha256 所列的新挂载路径与摘要。
+
+## 54fc503 后的构建状态和权重检查
+
+官方 wheel 已成功构建并通过无 GPU import；直接复用 deepgemm_wheel_and_import.txt 记录的私有 site。不重复构建。下列命令在包含本节的新 checkout 中运行，只读取真实 checkpoint 的第 0 层、第 0 个 routed 专家，用与 Mega 后端相同的 FP8 block 格式转换三个投影。将每个投影的输入/输出 SHA256 和最大绝对误差附在 CPU 回执。这项检查可与其余集成工作并行，不预约八卡。
+
+```bash
+set -euo pipefail
+py=/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/bin/python
+CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=4 "$py" scripts/sm90/check_mega_weights.py /mnt/dsv41/models/DeepSeek-V4.1-Flash
+```
