@@ -12,6 +12,9 @@ LAYERS, STEPS, ROWS, K, SLOTS, CLOCKS = 40, 1000, 64, 6, 48, 19
 FIRST_DIFF = os.getenv("SM100_FIRST_DIFF") == "1"
 if FIRST_DIFF:
     STEPS = 1
+FAIR = os.getenv("SM100_FAIR_BOUNDARY") == "1"
+if FAIR:
+    STEPS = 3
 OBSERVE = os.getenv("SM100_NATIVE_GREEDY") == "1"
 STATE = None
 
@@ -102,6 +105,9 @@ class CaptureState:
 
 
 def install_before_capture():
+    if FAIR:
+        import fair_boundary
+        fair_boundary.install()
     from vllm.models.deepseek_v4.nvidia.model import DeepseekV4MegaMoEExperts
     from vllm.utils.deep_gemm import _import_deep_gemm
     original = DeepseekV4MegaMoEExperts.finalize_weights
@@ -154,6 +160,10 @@ def setup(worker, root, arm, bs):
                if name.endswith(".ffn") and hasattr(v, "experts")]
     buf = experts[0].get_symm_buffer()
     m.bm = dg.get_block_m_for_mega_moe(8,384,buf.num_max_tokens_per_rank,ROWS,K,"fp8xfp4")
+    if FAIR:
+        from vllm.models.deepseek_v4.nvidia.model import DeepseekV4DecoderLayer
+        m.fair_layers = [v for v in worker.get_model().modules() if isinstance(v, DeepseekV4DecoderLayer)]
+        assert [v.ffn.experts.layer_id for v in m.fair_layers] == list(range(LAYERS))
     worker._matrix = m
     return True
 
@@ -180,6 +190,9 @@ def begin(m, phase):
                 if target.shape != source.shape or target.dtype != source.dtype:
                     raise ValueError("route reference shape/dtype mismatch")
                 target.copy_(source)
+    if FAIR:
+        import fair_boundary
+        fair_boundary.boundary(m)
     m.recv = STATE.recv
     STATE.cursor.zero_()
     STATE.tags.fill_(-1)
@@ -209,7 +222,11 @@ def finish(m):
         for key, tensor in (("ids", STATE.ids), ("weights", STATE.weights)):
             np.save(m.folder / f"{phase}-{key}-rank{m.rank}.npy", tensor.cpu().numpy())
         m.phase = None
-        return dict(block_m=int(m.bm), backend_file=m.backend_file, sm_split=getattr(m, "sm_split", None),
+        extra = {}
+        if FAIR:
+            import fair_boundary
+            extra["kv"] = fair_boundary.replay(m)
+        return dict(**extra, block_m=int(m.bm), backend_file=m.backend_file, sm_split=getattr(m, "sm_split", None),
                     full_graph_observed_calls=m.calls)
     result = m.five_finish()
     result.pop("validated_layer_graphs", None)

@@ -12,7 +12,8 @@ import torch
 
 ARMS = ("mega", "gc", "mega_rr", "gc_rr", "gc_eco")
 FIRST_DIFF = os.getenv("SM100_FIRST_DIFF") == "1"
-STEPS = 1 if FIRST_DIFF else 1000
+FAIR = os.getenv("SM100_FAIR_BOUNDARY") == "1"
+STEPS = 3 if FAIR else (1 if FIRST_DIFF else 1000)
 
 
 def make_plan(root, bs, device="cpu"):
@@ -162,7 +163,7 @@ def main():
         bs=bs,
         prompt_sha256=hashlib.sha256(json.dumps(prompts).encode()).hexdigest(),
     )
-    for phase in (("stats",) if FIRST_DIFF else ("stats", "measure")):
+    for phase in (("stats",) if FIRST_DIFF or FAIR else ("stats", "measure")):
         if phase == "measure" and eplb:
             moved = rpc("install_v41_placement", str(root / "plan.npz"))
             assert all(x == moved[0] for x in moved)
@@ -213,6 +214,8 @@ def main():
                 rpc("phase_clock_sample", "after")
             elif tracing and i == (1 if quiet else 2):
                 rpc("phase_profile_stop")
+            if FAIR:
+                rpc("matrix_fair_sample", i)
             times.append(time.perf_counter() - t)
         if quiet:
             result["dense_final"] = rpc("dense_replay_mode", "off")

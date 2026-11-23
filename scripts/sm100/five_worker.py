@@ -12,7 +12,7 @@ import torch
 
 DIRECT = os.getenv("SM100_DIRECT_512") == "1"
 
-if os.getenv("SM100_FORMAL_512") and not DIRECT and os.getenv("SM100_NATIVE_GREEDY") != "1":
+if os.getenv("SM100_FORMAL_512") and not DIRECT and (os.getenv("SM100_NATIVE_GREEDY") != "1" or os.getenv("SM100_FAIR_BOUNDARY") == "1"):
     from stream_checkpoint import install_cache_names
     install_cache_names()
 
@@ -496,6 +496,10 @@ class MatrixWorker(MoeAuditWorker):
 
     def matrix_eco(self, filename):
         return self._matrix.five_eco(filename)
+
+    def matrix_fair_sample(self, step):
+        from fair_boundary import capture
+        return capture(self._matrix, step)
 
     def matrix_sync(self):
         return self._matrix.five_sync()

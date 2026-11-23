@@ -23,24 +23,25 @@ export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_DISABLE_
 export GC_SM100_MATRIX_CLOCKS=1 PYTHONHASHSEED=0
 unset GC_MOE_ECO_UNIT_CFG GC_MOE_ECO_OBJECTIVE GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY
 export PYTHONPATH="$repo/source:$repo/integration:$repo/scripts/sm100"
-unset SM100_FIRST_DIFF SM100_NATIVE_GREEDY SM100_FULL_DECODE SM100_DIRECT_512 SM100_PHASE_TRACE SM100_QUIET_TRACE
+unset SM100_FAIR_BOUNDARY SM100_FIRST_DIFF SM100_NATIVE_GREEDY SM100_FULL_DECODE SM100_DIRECT_512 SM100_PHASE_TRACE SM100_QUIET_TRACE
 if [[ ${2:-} == quiet-native-bs512 ]]; then export SM100_QUIET_TRACE=1 SM100_PHASE_TRACE=1; fi
 if [[ ${2:-} == trace-native-bs512 ]]; then export SM100_PHASE_TRACE=1; fi
 if [[ ${2:-} == direct-bs512 || -n ${SM100_PHASE_TRACE:-} ]]; then
   export SM100_DIRECT_512=1
 fi
 if [[ ${2:-} == first-diff-bs512 ]]; then export SM100_FIRST_DIFF=1; fi
-if [[ ${2:-} == upstream-greedy-bs512 || ${SM100_FIRST_DIFF:-} == 1 ]]; then
+if [[ ${2:-} == fair-boundary-bs512 ]]; then export SM100_FAIR_BOUNDARY=1; fi
+if [[ ${2:-} == upstream-greedy-bs512 || ${SM100_FAIR_BOUNDARY:-} == 1 || ${SM100_FIRST_DIFF:-} == 1 ]]; then
   export SM100_NATIVE_GREEDY=1 SM100_FULL_DECODE=1 SM100_PHASE_TRACE=1
 fi
-if [[ ${SM100_DIRECT_512:-} == 1 || ${SM100_NATIVE_GREEDY:-} == 1 || ${2:-} == full-native-bs512 ]]; then
+if [[ ${SM100_DIRECT_512:-} == 1 || ${SM100_NATIVE_GREEDY:-} == 1 || ${2:-} == full-native-bs512 || ${2:-} == strict-native-bs512 ]]; then
   fixture=docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/vanilla/rank0.npz
   echo "ceaa52dc3f3b09fa95e08c59b83b56b97d90b8335b3437a506cb5dbd42fe09f2  $fixture" | sha256sum -c -
 fi
-if [[ ${2:-} == full-native-bs512 ]]; then export SM100_FULL_DECODE=1 SM100_PHASE_TRACE=1; fi
+if [[ ${2:-} == full-native-bs512 || ${2:-} == strict-native-bs512 ]]; then export SM100_FULL_DECODE=1 SM100_PHASE_TRACE=1; fi
 if [[ ${SM100_FULL_DECODE:-} == 1 || ${2:-} == formal-bs512 || ${SM100_DIRECT_512:-} == 1 ]]; then
   export SM100_FORMAL_512=1 SM100_MATRIX_BS=512 GC_MOE_DISPATCH_SMS=8
-  if [[ ${SM100_NATIVE_GREEDY:-} == 1 ]]; then
+  if [[ ${SM100_NATIVE_GREEDY:-} == 1 || ${2:-} == strict-native-bs512 ]]; then
     unset GC_MOE_DISPATCH_SMS
   fi
   export PATH="$root/dsl-env/bin:$PATH"
@@ -50,7 +51,7 @@ if [[ ${SM100_FULL_DECODE:-} == 1 || ${2:-} == formal-bs512 || ${SM100_DIRECT_51
   git -C "$root/upstream" diff --exit-code HEAD
   git -C "$root/upstream" apply "$repo/scripts/sm100/natureal_matrix_audit.patch"
   if [[ -n ${SM100_PHASE_TRACE:-} ]]; then python scripts/sm100/native_phase_instrument.py "$root/upstream"; fi
-  if [[ ${SM100_NATIVE_GREEDY:-} == 1 ]]; then
+  if [[ ${SM100_NATIVE_GREEDY:-} == 1 || ${2:-} == strict-native-bs512 ]]; then
     git -C "$root/upstream" apply "$repo/docs/sm100_megamoe/v41_full_decode_pair_results/compat/gc_capture_fix.diff"
   fi
   cp -R "$repo/source/gc_moe/eplb" "$root/upstream/gc_moe/"
@@ -164,6 +165,9 @@ for bs in "${batches[@]}"; do
     echo "$code" > "$dest/exit-code"
     if [[ "$code" != 0 ]]; then rc=1; tail -30 "$dest/model.log"; fi
   done
+  if [[ ${SM100_FAIR_BOUNDARY:-} == 1 ]]; then
+    exit "$rc"
+  fi
   if [[ ${SM100_FIRST_DIFF:-} == 1 ]]; then
     if [[ $rc == 0 ]]; then python scripts/sm100/first_diff.py "$group" || rc=1; fi
     exit "$rc"
