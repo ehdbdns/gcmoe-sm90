@@ -159,4 +159,4 @@ step 2 的 L0、8、20、32、39 overview、详细 Perfetto 和 counts 均在两
 
 正式运行结束后 `nvidia-smi --query-compute-apps=gpu_uuid,pid` 为空，`fuser` 无设备持有者，组锁可立即获取。证据见 `gpu_release_after_run.txt`、`lock-release.txt` 和 `logs/{acquired,released}.log`。
 
-大型路由 NPY 和原始 Kineto profile 留在执行机 `/data0/home/admin/workspace/megamoe/v41-native-greedy-VPCWiSrW/run/bs512`。`raw_evidence_manifest.json` 共 107 条、3,980,659,606 bytes（约 3.71 GiB），SHA256 `ca691fcddee984e0a6feaa3e5b1a5ff4a8ba3413ea92cdff000f94fec0150dd9`；路径清单在 `raw_evidence_paths.txt`。
+大型路由 NPY 和原始 Kineto profile 留在执行机 `/data0/home/admin/workspace/megamoe/v41-native-greedy-VPCWiSrW/run/bs512`，最终上游 diff 也复制到 `run/archive/upstream-final.diff`。`raw_evidence_manifest.json` 共 107 条、3,980,659,606 bytes（约 3.71 GiB），SHA256 `c33496a7693e5fe5b414d38a021a5473a871c3f122b2410c8233412d9a5cc92c`；路径清单在 `raw_evidence_paths.txt`。

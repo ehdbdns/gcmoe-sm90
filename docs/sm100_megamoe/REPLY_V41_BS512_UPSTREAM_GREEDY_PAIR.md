@@ -53,6 +53,6 @@ GitHub L20：
 
 ## 证据与释放
 
-最终上游 diff 在 `compat/upstream-final.diff`；本轮沿用已验证的 DSL 兼容和 GC 外层 capture 修复，无新增语义修改。大路由 NPY 与原始 Kineto profile 留在执行机 `/data0/home/admin/workspace/megamoe/v41-native-greedy-VPCWiSrW/run/bs512`。`raw_evidence_manifest.json` 共 107 条、3,980,659,606 bytes（约 3.71 GiB），SHA256 `ca691fcddee984e0a6feaa3e5b1a5ff4a8ba3413ea92cdff000f94fec0150dd9`。
+最终上游 diff 在 `compat/upstream-final.diff`，并复制到执行机 `run/archive/upstream-final.diff`；本轮沿用已验证的 DSL 兼容和 GC 外层 capture 修复，无新增语义修改。大路由 NPY 与原始 Kineto profile 留在执行机 `/data0/home/admin/workspace/megamoe/v41-native-greedy-VPCWiSrW/run/bs512`。`raw_evidence_manifest.json` 共 107 条、3,980,659,606 bytes（约 3.71 GiB），SHA256 `c33496a7693e5fe5b414d38a021a5473a871c3f122b2410c8233412d9a5cc92c`。
 
 环境按实测保留：`nvidia-smi` 显示 NVIDIA L20D / compute_cap 8.9 / 275040 MiB，Torch 报告 capability `(10,3)` / 约 267.69 GiB；torch `2.13.0+cu130`、vLLM `0.31.0`、cutlass-dsl `4.8.1`、Triton `3.7.1`、驱动 `580.105.08`。运行后无 compute app、无设备持有者，组锁可获取，见 `gpu_release_after_run.txt` 与 `lock-release.txt`。
