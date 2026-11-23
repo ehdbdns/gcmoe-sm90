@@ -1,0 +1,11 @@
+acquired: 2026-11-23T20:12:07+08:00
+released: 2026-11-23T20:37:46+08:00
+
+nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader
+(no output)
+
+fuser /dev/nvidia0 /dev/nvidia1 /dev/nvidia2 /dev/nvidia3 /dev/nvidia4 /dev/nvidia5 /dev/nvidia6 /dev/nvidia7
+(no output)
+
+flock -n /tmp/gcmoe-sm100-gpu-group.lock -c 'echo group-lock-acquirable'
+group-lock-acquirable

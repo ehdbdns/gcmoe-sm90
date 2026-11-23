@@ -1,0 +1,32 @@
+diff --git a/scripts/sm100/fair_boundary.py b/scripts/sm100/fair_boundary.py
+index 9835e79..d6425f3 100644
+--- a/scripts/sm100/fair_boundary.py
++++ b/scripts/sm100/fair_boundary.py
+@@ -10,7 +10,8 @@ from stream_checkpoint import checkpoint, named_caches, runner_boundary, tensor_
+ 
+ 
+ def install():
+-    from vllm.models.deepseek_v4.nvidia.model import DeepseekV4DecoderLayer, DeepseekV4MegaMoEExperts
++    from vllm.models.deepseek_v4.nvidia.model import DeepseekV4MegaMoEExperts
++    from vllm.models.deepseek_v41.nvidia.model import DeepseekV4DecoderLayer
+ 
+     init = DeepseekV4DecoderLayer.__init__
+ 
+diff --git a/scripts/sm100/full_decode_worker.py b/scripts/sm100/full_decode_worker.py
+index 8c6a373..bf731ae 100644
+--- a/scripts/sm100/full_decode_worker.py
++++ b/scripts/sm100/full_decode_worker.py
+@@ -161,8 +161,11 @@ def setup(worker, root, arm, bs):
+     buf = experts[0].get_symm_buffer()
+     m.bm = dg.get_block_m_for_mega_moe(8,384,buf.num_max_tokens_per_rank,ROWS,K,"fp8xfp4")
+     if FAIR:
+-        from vllm.models.deepseek_v4.nvidia.model import DeepseekV4DecoderLayer
+-        m.fair_layers = [v for v in worker.get_model().modules() if isinstance(v, DeepseekV4DecoderLayer)]
++        from vllm.models.deepseek_v41.nvidia.model import DeepseekV4DecoderLayer
++        m.fair_layers = sorted(
++            (v for v in worker.get_model().modules() if isinstance(v, DeepseekV4DecoderLayer)),
++            key=lambda v: v.ffn.experts.layer_id,
++        )
+         assert [v.ffn.experts.layer_id for v in m.fair_layers] == list(range(LAYERS))
+     worker._matrix = m
+     return True

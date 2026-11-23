@@ -1,0 +1,286 @@
+{
+  "task_commit": "f91491499e122ac51b3c27eb799667f4a92e6e27",
+  "task_sha256": "a0d59361aa4d85e8e462eb01f6ba53fbf6b8241f3335a33b639dd0962dc4c8d2",
+  "execution_revision": "f91491499e122ac51b3c27eb799667f4a92e6e27",
+  "local_code_fix": "6196c0253258af115f2e68e3875d720537727897",
+  "short_strict_pass": false,
+  "report_exit_code": 3,
+  "checks": {
+    "passed": 33,
+    "total": 37,
+    "failed": [
+      "tokens",
+      "rank1_counts",
+      "rank4_counts",
+      "rank5_counts"
+    ]
+  },
+  "prefill_equal": true,
+  "anchor": {
+    "step": 0,
+    "layer": 3,
+    "rank": 7,
+    "weights_equal": true,
+    "mega": [
+      0.2723998427391052,
+      0.33976319432258606,
+      0.27418071031570435,
+      0.20908476412296295,
+      0.21272066235542297,
+      0.19185076653957367
+    ],
+    "gc": [
+      0.2723998427391052,
+      0.33976319432258606,
+      0.27418071031570435,
+      0.20908476412296295,
+      0.21272066235542297,
+      0.19185076653957367
+    ]
+  },
+  "tokens": {
+    "equal": false,
+    "different": 1,
+    "total": 1536,
+    "first": [
+      281,
+      2
+    ],
+    "first_values": {
+      "mega": 22,
+      "gc": 23
+    },
+    "by_step": [
+      0,
+      0,
+      1
+    ]
+  },
+  "native_differences": {
+    "count": 82,
+    "by_step": {
+      "0": 5,
+      "1": 42,
+      "2": 35
+    },
+    "fields": {
+      "y": 34,
+      "hidden_states": 23,
+      "topk_weights": 23,
+      "attn_in": 72,
+      "attn_out": 64,
+      "topk_ids": 3
+    },
+    "first": {
+      "step": 0,
+      "layer": 7,
+      "rank": 6,
+      "fields": [
+        "y"
+      ],
+      "details": {
+        "y": {
+          "first": [
+            24,
+            4991
+          ],
+          "mega": -6.705522537231445e-07,
+          "gc": -6.742775440216064e-07
+        }
+      }
+    },
+    "step0": [
+      {
+        "step": 0,
+        "layer": 7,
+        "rank": 6,
+        "fields": [
+          "y"
+        ],
+        "details": {
+          "y": {
+            "first": [
+              24,
+              4991
+            ],
+            "mega": -6.705522537231445e-07,
+            "gc": -6.742775440216064e-07
+          }
+        }
+      },
+      {
+        "step": 0,
+        "layer": 16,
+        "rank": 3,
+        "fields": [
+          "y"
+        ],
+        "details": {
+          "y": {
+            "first": [
+              19,
+              404
+            ],
+            "mega": -0.061767578125,
+            "gc": -0.0615234375
+          }
+        }
+      },
+      {
+        "step": 0,
+        "layer": 33,
+        "rank": 0,
+        "fields": [
+          "y"
+        ],
+        "details": {
+          "y": {
+            "first": [
+              25,
+              1812
+            ],
+            "mega": 225.0,
+            "gc": 224.0
+          }
+        }
+      },
+      {
+        "step": 0,
+        "layer": 37,
+        "rank": 4,
+        "fields": [
+          "y"
+        ],
+        "details": {
+          "y": {
+            "first": [
+              25,
+              405
+            ],
+            "mega": -88.0,
+            "gc": -87.5
+          }
+        }
+      },
+      {
+        "step": 0,
+        "layer": 39,
+        "rank": 5,
+        "fields": [
+          "y"
+        ],
+        "details": {
+          "y": {
+            "first": [
+              40,
+              521
+            ],
+            "mega": -0.007080078125,
+            "gc": -0.007049560546875
+          }
+        }
+      }
+    ]
+  },
+  "common_input_replay": {
+    "count": 15,
+    "first": {
+      "step": 0,
+      "layer": 7,
+      "rank": 6,
+      "input_differences": [],
+      "verified_partials": false,
+      "differing_slots": null,
+      "mega": {
+        "step": 0,
+        "layer": 7,
+        "different": 0,
+        "finite": true,
+        "inputs": {
+          "hidden_states": "1cdc2cf87bee26d94aac23790c18b3dc646ab50e5149a1e38786637344c3c4d1",
+          "topk_weights": "686e61a7536312ce7e41f4088124bc49585c88257cd19909d8d88fc7b63ce0b8",
+          "topk_ids": "3e1672c4b92469f66f266d05cbe210cfd585311123043e6a13a0879a0cf2ef11",
+          "x": "bd2eede27a68a38f96dfc3b3ffc065fe4d4b02245df44f35b008ef810231f438",
+          "sf": "374f42ee4b2b6bb210b717572297d8bc4c0b2cd84844365e8d3c0f35438b7f77",
+          "shared_sf": "374f42ee4b2b6bb210b717572297d8bc4c0b2cd84844365e8d3c0f35438b7f77",
+          "ids": "3e1672c4b92469f66f266d05cbe210cfd585311123043e6a13a0879a0cf2ef11",
+          "weights": "686e61a7536312ce7e41f4088124bc49585c88257cd19909d8d88fc7b63ce0b8"
+        },
+        "partials_verified": false,
+        "partial_hashes": [
+          "722ba9c34b01bf5c7b6a2d43640c51eae4e110369358b53b146f8b029912668f",
+          "8d4a2566eb4209fea7e1f53511422d1a53895ec2e7657215bd57653f681bd0fb",
+          "42d0a72443c025022e8ca77f9a9707edbe91f1b86306227c05c0beb214ba7628",
+          "6953999aab44043c78ef5a9e1e8119adced1cc20c196afebfe48ae9c440a9603",
+          "2f7bb6087e81f35fe58c65131c4ecdda5b402dc2d9c0c8a7658310df9931dba4",
+          "5b0b6475d5aa36377b1e06d672ad2b00f5681b55643202dc6098414a7a67a744",
+          "cf9d396686d6603f09a5937bc2016f548b8ea783cb3b983bfba27d378ffed61c"
+        ]
+      },
+      "gc": {
+        "step": 0,
+        "layer": 7,
+        "different": 1,
+        "finite": true,
+        "inputs": {
+          "hidden_states": "1cdc2cf87bee26d94aac23790c18b3dc646ab50e5149a1e38786637344c3c4d1",
+          "topk_weights": "686e61a7536312ce7e41f4088124bc49585c88257cd19909d8d88fc7b63ce0b8",
+          "topk_ids": "3e1672c4b92469f66f266d05cbe210cfd585311123043e6a13a0879a0cf2ef11",
+          "x": "bd2eede27a68a38f96dfc3b3ffc065fe4d4b02245df44f35b008ef810231f438",
+          "sf": "374f42ee4b2b6bb210b717572297d8bc4c0b2cd84844365e8d3c0f35438b7f77",
+          "shared_sf": "374f42ee4b2b6bb210b717572297d8bc4c0b2cd84844365e8d3c0f35438b7f77",
+          "ids": "3e1672c4b92469f66f266d05cbe210cfd585311123043e6a13a0879a0cf2ef11",
+          "weights": "686e61a7536312ce7e41f4088124bc49585c88257cd19909d8d88fc7b63ce0b8"
+        },
+        "first": [
+          24,
+          4991
+        ],
+        "reference": -6.705522537231445e-07,
+        "actual": -6.742775440216064e-07,
+        "max_abs": 3.725290298461914e-09,
+        "partials_verified": true,
+        "partial_hashes": [
+          "722ba9c34b01bf5c7b6a2d43640c51eae4e110369358b53b146f8b029912668f",
+          "8d4a2566eb4209fea7e1f53511422d1a53895ec2e7657215bd57653f681bd0fb",
+          "42d0a72443c025022e8ca77f9a9707edbe91f1b86306227c05c0beb214ba7628",
+          "6953999aab44043c78ef5a9e1e8119adced1cc20c196afebfe48ae9c440a9603",
+          "2f7bb6087e81f35fe58c65131c4ecdda5b402dc2d9c0c8a7658310df9931dba4",
+          "5b0b6475d5aa36377b1e06d672ad2b00f5681b55643202dc6098414a7a67a744",
+          "cf9d396686d6603f09a5937bc2016f548b8ea783cb3b983bfba27d378ffed61c"
+        ],
+        "slot_values_at_first": [
+          -0.039306640625,
+          -0.01904296875,
+          -0.010498046875,
+          -0.0196533203125,
+          -0.0306396484375,
+          -6.742775440216064e-07,
+          0.119140625
+        ]
+      }
+    },
+    "all_inputs_equal": true,
+    "all_partial_hashes_equal": true,
+    "mega_self_replay_exact": true,
+    "mega_partials_verified_all": false,
+    "gc_partials_verified_all": true
+  },
+  "count_mismatches": [
+    {
+      "rank": 1,
+      "different": 1
+    },
+    {
+      "rank": 4,
+      "different": 1
+    },
+    {
+      "rank": 5,
+      "different": 2
+    }
+  ],
+  "global_count_load_3072": true,
+  "formal_started": false,
+  "gpu_released": "2026-11-23T20:37:46+08:00"
+}
