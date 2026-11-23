@@ -23,13 +23,14 @@ export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_DISABLE_
 export GC_SM100_MATRIX_CLOCKS=1 PYTHONHASHSEED=0
 unset GC_MOE_ECO_UNIT_CFG GC_MOE_ECO_OBJECTIVE GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY
 export PYTHONPATH="$repo/source:$repo/integration:$repo/scripts/sm100"
-unset SM100_NATIVE_GREEDY SM100_FULL_DECODE SM100_DIRECT_512 SM100_PHASE_TRACE SM100_QUIET_TRACE
+unset SM100_FIRST_DIFF SM100_NATIVE_GREEDY SM100_FULL_DECODE SM100_DIRECT_512 SM100_PHASE_TRACE SM100_QUIET_TRACE
 if [[ ${2:-} == quiet-native-bs512 ]]; then export SM100_QUIET_TRACE=1 SM100_PHASE_TRACE=1; fi
 if [[ ${2:-} == trace-native-bs512 ]]; then export SM100_PHASE_TRACE=1; fi
 if [[ ${2:-} == direct-bs512 || -n ${SM100_PHASE_TRACE:-} ]]; then
   export SM100_DIRECT_512=1
 fi
-if [[ ${2:-} == upstream-greedy-bs512 ]]; then
+if [[ ${2:-} == first-diff-bs512 ]]; then export SM100_FIRST_DIFF=1; fi
+if [[ ${2:-} == upstream-greedy-bs512 || ${SM100_FIRST_DIFF:-} == 1 ]]; then
   export SM100_NATIVE_GREEDY=1 SM100_FULL_DECODE=1 SM100_PHASE_TRACE=1
 fi
 if [[ ${SM100_DIRECT_512:-} == 1 || ${SM100_NATIVE_GREEDY:-} == 1 || ${2:-} == full-native-bs512 ]]; then
@@ -163,6 +164,10 @@ for bs in "${batches[@]}"; do
     echo "$code" > "$dest/exit-code"
     if [[ "$code" != 0 ]]; then rc=1; tail -30 "$dest/model.log"; fi
   done
+  if [[ ${SM100_FIRST_DIFF:-} == 1 ]]; then
+    if [[ $rc == 0 ]]; then python scripts/sm100/first_diff.py "$group" || rc=1; fi
+    exit "$rc"
+  fi
   if [[ -n ${SM100_PHASE_TRACE:-} ]]; then
     if [[ $rc == 0 ]]; then
       python scripts/sm100/native_phase_perfetto.py "$group" || rc=1

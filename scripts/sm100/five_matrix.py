@@ -11,7 +11,8 @@ import numpy as np
 import torch
 
 ARMS = ("mega", "gc", "mega_rr", "gc_rr", "gc_eco")
-STEPS = 1000
+FIRST_DIFF = os.getenv("SM100_FIRST_DIFF") == "1"
+STEPS = 1 if FIRST_DIFF else 1000
 
 
 def make_plan(root, bs, device="cpu"):
@@ -161,7 +162,7 @@ def main():
         bs=bs,
         prompt_sha256=hashlib.sha256(json.dumps(prompts).encode()).hexdigest(),
     )
-    for phase in ("stats", "measure"):
+    for phase in (("stats",) if FIRST_DIFF else ("stats", "measure")):
         if phase == "measure" and eplb:
             moved = rpc("install_v41_placement", str(root / "plan.npz"))
             assert all(x == moved[0] for x in moved)

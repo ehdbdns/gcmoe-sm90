@@ -9,16 +9,19 @@ import triton
 import triton.language as tl
 
 LAYERS, STEPS, ROWS, K, SLOTS, CLOCKS = 40, 1000, 64, 6, 48, 19
+FIRST_DIFF = os.getenv("SM100_FIRST_DIFF") == "1"
+if FIRST_DIFF:
+    STEPS = 1
 OBSERVE = os.getenv("SM100_NATIVE_GREEDY") == "1"
 STATE = None
 
 
 @triton.jit
 def full_route_stage(ids, weights, native_i, native_w, bank_i, bank_w, cursor, active,
-                     scratch, template, replay: tl.constexpr = True):
+                     scratch, template, limit: tl.constexpr, replay: tl.constexpr = True):
     lane = tl.arange(0, 512)
     n = tl.load(cursor)
-    on = (tl.load(active) != 0) & (n >= 0) & (n < 40000)
+    on = (tl.load(active) != 0) & (n >= 0) & (n < limit)
     mask = (lane < 384) & on
     addr = n * 384 + lane
     i = tl.load(ids + lane, mask, 0)
@@ -33,11 +36,11 @@ def full_route_stage(ids, weights, native_i, native_w, bank_i, bank_w, cursor, a
 
 
 @triton.jit
-def full_collect_layer(scratch, results, cursor, active, tags, layer: tl.constexpr):
+def full_collect_layer(scratch, results, cursor, active, tags, layer: tl.constexpr, limit: tl.constexpr):
     lane = tl.arange(0, 128)
     n = tl.load(cursor)
     if tl.load(active) != 0:
-        if n < 40000:
+        if n < limit:
             tl.store(results + n * 86 + lane, tl.load(scratch + lane, lane < 86, 0), lane < 86)
             tl.store(tags + n, layer)
         tl.store(cursor, n + 1)
@@ -47,6 +50,7 @@ class CaptureState:
     def __init__(self, consumer):
         self.consumer = consumer
         self.layers = {}
+        self.snapshots = {}
         self.cursor = torch.zeros(1, dtype=torch.int32, device="cuda")
         self.active = torch.zeros_like(self.cursor)
         self.tags = torch.empty(STEPS * LAYERS, dtype=torch.int32, device="cuda")
@@ -75,12 +79,23 @@ class CaptureState:
             scratch = (buf.buffer.narrow(0, buf.clock_offset - SLOTS*4, self.scratch.numel()*4)
                        .view(torch.int32) if self.consumer else self.scratch)
             full_route_stage[(1,)](ids, weights, self.ids, self.weights, self.bank_i, self.bank_w,
-                                   self.cursor, self.active, scratch, self.template, not OBSERVE)
+                                   self.cursor, self.active, scratch, self.template, STEPS * LAYERS, not OBSERVE)
             counters = scratch[:SLOTS]
             counters._matrix_clock_scratch = True
             kw["cumulative_local_expert_recv_stats"] = counters
+            if FIRST_DIFF and layer < 4:
+                # Fixed storage reused by warmup, capture, and decode replay.
+                inputs = dict(x=buf.x[:ROWS].view(torch.uint8), sf=buf.x_sf[:ROWS],
+                              ids=ids, weights=weights)
+                if layer not in self.snapshots:
+                    self.snapshots[layer] = {k: torch.empty_like(v) for k, v in inputs.items()}
+                    self.snapshots[layer]["y"] = torch.empty_like(y)
+                for name, value in inputs.items():
+                    self.snapshots[layer][name].copy_(value)
             result = fn(y, l1, l2, buf, *args, **kw)
-            full_collect_layer[(1,)](scratch, self.recv, self.cursor, self.active, self.tags, layer)
+            if FIRST_DIFF and layer < 4:
+                self.snapshots[layer]["y"].copy_(y)
+            full_collect_layer[(1,)](scratch, self.recv, self.cursor, self.active, self.tags, layer, STEPS * LAYERS)
             return result
         launch._full_decode_telemetry = True
         return launch
@@ -181,6 +196,12 @@ def finish(m):
     if OBSERVE:
         if m.calls != STEPS * LAYERS:
             raise ValueError("incomplete native decode")
+        if FIRST_DIFF:
+            for layer in range(4):
+                tensors = STATE.snapshots[layer]
+                np.savez(m.folder / f"layer{layer}-rank{m.rank}.npz",
+                         **{k: (v.view(torch.int16) if k == "y" and v.dtype == torch.bfloat16 else v)
+                            .cpu().numpy() for k, v in tensors.items()})
         phase = m.phase
         counts = STATE.recv[:, :SLOTS].cpu().numpy().reshape(STEPS, LAYERS, SLOTS)
         clocks = STATE.recv[:, SLOTS:].view(torch.int64).cpu().numpy().reshape(STEPS, LAYERS, CLOCKS)
