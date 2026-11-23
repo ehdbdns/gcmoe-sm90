@@ -27,15 +27,23 @@ if [[ ${1:-} == source-index ]]; then
   export SM90_CHECK_INDEX_TIMING=1
 elif [[ ${1:-} == plan-dispatch ]]; then
   trials=(baseline dispatch)
+elif [[ ${1:-} == source-inbox ]]; then
+  export SM90_MEASURE_BLOCK_RELEASE=1
+  trials=(baseline source_inbox)
 elif [[ ${1:-} == single-push ]]; then
   trials=(baseline single_push)
 fi
 for trial in "${trials[@]}"; do
   export SM90_ECO_TRIAL="$trial"
-  unset GC_MOE_SM90_SINGLE_PUSH GC_MOE_SM90_SOURCE_INDEX_PULL GC_MOE_SM90_SPLIT_EXCHANGE GC_MOE_SM90_PLAN_DISPATCH
+  unset GC_MOE_SM90_SOURCE_INBOX GC_MOE_SM90_SINGLE_PUSH GC_MOE_SM90_SOURCE_INDEX_PULL GC_MOE_SM90_SPLIT_EXCHANGE GC_MOE_SM90_PLAN_DISPATCH
   export GC_MOE_SM90_PLAN_DISPATCH=0
   grid=24
+  if [[ ${1:-} == source-inbox ]]; then
+    export GC_MOE_SM90_PLAN_DISPATCH=1
+    grid=20
+  fi
   case "$trial" in
+    source_inbox) export GC_MOE_SM90_SOURCE_INBOX=1 ;;
     single_push) export GC_MOE_SM90_SINGLE_PUSH=1 ;;
     source_index) export GC_MOE_SM90_SOURCE_INDEX_PULL=1 ;;
     split) export GC_MOE_SM90_SPLIT_EXCHANGE=1 ;;

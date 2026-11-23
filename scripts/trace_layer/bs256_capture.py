@@ -27,7 +27,9 @@ def capture_step(engine, arm):
     rpc('_gc_moe_profile_park_fine')
     assert len({o.request_id for o in outputs if o.outputs and len(o.outputs[0].token_ids) == 1}) == 256
     manifest = dict(id=tag, arm=arm, label=arm, step=2, layers=40, first_epoch=start,
-                    dispatch_transport=('source_push' if os.getenv('GC_MOE_SM90_SINGLE_PUSH') == '1' else 'pull'),
+                    stream_release_stamps=os.getenv('SM90_MEASURE_BLOCK_RELEASE') == '1',
+                    dispatch_transport=('source_inbox' if os.getenv('GC_MOE_SM90_SOURCE_INBOX') == '1' else
+                                        'source_push' if os.getenv('GC_MOE_SM90_SINGLE_PUSH') == '1' else 'pull'),
                     decode_tokens=256, gemm_start='first_valid_cta_claim',
                     ranks=rpc('_gc_moe_profile_snapshot', args=(start,)))
     capture = resolve_epochs(raw, manifest, 20 if arm == "eco" and os.getenv("GC_MOE_SM90_PLAN_DISPATCH", "1") == "1" else 24)

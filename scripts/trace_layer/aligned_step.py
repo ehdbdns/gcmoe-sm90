@@ -265,7 +265,20 @@ def build(capture_dir, layers, dispatch_grid, require_overlap=False):
                            block_m=block_m, plan_cost=None if capture.get('arm') == 'rr' else plan[rank],
                            routed_us=call['routed']['dur'],
                            dispatch_to_routed_end_us=call['routed']['end'] - call['dispatch']['ts'])
-            if capture.get('dispatch_transport') == 'source_push':
+            if capture.get('stream_release_stamps') and capture.get('gemm_start') == 'first_valid_cta_claim':
+                for col, key in ((8, 'first_l1_batch_us'), (9, 'first_full_l1_batch_us')):
+                    stamp = row['stamps'][col] & UNSET
+                    expected = bool(sum(counts)) if col == 8 else max(counts) >= block_m
+                    present = stamp != UNSET
+                    require(present == expected, f'{context}: {key} coverage differs from owned slots')
+                    delay = (stamp - row['stamps'][10]) & UNSET
+                    require(not present or delay <= call['dispatch']['dur'] + ENTRY_TOLERANCE_US,
+                            f'{context}: release timestamp outside dispatch')
+                    metrics[key] = delay if present else None
+                    if present:
+                        events.append(dict(ph='i', s='t', cat='dispatch', name=key, pid=rank, tid=1,
+                                           ts=call['dispatch']['ts'] + offsets[rank] - origin + delay))
+            if capture.get('dispatch_transport') in ('source_push', 'source_inbox'):
                 segments['local route preparation'] = segments.pop('count exchange')
                 segments['source push and destination completion'] = segments.pop('pull token')
             result['ranks'].append(dict(metrics, slots_owned=counts, raw_kernels=call,

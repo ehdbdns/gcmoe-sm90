@@ -107,6 +107,8 @@ def verify_push_replays(buf, graph, out, placement, raw, scores, hot, topk, quan
             graph.replay()
             torch.cuda.synchronize()
             verify_rows(buf, placement, sources, rank)
+            if buf.layout.source_inbox and buf.inbox_route.count_nonzero().item():
+                raise AssertionError(f'rank {rank}: unread inbox rows after replay {replay}')
             if rank == owner:
                 assert int(buf.expert_count[local]) == target
             check_equal(buf.combine[:tokens], reference_routes, (rank, generation, replay, 'L2 scatter'))

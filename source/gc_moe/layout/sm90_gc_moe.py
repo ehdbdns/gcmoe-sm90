@@ -37,6 +37,7 @@ class SM90GCBufferLayout:
     # RR uses the same table and the two can be compared column by column.
     trace: bool = False
 
+    source_inbox: bool = field(init=False)
     single_push: bool = field(init=False)
     source_index_pull: bool = field(init=False)
     split_exchange: bool = field(init=False)
@@ -46,6 +47,7 @@ class SM90GCBufferLayout:
     eco_max_copies: int = field(init=False)
     ir_steps: int = field(init=False)
     pull_trace: bool = field(init=False)
+    release_trace: bool = field(init=False)
     step_profile: bool = field(init=False)
     fine_records: int = field(init=False)
     fixed_route_order: bool = field(init=False)
@@ -77,6 +79,8 @@ class SM90GCBufferLayout:
         object.__setattr__(self, 'fine_records', optional_capacity('GC_MOE_FINE_TRACE', '0', 'GC_MOE_FINE_RECS', '262144'))
         object.__setattr__(self, 'pull_trace', os.environ.get('GC_MOE_PULL_TRACE') == '1')
         object.__setattr__(self, 'step_profile', os.environ.get('GC_MOE_STEP_PROFILE') == '1')
+        object.__setattr__(self, 'release_trace', self.step_profile and self.pull_trace
+                           and os.getenv('SM90_MEASURE_BLOCK_RELEASE') == '1')
         matrix = bool(os.environ.get('GC_MOE_MATRIX_ARM'))
         object.__setattr__(self, 'matrix', matrix)
         collect_history = (
@@ -88,7 +92,9 @@ class SM90GCBufferLayout:
         object.__setattr__(self, 'eplb_window', window)
         object.__setattr__(self, 'fixed_route_order', (matrix or self.eco) and bool(os.environ.get('GC_MOE_FIXED_DIR')))
         object.__setattr__(self, 'long_cost', os.environ.get('GC_MOE_LONG_COST') == '1')
-        object.__setattr__(self, 'single_push', self.eco and os.getenv('GC_MOE_SM90_SINGLE_PUSH') == '1')
+        inbox = self.eco and os.getenv('GC_MOE_SM90_SOURCE_INBOX') == '1'
+        object.__setattr__(self, 'source_inbox', inbox)
+        object.__setattr__(self, 'single_push', inbox or (self.eco and os.getenv('GC_MOE_SM90_SINGLE_PUSH') == '1'))
         object.__setattr__(self, 'source_index_pull', self.eco and os.getenv('GC_MOE_SM90_SOURCE_INDEX_PULL') == '1')
         object.__setattr__(self, 'split_exchange', self.eco and os.getenv('GC_MOE_SM90_SPLIT_EXCHANGE') == '1')
         views = {}
@@ -187,7 +193,16 @@ class SM90GCBufferLayout:
                 slot_words = ranks + 2 + (rows + min_block_m - 1) // min_block_m
                 reserve('push_state', (2, local, slot_words), 'int32', 4)
                 reserve('push_ticket', (1,), 'int32', 4)
-                reserve('push_base', (experts,), 'int32', 4)
+                if self.source_inbox:
+                    # Each route goes to at most one physical replica. Share payload
+                    # capacity across experts, with a private region per source rank.
+                    inbox_rows = rows * topk
+                    reserve('inbox_x', (inbox_rows, hidden), 'uint8', 1)
+                    reserve('inbox_sf', (inbox_rows, hidden // 128), 'float32', 4)
+                    reserve('inbox_weight', (inbox_rows,), 'float32', 4)
+                    reserve('inbox_route', (local, ranks, capacity), 'int32', 4)
+                else:
+                    reserve('push_base', (experts,), 'int32', 4)
                 reserve('batch_valid', (batches,), 'int32', 4)
                 if not self.fixed_route_order:
                     reserve('push_ordinal', (capacity, topk), 'int32', 4)

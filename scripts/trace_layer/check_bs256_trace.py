@@ -20,14 +20,15 @@ for key in ('prompt_hash', 'output_hash', 'prefill_steps', 'steps', 'layers', 'b
             'stream', 'cost', 'rearranged'):
     same(key, before[key], after[key])
 trial = os.environ.get('SM90_ECO_TRIAL')
-switches = {'single_push': 'GC_MOE_SM90_SINGLE_PUSH', 'source_index': 'GC_MOE_SM90_SOURCE_INDEX_PULL', 'split': 'GC_MOE_SM90_SPLIT_EXCHANGE', 'dispatch': 'GC_MOE_SM90_PLAN_DISPATCH'}
+switches = {'source_inbox': 'GC_MOE_SM90_SOURCE_INBOX', 'single_push': 'GC_MOE_SM90_SINGLE_PUSH', 'source_index': 'GC_MOE_SM90_SOURCE_INDEX_PULL', 'split': 'GC_MOE_SM90_SPLIT_EXCHANGE', 'dispatch': 'GC_MOE_SM90_PLAN_DISPATCH'}
 if trial:
     same('known trial', trial in ('baseline', *switches), True)
     for variant, key in switches.items():
         value = after['controls'].get(key)
         if key == 'GC_MOE_SM90_PLAN_DISPATCH' and value == '0':
             value = None
-        same(key, value, '1' if trial == variant else None)
+        enabled = trial == variant or (variant == 'dispatch' and os.getenv(key) == '1')
+        same(key, value, '1' if enabled else None)
 for key in set(before['controls']) | set(after['controls']):
     if trial and key in switches.values():
         continue
@@ -65,7 +66,7 @@ if len(sys.argv) == 5:
         layers.add(layer)
         if trial:
             detail = load(path.with_name(path.name.replace('.counts.json', '.detail.json')))
-            if trial == 'single_push':
+            if trial in ('single_push', 'source_inbox'):
                 sent = sum(span['rows'] for rank in detail['ranks'] for span in rank['singleton_sends'])
                 owned = sum(slot['owned'] for rank in detail['ranks']
                             for slot in rank['pull_slots'] if slot['copies'] == 1)
@@ -79,7 +80,7 @@ if len(sys.argv) == 5:
                             for s in r['pull_slots'] if s['copies'] > 1 and s['owned']}
                 same('replica push rows by physical destination', dict(delivered), expected)
             for rank in detail['ranks']:
-                if trial == 'dispatch':
+                if os.getenv('GC_MOE_SM90_PLAN_DISPATCH') == '1':
                     places = rank['placement']
                     plan = [p['sm'] for p in places if p['role'] == 5]
                     dispatch = [p for p in places if p['role'] == 1]
@@ -92,7 +93,7 @@ if len(sys.argv) == 5:
                         same('async destination snapshot', 'declared_sources' in release,
                              release['phase'] == 1)
                 same('singleton sender CTAs', sorted(s['cta'] for s in rank['singleton_sends']),
-                     list(range(8)) if trial == 'single_push' else [])
+                     list(range(8)) if trial in ('single_push', 'source_inbox') else [])
                 if trial == 'source_index' or (trial == 'baseline' and os.getenv('SM90_CHECK_INDEX_TIMING')):
                     same('quota publication count', len(rank['quota_publications']), 1)
                     expected = {s['slot'] for s in rank['pull_slots'] if s['copies'] > 1 and s['owned']}
@@ -100,8 +101,8 @@ if len(sys.argv) == 5:
                 same('replica exchange spans', len(rank['replica_exchange']), int(trial == 'split'))
         for row in c['ranks']:
             if trial:
-                expected = (20, 72, 72, 1) if trial == 'dispatch' else (24, 71, 71, 1)
-                if trial == 'dispatch':
+                expected = (20, 72, 72, 1) if os.getenv('GC_MOE_SM90_PLAN_DISPATCH') == '1' else (24, 71, 71, 1)
+                if os.getenv('GC_MOE_SM90_PLAN_DISPATCH') == '1':
                     same('dispatch after plan admission', row['raw_kernels']['admission']['end'] <= row['raw_kernels']['dispatch']['ts'], True)
                 same('launch grids', tuple(row['raw_kernels'][k]['grid']
                      for k in ('dispatch', 'shared', 'routed', 'plan')), expected)
