@@ -57,6 +57,7 @@ def main():
     dest = root / arm
     assert bs in (256, 512, 1024, 2048)
     publisher = arm == "mega"
+    observe = os.getenv("SM100_NATIVE_GREEDY") == "1"
     direct = os.getenv("SM100_DIRECT_512") == "1"
     os.environ.update(
         GC_MOE_V41_ENGINE="gc" if arm.startswith("gc") else "mega",
@@ -66,7 +67,7 @@ def main():
     )
     if os.getenv("SM100_FORMAL_512"):
         assert bs == 512
-        if publisher and not direct:
+        if publisher and not direct and not observe:
             import shutil
             required = 2 * 8 * (32 << 30) + (38 << 30)
             if shutil.disk_usage(root).free < required:
@@ -179,6 +180,10 @@ def main():
             result["layout_sha256"] = expected
             if arm == "gc_eco":
                 rpc("matrix_eco", str(root / "plan.npz"))
+        if observe:
+            phase_offsets = {req: len(ids) for req, ids in buf.items()}
+            if phase == "stats":
+                (dest / "prefill.json").write_text(json.dumps(buf))
         rpc("matrix_begin", phase)
         rr_before = rpc("inspect_rr_calls")
         times = []
@@ -220,6 +225,10 @@ def main():
             cumulative_seconds=times,
             ranks=rpc("matrix_finish"),
         )
+        if observe:
+            output = np.array([buf[f"req{i}"][phase_offsets[f"req{i}"]:] for i in range(bs)], dtype=np.int32)
+            assert output.shape == (bs, STEPS)
+            np.save(dest / f"{phase}-tokens.npy", output)
         rr_after = rpc("inspect_rr_calls")
         result[phase]["rr_calls"] = [
             a - b for a, b in zip(rr_after, rr_before, strict=True)
@@ -228,7 +237,7 @@ def main():
         assert result[phase]["rr_calls"] == [steps * 40 * int(expect_rr)] * 8
         if publisher and phase == "stats" and not os.getenv("SM100_PHASE_TRACE"):
             make_plan(root, bs)
-    if direct:
+    if direct or observe:
         result["workload"] = "native greedy decode"
     elif publisher:
         (root / "tokens.json").write_text(json.dumps(dict(tokens=buf)))

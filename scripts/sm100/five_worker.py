@@ -12,7 +12,7 @@ import torch
 
 DIRECT = os.getenv("SM100_DIRECT_512") == "1"
 
-if os.getenv("SM100_FORMAL_512") and not DIRECT:
+if os.getenv("SM100_FORMAL_512") and not DIRECT and os.getenv("SM100_NATIVE_GREEDY") != "1":
     from stream_checkpoint import install_cache_names
     install_cache_names()
 

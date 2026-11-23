@@ -23,19 +23,25 @@ export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_DISABLE_
 export GC_SM100_MATRIX_CLOCKS=1 PYTHONHASHSEED=0
 unset GC_MOE_ECO_UNIT_CFG GC_MOE_ECO_OBJECTIVE GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY
 export PYTHONPATH="$repo/source:$repo/integration:$repo/scripts/sm100"
-unset SM100_FULL_DECODE SM100_DIRECT_512 SM100_PHASE_TRACE SM100_QUIET_TRACE
+unset SM100_NATIVE_GREEDY SM100_FULL_DECODE SM100_DIRECT_512 SM100_PHASE_TRACE SM100_QUIET_TRACE
 if [[ ${2:-} == quiet-native-bs512 ]]; then export SM100_QUIET_TRACE=1 SM100_PHASE_TRACE=1; fi
 if [[ ${2:-} == trace-native-bs512 ]]; then export SM100_PHASE_TRACE=1; fi
 if [[ ${2:-} == direct-bs512 || -n ${SM100_PHASE_TRACE:-} ]]; then
   export SM100_DIRECT_512=1
 fi
-if [[ ${SM100_DIRECT_512:-} == 1 || ${2:-} == full-native-bs512 ]]; then
+if [[ ${2:-} == upstream-greedy-bs512 ]]; then
+  export SM100_NATIVE_GREEDY=1 SM100_FULL_DECODE=1 SM100_PHASE_TRACE=1
+fi
+if [[ ${SM100_DIRECT_512:-} == 1 || ${SM100_NATIVE_GREEDY:-} == 1 || ${2:-} == full-native-bs512 ]]; then
   fixture=docs/trace_executor_20261119/sm90_main24_stable_decode_bs256_results/delivery/bs256/vanilla/rank0.npz
   echo "ceaa52dc3f3b09fa95e08c59b83b56b97d90b8335b3437a506cb5dbd42fe09f2  $fixture" | sha256sum -c -
 fi
 if [[ ${2:-} == full-native-bs512 ]]; then export SM100_FULL_DECODE=1 SM100_PHASE_TRACE=1; fi
-if [[ ${2:-} == full-native-bs512 || ${2:-} == formal-bs512 || ${SM100_DIRECT_512:-} == 1 ]]; then
+if [[ ${SM100_FULL_DECODE:-} == 1 || ${2:-} == formal-bs512 || ${SM100_DIRECT_512:-} == 1 ]]; then
   export SM100_FORMAL_512=1 SM100_MATRIX_BS=512 GC_MOE_DISPATCH_SMS=8
+  if [[ ${SM100_NATIVE_GREEDY:-} == 1 ]]; then
+    unset GC_MOE_DISPATCH_SMS
+  fi
   export PATH="$root/dsl-env/bin:$PATH"
   test "$(command -v python)" = "$root/dsl-env/bin/python"
   export SM100_CLOCKED_UPSTREAM="$root/upstream"
@@ -43,6 +49,9 @@ if [[ ${2:-} == full-native-bs512 || ${2:-} == formal-bs512 || ${SM100_DIRECT_51
   git -C "$root/upstream" diff --exit-code HEAD
   git -C "$root/upstream" apply "$repo/scripts/sm100/natureal_matrix_audit.patch"
   if [[ -n ${SM100_PHASE_TRACE:-} ]]; then python scripts/sm100/native_phase_instrument.py "$root/upstream"; fi
+  if [[ ${SM100_NATIVE_GREEDY:-} == 1 ]]; then
+    git -C "$root/upstream" apply "$repo/docs/sm100_megamoe/v41_full_decode_pair_results/compat/gc_capture_fix.diff"
+  fi
   cp -R "$repo/source/gc_moe/eplb" "$root/upstream/gc_moe/"
   cp "$repo/source/gc_moe/eco/"meta_sm{90,100}.py "$root/upstream/gc_moe/eco/"
   unset GC_MOE_ECO_BLOCK_M GC_MOE_ECO_PLAN_DISPATCH GC_MOE_ECO_HELPER GC_MOE_ECO_TRACE
@@ -140,7 +149,7 @@ for bs in "${batches[@]}"; do
     dest="$group/$arm"
     mkdir -p "$dest"
     if [[ -e "$dest/result.json" && -f "$dest/exit-code" && $(cat "$dest/exit-code") == 0 ]]; then continue; fi
-    if [[ "$arm" != mega && ! -e "$group/mega/result.json" ]]; then break; fi
+    if [[ ${SM100_NATIVE_GREEDY:-} != 1 && "$arm" != mega && ! -e "$group/mega/result.json" ]]; then break; fi
     if [[ -e "$dest/exit-code" ]]; then rc=1; continue; fi
     wait_idle
     code=0
@@ -157,7 +166,9 @@ for bs in "${batches[@]}"; do
   if [[ -n ${SM100_PHASE_TRACE:-} ]]; then
     if [[ $rc == 0 ]]; then
       python scripts/sm100/native_phase_perfetto.py "$group" || rc=1
-      if [[ ${SM100_FULL_DECODE:-} == 1 ]]; then
+      if [[ ${SM100_NATIVE_GREEDY:-} == 1 ]]; then
+        python scripts/sm100/native_greedy_report.py "$group" || rc=1
+      elif [[ ${SM100_FULL_DECODE:-} == 1 ]]; then
         python scripts/sm100/full_decode_report.py "$group" || rc=1
       fi
       if [[ -n ${SM100_QUIET_TRACE:-} ]]; then
