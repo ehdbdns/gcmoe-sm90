@@ -1,0 +1,35 @@
+task=a9f58ca
+deepgemm=7292e7bd0ef3b497ca948a7239d55f3f01539048
+--- deepgemm symbols:
+deep_gemm/__init__.py:97:    get_symm_buffer_for_sm90_mega_moe,
+deep_gemm/__init__.py:98:    transform_weights_for_mega_moe_sm90,
+deep_gemm/__init__.py:99:    fp8_mega_moe,
+deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh:54:__forceinline__ __device__ void sm90_fp8_mega_moe_get_e4m3_sf_and_sf_inv(
+deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh:159:sm90_fp8_mega_moe_core(DG_SM90_FP8_MOE_CORE_ARGS_DECL) {
+deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh:1751:                        sm90_fp8_mega_moe_get_e4m3_sf_and_sf_inv(
+deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh:1905:                        sm90_fp8_mega_moe_get_e4m3_sf_and_sf_inv(
+deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh:2323:sm90_fp8_mega_moe_l1_impl(DG_SM90_FP8_MOE_KERNEL_ARGS_DECL) {
+deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh:2326:    sm90_fp8_mega_moe_core<Phase, DG_SM90_FP8_MOE_CORE_TEMPLATE_ARGS>(
+deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh:2336:sm90_fp8_mega_moe_l2_impl(DG_SM90_FP8_MOE_KERNEL_ARGS_DECL) {
+deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh:2340:    sm90_fp8_mega_moe_core<Phase, DG_SM90_FP8_MOE_CORE_TEMPLATE_ARGS>(
+deep_gemm/mega/__init__.py:416:def get_symm_buffer_for_sm90_mega_moe(group: dist.ProcessGroup,
+deep_gemm/mega/__init__.py:432:def transform_weights_for_mega_moe_sm90(
+deep_gemm/mega/__init__.py:486:def fp8_mega_moe(y: torch.Tensor,
+deep_gemm/mega/__init__.py:504:    _C.fp8_mega_moe(
+tests/test_mega_moe_sm90.py:277:    transformed_l1, transformed_l2 = deep_gemm.transform_weights_for_mega_moe_sm90(
+tests/test_mega_moe_sm90.py:283:    buffer = deep_gemm.get_symm_buffer_for_sm90_mega_moe(
+tests/test_mega_moe_sm90.py:299:    deep_gemm.fp8_mega_moe(
+tests/test_mega_moe_sm90.py:512:            deep_gemm._C.fp8_mega_moe(
+tests/test_mega_moe_sm90.py:546:    transformed_l1, transformed_l2 = deep_gemm.transform_weights_for_mega_moe_sm90(
+tests/test_mega_moe_sm90.py:548:    buffer = deep_gemm.get_symm_buffer_for_sm90_mega_moe(
+tests/test_mega_moe_sm90.py:558:        deep_gemm.fp8_mega_moe(
+--- env:
+python /home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/bin/python 3.10.9
+deep_gemm origin None
+gc_moe origin /home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/gc_moe_src/gc_moe/__init__.py
+torch origin /home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/lib/python3.10/site-packages/torch/__init__.py
+vllm origin /home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/lib/python3.10/site-packages/vllm/__init__.py
+deep-gemm no installed distribution metadata
+torch 2.13.0
+vllm 0.31.0
+nvidia-cutlass-dsl 4.8.1
