@@ -71,3 +71,25 @@ SM90 为共享机。只在指定八张 H20 全部空闲、预约允许并取得�
 本仓当前 run_main24.sh 实现的是既有 GC 矩阵，不能执行以上八臂。八臂启动器、Mega 的实际模型适配和核外 shared 计时接好后，由设计端在本任务书补充固定 SHA 和正式命令。第一阶段完成后先交回执并释放现场，避免在准备阶段占用八卡。执行者仅可修复不改变语义的编译错误，附完整 diff；不自行移植后端或改精度、路由、验收口径。本轮无需启动 SM100 工作。
 
 回执写入 docs/trace_handover_20261119/REPLY_SM90_H20_BS256_MEGA_GC_EIGHT.md；产物放 docs/trace_executor_20261119/sm90_h20_bs256_mega_gc_eight_results/。首份回执注明 CPU 环境核验，正式回执附八臂逐项状态。大型数据保留路径、大小和 SHA256，小型证据推送 main 并核对远端提交。
+
+## 09118c3 回执后的 CPU 准备
+
+执行者可立即编译官方 nv_dev 到私有持久目录。使用上轮 env3 的 Python 和已安装 Torch ABI，在无可见 GPU 的子进程内构建；共享 env3 只读。此步骤独立于模型和数据挂载，可先行完成。软件包加载和八卡算例的硬件验证留在正式预约内。
+
+```bash
+set -euo pipefail
+persist=/home/admin/workspace/aop_lab/app_source/sm90_persist_20261123
+area=$(mktemp -d "$persist/dg-sm90-build-XXXXXXXX")
+py=/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/bin/python
+export CUDA_VISIBLE_DEVICES='' TORCH_CUDA_ARCH_LIST=9.0 DG_FORCE_BUILD=1 MAX_JOBS=4
+git clone --branch nv_dev https://github.com/deepseek-ai/DeepGEMM.git "$area/src"
+git -C "$area/src" checkout --detach 7292e7bd0ef3b497ca948a7239d55f3f01539048
+git -C "$area/src" submodule update --init --recursive
+mkdir -p "$area/wheels"
+"$py" -m pip wheel --no-deps --no-build-isolation --wheel-dir "$area/wheels" "$area/src" 2>&1 | tee "$area/build.log"
+"$py" -m pip install --no-deps --no-index --target "$area/site" "$area"/wheels/*.whl
+sha256sum "$area"/wheels/*.whl
+echo "$area/site"
+```
+
+CPU 回执追加 wheel 路径及 SHA、编译日志、子模块版本或首错。正式运行使用单进程私有包路径。重启后的 HCA 按实际 ACTIVE 端口及 GPU/NIC 拓扑核对，启动器须显式传入 NCCL_IB_HCA 与 NVSHMEM_HCA_LIST。模型和原始请求文件恢复后，记录 MODEL、DATASET 的实际路径及 SHA。仅有 kv/ 和 replay/ 不视为模型和请求源已经恢复。
