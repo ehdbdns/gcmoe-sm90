@@ -105,6 +105,9 @@ class CaptureState:
 
 
 def install_before_capture():
+    if os.getenv("SM100_SPARSE_CONTROL") == "1":
+        import sparse_boundary
+        sparse_boundary.install()
     if FAIR:
         import fair_boundary
         fair_boundary.install()

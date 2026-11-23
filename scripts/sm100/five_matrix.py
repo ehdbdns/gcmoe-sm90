@@ -105,7 +105,8 @@ def main():
         max_num_batched_tokens=max(2048, bs),
         max_model_len=2144,
         kernel_config=dict(
-            enable_flashinfer_autotune=False, moe_backend="deep_gemm_mega_moe"
+            enable_flashinfer_autotune=False, moe_backend="deep_gemm_mega_moe",
+            **({"sparse_indexer_topk_backend": "torch"} if os.getenv("SM100_SPARSE_CONTROL") == "1" else {})
         ),
         dtype="bfloat16",
         gpu_memory_utilization=0.8,
@@ -214,6 +215,13 @@ def main():
                 rpc("phase_clock_sample", "after")
             elif tracing and i == (1 if quiet else 2):
                 rpc("phase_profile_stop")
+            if os.getenv("SM100_SPARSE_CONTROL") == "1" and (
+                (phase == "stats" and i in (501, 502, 503, 999)) or (phase == "measure" and i == 0)
+            ):
+                failures = rpc("matrix_sparse_sample", phase, i)
+                if any(failures):
+                    (dest / "early-failure.json").write_text(json.dumps(failures, indent=2))
+                    raise RuntimeError(f"strict native prefix diverged at or before {phase} step {i}")
             if FAIR:
                 rpc("matrix_fair_sample", i)
             times.append(time.perf_counter() - t)

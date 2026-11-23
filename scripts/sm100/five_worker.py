@@ -497,6 +497,10 @@ class MatrixWorker(MoeAuditWorker):
     def matrix_eco(self, filename):
         return self._matrix.five_eco(filename)
 
+    def matrix_sparse_sample(self, phase, step):
+        from sparse_boundary import check
+        return check(self, phase, step)
+
     def matrix_fair_sample(self, step):
         from fair_boundary import capture
         return capture(self._matrix, step)
