@@ -1,0 +1,142 @@
+{
+  "first_observable_difference": {
+    "layer": 3,
+    "rank": 7,
+    "row": 33,
+    "tensor": "x",
+    "index": [
+      33,
+      2
+    ],
+    "interpretation": "first captured tensor difference is the MoE input x; it appears before the captured output y",
+    "output_cannot_be_attributed_alone": "x and weights already differ on the same row, so y is not independent evidence of GC kernel output divergence",
+    "remaining_attribution": "prefill KV/attention and the upstream path feeding this captured MoE input remain to be distinguished"
+  },
+  "all_differences": [
+    {
+      "layer": 3,
+      "rank": 7,
+      "tensor": "x",
+      "different": 1263,
+      "elements": 327680,
+      "first": [
+        33,
+        2
+      ],
+      "mega": 209,
+      "gc": 210
+    },
+    {
+      "layer": 3,
+      "rank": 7,
+      "tensor": "weights",
+      "different": 6,
+      "elements": 384,
+      "first": [
+        33,
+        0
+      ],
+      "mega": 0.2723998427391052,
+      "gc": 0.27266591787338257
+    },
+    {
+      "layer": 3,
+      "rank": 7,
+      "tensor": "y",
+      "different": 4863,
+      "elements": 327680,
+      "first": [
+        33,
+        0
+      ],
+      "mega": -0.049072265625,
+      "gc": -0.0517578125
+    }
+  ],
+  "l3_rank7_row33": {
+    "x": {
+      "stored_dtype": "uint8",
+      "logical_dtype": "float8_e4m3",
+      "different": 1263,
+      "elements": 5120,
+      "first_column": 2,
+      "last_column": 5115,
+      "mega_first": 209,
+      "gc_first": 210,
+      "first_tensor_index": [
+        33,
+        2
+      ],
+      "different_columns_min": 2,
+      "different_columns_max": 5115,
+      "different_elements": 1263,
+      "elements_per_row": 5120
+    },
+    "sf": {
+      "stored_dtype": "int32",
+      "logical_dtype": "int32",
+      "different": 0,
+      "elements": 40,
+      "first_column": null,
+      "last_column": null,
+      "mega_first": null,
+      "gc_first": null
+    },
+    "ids": {
+      "mega": [
+        169,
+        41,
+        369,
+        224,
+        240,
+        328
+      ],
+      "gc": [
+        169,
+        41,
+        369,
+        224,
+        240,
+        328
+      ],
+      "equal": true
+    },
+    "weights": {
+      "mega": [
+        0.2723998427391052,
+        0.33976319432258606,
+        0.27418071031570435,
+        0.20908476412296295,
+        0.21272066235542297,
+        0.19185076653957367
+      ],
+      "gc": [
+        0.27266591787338257,
+        0.33931583166122437,
+        0.2732819616794586,
+        0.20913782715797424,
+        0.21361152827739716,
+        0.19198694825172424
+      ],
+      "delta_gc_minus_mega": [
+        0.00026607513427734375,
+        -0.00044736266136169434,
+        -0.0008987486362457275,
+        5.3063035011291504e-05,
+        0.0008908659219741821,
+        0.00013618171215057373
+      ]
+    },
+    "y": {
+      "stored_dtype": "int16",
+      "logical_dtype": "bfloat16",
+      "different": 4863,
+      "elements": 5120,
+      "first_column": 0,
+      "last_column": 5119,
+      "mega_first": -0.049072265625,
+      "gc_first": -0.0517578125
+    }
+  },
+  "all_layers": "raw layer/rank comparison is in layer_rank_tensor_diff.csv"
+}

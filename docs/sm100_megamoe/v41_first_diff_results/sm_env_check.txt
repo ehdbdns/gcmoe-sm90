@@ -1,0 +1,45 @@
+[SM100] BS512 first-diff environment check
+
+identity=SM100
+execution_sha=f96d5b47994d10ead36bb84e55039032376dc80a
+host=e01-cn-v8n4s5sfd01
+kernel=Linux 6.6.102-5.200.al8.x86_64
+cpu=Intel(R) Xeon(R) 6776P, 256 logical CPUs
+
+nvidia_smi_name=NVIDIA L20D
+nvidia_smi_compute_cap=8.9
+nvidia_smi_memory_total=275040 MiB
+nvidia_smi_driver=580.105.08
+nvidia_smi_cuda=13.0
+gpu_count=8
+
+torch_version=2.13.0+cu130
+torch_reported_compute_cap=(10,3)
+torch_reported_memory_GiB=267.69
+vllm_version=0.31.0
+triton_version=3.7.1
+cutlass_dsl_version=4.8.1
+ptxas_version=13.5.37
+
+vllm_graph=FULL_DECODE_ONLY, capture_size=512, BS512
+full_decode=true
+stats_steps_per_arm=1
+ordered_moe_calls_per_rank=40
+block_m=16
+mega_sm_split=none
+gc_sm_split=dispatch 20 / compute 128
+
+GC_MOE_DISPATCH_SMS=<unset>
+GC_MOE_BALANCED_WORKQUEUES=<unset>
+GC_MOE_ECO_BLOCK_M=<unset>
+GC_MOE_ECO_PLAN_DISPATCH=<unset>
+GC_MOE_ECO_HELPER=<unset>
+GC_MOE_ECO_TRACE=<unset>
+GC_MOE_PRIMARY_CTX=<unset>
+
+lock_acquired=2026-11-23T19:23:21+08:00
+lock_released=2026-11-23T19:32:24+08:00
+compute_apps_after_run=empty
+nvidia_device_holders_after_run=none
+group_lock_after_run=available
+

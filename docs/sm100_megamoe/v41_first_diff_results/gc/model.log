@@ -1,0 +1,595 @@
+(MainProcess pid=3079399) INFO 11-23 19:28:22 [api_utils.py:286] non-default args: {'dtype': 'bfloat16', 'max_model_len': 2144, 'tensor_parallel_size': 8, 'enable_expert_parallel': True, 'enable_prefix_caching': False, 'gpu_memory_utilization': 0.8, 'kv_cache_memory_bytes': 34359738368, 'max_num_batched_tokens': 2048, 'max_num_seqs': 512, 'disable_log_stats': True, 'compilation_config': {'mode': <CompilationMode.NONE: 0>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': [], 'ir_enable_torch_wrap': None, 'splitting_ops': None, 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': None, 'compile_ranges_endpoints': None, 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_DECODE_ONLY: (2, 0)>, 'cudagraph_num_of_warmups': 0, 'cudagraph_capture_sizes': [512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': None, 'pass_config': {}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': None, 'static_all_moe_layers': []}, 'kernel_config': KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=[], fused_add_rms_norm=[], gelu_and_mul_sparse=[]), enable_flashinfer_autotune=False, enable_cutedsl_warmup=True, enable_jit_warmup=True, moe_backend='deep_gemm_mega_moe', sparse_indexer_topk_backend='auto', linear_backend='auto', linear_backend_per_quant=None), 'worker_extension_cls': 'five_worker.MatrixWorker', 'async_scheduling': False, 'model': '/data0/home/admin/workspace/megamoe/native-v41-KO1hTbTj/model'}
+(MainProcess pid=3079399) WARNING 11-23 19:28:22 [arg_utils.py:1910] The global random seed is set to 0. Since VLLM_ENABLE_V1_MULTIPROCESSING is set to False, this may affect the random state of the Python process that launched vLLM.
+(MainProcess pid=3079399) INFO 11-23 19:28:22 [config.py:941] Detected quantization_config.scale_fmt=ue8m0; enabling UE8M0 for DeepGEMM.
+(MainProcess pid=3079399) INFO 11-23 19:28:22 [model.py:699] Resolved architecture: DeepseekV41ForCausalLM
+(MainProcess pid=3079399) INFO 11-23 19:28:22 [model.py:722] Defaulting to tokenizer_mode='deepseek_v41' for DeepseekV41ForCausalLM
+(MainProcess pid=3079399) INFO 11-23 19:28:22 [model.py:2109] Using max model len 2144
+(MainProcess pid=3079399) WARNING 11-23 19:28:22 [model.py:1069] Model does not support mm_device_do_normalize, forcing mm_device_do_normalize = False.
+(MainProcess pid=3079399) INFO 11-23 19:28:23 [scheduler.py:308] Chunked prefill is enabled with max_num_batched_tokens=2048.
+(MainProcess pid=3079399) INFO 11-23 19:28:23 [vllm.py:1403] Resolved Engram configuration: EngramConfig(cpu_offload=True, embedding_across_dp=False, dp_shared_memory=False, use_thp=False)
+(MainProcess pid=3079399) INFO 11-23 19:28:24 [vllm.py:843] Auto-enabling VLLM_USE_BREAKABLE_CUDAGRAPH=1. Set VLLM_USE_BREAKABLE_CUDAGRAPH=0 to opt out.
+(MainProcess pid=3079399) INFO 11-23 19:28:24 [kernel.py:408] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(MainProcess pid=3079399) INFO 11-23 19:28:24 [compilation.py:331] Enabled custom fusions: norm_quant, act_quant, allreduce_rms
+(MainProcess pid=3079399) INFO 11-23 19:28:24 [core.py:129] Initializing a V1 LLM engine (v0.31.0) with config: model='/data0/home/admin/workspace/megamoe/native-v41-KO1hTbTj/model', speculative_config=None, tokenizer='/data0/home/admin/workspace/megamoe/native-v41-KO1hTbTj/model', skip_tokenizer_init=False, tokenizer_mode=deepseek_v41, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=2144, download_dir=None, load_format=auto, tensor_parallel_size=8, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=deepseek_v4_fp8, quantization_config=None, enforce_eager=False, aux_output_config=AuxOutputConfig(enable_return_routed_experts=False, max_bytes=None), kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, per_request_spec_decode_metrics='none', kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=0, served_model_name=/data0/home/admin/workspace/megamoe/native-v41-KO1hTbTj/model, enable_prefix_caching=False, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.NONE: 0>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['+quant_fp8', 'all', '+quant_fp8'], 'ir_enable_torch_wrap': False, 'splitting_ops': [], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [409, 2048], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_DECODE_ONLY: (2, 0)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': True, 'enable_qk_norm_rope_fusion': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False, 'fuse_qk_norm_rope_kvcache': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native']), enable_flashinfer_autotune=False, enable_cutedsl_warmup=True, enable_jit_warmup=True, moe_backend='deep_gemm_mega_moe', sparse_indexer_topk_backend='auto', linear_backend='auto', linear_backend_per_quant=None)
+(MainProcess pid=3079399) WARNING 11-23 19:28:24 [system_utils.py:152] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reasons: CUDA is initialized
+(MainProcess pid=3079399) INFO 11-23 19:28:24 [multiproc_executor.py:153] DP group leader: node_rank=0, node_rank_within_dp=0, master_addr=127.0.0.1, mq_connect_ip=11.163.39.114 (local), world_size=8, local_world_size=8
+(VllmWorker-0 pid=3095925) INFO 11-23 19:28:34 [worker_base.py:310] Injected <class 'five_worker.MatrixWorker'> into <class 'vllm.v1.worker.gpu_worker.Worker'> for extended collective_rpc calls ['dense_replay_mode', 'inspect_rr_calls', 'inspect_v41_moe', 'inspect_v41_replicas', 'install_v41_placement', 'matrix_begin', 'matrix_eco', 'matrix_finish', 'matrix_setup', 'matrix_sync', 'phase_clock_sample', 'phase_profile_start', 'phase_profile_stop']
+(VllmWorker-5 pid=3095942) INFO 11-23 19:28:34 [worker_base.py:310] Injected <class 'five_worker.MatrixWorker'> into <class 'vllm.v1.worker.gpu_worker.Worker'> for extended collective_rpc calls ['dense_replay_mode', 'inspect_rr_calls', 'inspect_v41_moe', 'inspect_v41_replicas', 'install_v41_placement', 'matrix_begin', 'matrix_eco', 'matrix_finish', 'matrix_setup', 'matrix_sync', 'phase_clock_sample', 'phase_profile_start', 'phase_profile_stop']
+(VllmWorker-6 pid=3095944) INFO 11-23 19:28:34 [worker_base.py:310] Injected <class 'five_worker.MatrixWorker'> into <class 'vllm.v1.worker.gpu_worker.Worker'> for extended collective_rpc calls ['dense_replay_mode', 'inspect_rr_calls', 'inspect_v41_moe', 'inspect_v41_replicas', 'install_v41_placement', 'matrix_begin', 'matrix_eco', 'matrix_finish', 'matrix_setup', 'matrix_sync', 'phase_clock_sample', 'phase_profile_start', 'phase_profile_stop']
+(VllmWorker-3 pid=3095937) INFO 11-23 19:28:34 [worker_base.py:310] Injected <class 'five_worker.MatrixWorker'> into <class 'vllm.v1.worker.gpu_worker.Worker'> for extended collective_rpc calls ['dense_replay_mode', 'inspect_rr_calls', 'inspect_v41_moe', 'inspect_v41_replicas', 'install_v41_placement', 'matrix_begin', 'matrix_eco', 'matrix_finish', 'matrix_setup', 'matrix_sync', 'phase_clock_sample', 'phase_profile_start', 'phase_profile_stop']
+(VllmWorker-4 pid=3095940) INFO 11-23 19:28:34 [worker_base.py:310] Injected <class 'five_worker.MatrixWorker'> into <class 'vllm.v1.worker.gpu_worker.Worker'> for extended collective_rpc calls ['dense_replay_mode', 'inspect_rr_calls', 'inspect_v41_moe', 'inspect_v41_replicas', 'install_v41_placement', 'matrix_begin', 'matrix_eco', 'matrix_finish', 'matrix_setup', 'matrix_sync', 'phase_clock_sample', 'phase_profile_start', 'phase_profile_stop']
+(Worker pid=3095925) INFO 11-23 19:28:34 [parallel_state.py:1825] world_size=8 rank=0 local_rank=0 distributed_init_method=file:///tmp/vllm_dist_f3a571a577904101abbdfb2fbf89ee83 backend=nccl
+(VllmWorker-1 pid=3095931) INFO 11-23 19:28:34 [worker_base.py:310] Injected <class 'five_worker.MatrixWorker'> into <class 'vllm.v1.worker.gpu_worker.Worker'> for extended collective_rpc calls ['dense_replay_mode', 'inspect_rr_calls', 'inspect_v41_moe', 'inspect_v41_replicas', 'install_v41_placement', 'matrix_begin', 'matrix_eco', 'matrix_finish', 'matrix_setup', 'matrix_sync', 'phase_clock_sample', 'phase_profile_start', 'phase_profile_stop']
+(VllmWorker-7 pid=3095946) INFO 11-23 19:28:34 [worker_base.py:310] Injected <class 'five_worker.MatrixWorker'> into <class 'vllm.v1.worker.gpu_worker.Worker'> for extended collective_rpc calls ['dense_replay_mode', 'inspect_rr_calls', 'inspect_v41_moe', 'inspect_v41_replicas', 'install_v41_placement', 'matrix_begin', 'matrix_eco', 'matrix_finish', 'matrix_setup', 'matrix_sync', 'phase_clock_sample', 'phase_profile_start', 'phase_profile_stop']
+(VllmWorker-2 pid=3095932) INFO 11-23 19:28:34 [worker_base.py:310] Injected <class 'five_worker.MatrixWorker'> into <class 'vllm.v1.worker.gpu_worker.Worker'> for extended collective_rpc calls ['dense_replay_mode', 'inspect_rr_calls', 'inspect_v41_moe', 'inspect_v41_replicas', 'install_v41_placement', 'matrix_begin', 'matrix_eco', 'matrix_finish', 'matrix_setup', 'matrix_sync', 'phase_clock_sample', 'phase_profile_start', 'phase_profile_stop']
+(Worker pid=3095942) INFO 11-23 19:28:43 [parallel_state.py:1825] world_size=8 rank=5 local_rank=5 distributed_init_method=file:///tmp/vllm_dist_f3a571a577904101abbdfb2fbf89ee83 backend=nccl
+(Worker pid=3095944) INFO 11-23 19:28:43 [parallel_state.py:1825] world_size=8 rank=6 local_rank=6 distributed_init_method=file:///tmp/vllm_dist_f3a571a577904101abbdfb2fbf89ee83 backend=nccl
+(Worker pid=3095931) INFO 11-23 19:28:43 [parallel_state.py:1825] world_size=8 rank=1 local_rank=1 distributed_init_method=file:///tmp/vllm_dist_f3a571a577904101abbdfb2fbf89ee83 backend=nccl
+(Worker pid=3095937) INFO 11-23 19:28:43 [parallel_state.py:1825] world_size=8 rank=3 local_rank=3 distributed_init_method=file:///tmp/vllm_dist_f3a571a577904101abbdfb2fbf89ee83 backend=nccl
+(Worker pid=3095940) INFO 11-23 19:28:43 [parallel_state.py:1825] world_size=8 rank=4 local_rank=4 distributed_init_method=file:///tmp/vllm_dist_f3a571a577904101abbdfb2fbf89ee83 backend=nccl
+(Worker pid=3095946) INFO 11-23 19:28:43 [parallel_state.py:1825] world_size=8 rank=7 local_rank=7 distributed_init_method=file:///tmp/vllm_dist_f3a571a577904101abbdfb2fbf89ee83 backend=nccl
+(Worker pid=3095932) INFO 11-23 19:28:43 [parallel_state.py:1825] world_size=8 rank=2 local_rank=2 distributed_init_method=file:///tmp/vllm_dist_f3a571a577904101abbdfb2fbf89ee83 backend=nccl
+(Worker pid=3095925) INFO 11-23 19:28:44 [pynccl.py:148] vLLM is using nccl==2.29.7
+(Worker pid=3095925) INFO 11-23 19:28:51 [cuda_communicator.py:326] Using ['FLASHINFER', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'] all-reduce backends (in dispatch order) for group 'tp:0' out of potential backends: ['FLASHINFER_PCIE_IPC', 'FLASHINFER', 'NCCL_SYMM_MEM', 'QUICK_REDUCE', 'AITER_CUSTOM', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'].
+(Worker pid=3095925) INFO 11-23 19:28:56 [cuda_communicator.py:326] Using ['PYNCCL'] all-reduce backends (in dispatch order) for group 'ep:0' out of potential backends: ['FLASHINFER_PCIE_IPC', 'FLASHINFER', 'NCCL_SYMM_MEM', 'QUICK_REDUCE', 'AITER_CUSTOM', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'].
+(Worker pid=3095925) INFO 11-23 19:28:56 [parallel_state.py:2269] rank 0 in world size 8 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, ETP rank 0, EP rank 0, EPLB rank N/A
+(Worker pid=3095925) INFO 11-23 19:28:56 [gpu_worker.py:479] Using V2 Model Runner
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:28:57 [model_runner.py:375] Loading model from scratch...
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:28:57 [cuda.py:585] Using backend AttentionBackendEnum.FLASH_ATTN for vit attention
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:28:57 [mm_encoder_attention.py:372] Using AttentionBackendEnum.FLASH_ATTN for MMEncoderAttention.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:28:57 [quant_config.py:79] DeepSeek V4 expert_dtype resolved to 'fp4'
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:28:57 [__init__.py:929] Using FlashInferCutedslMxfp8LinearKernel for MXFP8 GEMM
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:28:58 [attention.py:158] Using DeepSeek's nvfp4_ds_mla KV cache format.
+(Worker_TP3_EP3 pid=3095937) INFO 11-23 19:29:27 [engram.py:308] Engram table offloaded to pinned host memory: 48000671 rows x 256, 11.80 GiB per rank
+(Worker_TP7_EP7 pid=3095946) INFO 11-23 19:29:27 [engram.py:308] Engram table offloaded to pinned host memory: 48001319 rows x 256, 11.80 GiB per rank
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:29:27 [engram.py:308] Engram table offloaded to pinned host memory: 48000217 rows x 256, 11.80 GiB per rank
+(Worker_TP1_EP1 pid=3095931) INFO 11-23 19:29:27 [engram.py:308] Engram table offloaded to pinned host memory: 48000347 rows x 256, 11.80 GiB per rank
+(Worker_TP4_EP4 pid=3095940) INFO 11-23 19:29:27 [engram.py:308] Engram table offloaded to pinned host memory: 48000873 rows x 256, 11.80 GiB per rank
+(Worker_TP6_EP6 pid=3095944) INFO 11-23 19:29:27 [engram.py:308] Engram table offloaded to pinned host memory: 48001195 rows x 256, 11.80 GiB per rank
+(Worker_TP2_EP2 pid=3095932) INFO 11-23 19:29:27 [engram.py:308] Engram table offloaded to pinned host memory: 48000505 rows x 256, 11.80 GiB per rank
+(Worker_TP5_EP5 pid=3095942) INFO 11-23 19:29:27 [engram.py:308] Engram table offloaded to pinned host memory: 48001041 rows x 256, 11.80 GiB per rank
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:29:27 [attention.py:1252] Using FP8 indexer cache for Lightning Indexer.
+(Worker_TP1_EP1 pid=3095931) INFO 11-23 19:30:02 [engram.py:308] Engram table offloaded to pinned host memory: 48001591 rows x 256, 11.80 GiB per rank
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:02 [engram.py:308] Engram table offloaded to pinned host memory: 48001463 rows x 256, 11.80 GiB per rank
+(Worker_TP2_EP2 pid=3095932) INFO 11-23 19:30:02 [engram.py:308] Engram table offloaded to pinned host memory: 48001903 rows x 256, 11.80 GiB per rank
+(Worker_TP7_EP7 pid=3095946) INFO 11-23 19:30:02 [engram.py:308] Engram table offloaded to pinned host memory: 48002645 rows x 256, 11.80 GiB per rank
+(Worker_TP6_EP6 pid=3095944) INFO 11-23 19:30:02 [engram.py:308] Engram table offloaded to pinned host memory: 48002473 rows x 256, 11.80 GiB per rank
+(Worker_TP3_EP3 pid=3095937) INFO 11-23 19:30:02 [engram.py:308] Engram table offloaded to pinned host memory: 48002059 rows x 256, 11.80 GiB per rank
+(Worker_TP5_EP5 pid=3095942) INFO 11-23 19:30:02 [engram.py:308] Engram table offloaded to pinned host memory: 48002349 rows x 256, 11.80 GiB per rank
+(Worker_TP4_EP4 pid=3095940) INFO 11-23 19:30:02 [engram.py:308] Engram table offloaded to pinned host memory: 48002199 rows x 256, 11.80 GiB per rank
+[transformers] You are using a model of type `deepseek_v41` to instantiate a model of type ``. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+[transformers] You are using a model of type `deepseek_v41` to instantiate a model of type ``. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+[transformers] You are using a model of type `deepseek_v41` to instantiate a model of type ``. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+[transformers] You are using a model of type `deepseek_v41` to instantiate a model of type ``. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+[transformers] You are using a model of type `deepseek_v41` to instantiate a model of type ``. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+[transformers] You are using a model of type `deepseek_v41` to instantiate a model of type ``. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+[transformers] You are using a model of type `deepseek_v41` to instantiate a model of type ``. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+[transformers] You are using a model of type `deepseek_v41` to instantiate a model of type ``. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+(Worker_TP2_EP2 pid=3095932) INFO 11-23 19:30:05 [engram.py:431] Built engram token map (129280 -> 99092 ids) for layers (1, 14)
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:05 [engram.py:431] Built engram token map (129280 -> 99092 ids) for layers (1, 14)
+(Worker_TP1_EP1 pid=3095931) INFO 11-23 19:30:05 [engram.py:431] Built engram token map (129280 -> 99092 ids) for layers (1, 14)
+(Worker_TP3_EP3 pid=3095937) INFO 11-23 19:30:05 [engram.py:431] Built engram token map (129280 -> 99092 ids) for layers (1, 14)
+(Worker_TP0_EP0 pid=3095925) WARNING 11-23 19:30:05 [compilation.py:1350] Op 'quant_fp8' not present in model, enabling with '+quant_fp8' has no effect
+(Worker_TP7_EP7 pid=3095946) INFO 11-23 19:30:05 [engram.py:431] Built engram token map (129280 -> 99092 ids) for layers (1, 14)
+(Worker_TP5_EP5 pid=3095942) INFO 11-23 19:30:05 [engram.py:431] Built engram token map (129280 -> 99092 ids) for layers (1, 14)
+(Worker_TP4_EP4 pid=3095940) INFO 11-23 19:30:05 [engram.py:431] Built engram token map (129280 -> 99092 ids) for layers (1, 14)
+(Worker_TP6_EP6 pid=3095944) INFO 11-23 19:30:05 [engram.py:431] Built engram token map (129280 -> 99092 ids) for layers (1, 14)
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:05 [weight_utils.py:1063] Filesystem type for checkpoints: XFS. Checkpoint size: 475.25 GiB. Available RAM: 756.50 GiB.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:05 [weight_utils.py:1086] Auto-prefetch is disabled because the filesystem (XFS) is not a recognized network FS (NFS/Lustre). If you want to force prefetching, start vLLM with --safetensors-load-strategy=prefetch.
+Loading safetensors checkpoint shards:   0% Completed | 0/48 [00:00<?, ?it/s]
+Loading safetensors checkpoint shards:   8% Completed | 4/48 [00:00<00:02, 18.80it/s]
+Loading safetensors checkpoint shards:  12% Completed | 6/48 [00:00<00:03, 11.01it/s]
+Loading safetensors checkpoint shards:  17% Completed | 8/48 [00:01<00:06,  6.24it/s]
+Loading safetensors checkpoint shards:  23% Completed | 11/48 [00:01<00:04,  7.96it/s]
+Loading safetensors checkpoint shards:  25% Completed | 12/48 [00:01<00:05,  6.82it/s]
+Loading safetensors checkpoint shards:  27% Completed | 13/48 [00:01<00:05,  5.92it/s]
+Loading safetensors checkpoint shards:  29% Completed | 14/48 [00:02<00:06,  5.47it/s]
+Loading safetensors checkpoint shards:  31% Completed | 15/48 [00:02<00:06,  4.79it/s]
+Loading safetensors checkpoint shards:  35% Completed | 17/48 [00:02<00:06,  4.76it/s]
+Loading safetensors checkpoint shards:  38% Completed | 18/48 [00:03<00:06,  4.54it/s]
+Loading safetensors checkpoint shards:  42% Completed | 20/48 [00:03<00:05,  4.74it/s]
+Loading safetensors checkpoint shards:  44% Completed | 21/48 [00:03<00:06,  4.39it/s]
+Loading safetensors checkpoint shards:  46% Completed | 22/48 [00:04<00:06,  3.84it/s]
+Loading safetensors checkpoint shards:  48% Completed | 23/48 [00:04<00:06,  3.85it/s]
+Loading safetensors checkpoint shards:  50% Completed | 24/48 [00:04<00:06,  3.95it/s]
+Loading safetensors checkpoint shards:  52% Completed | 25/48 [00:04<00:05,  4.07it/s]
+Loading safetensors checkpoint shards:  54% Completed | 26/48 [00:05<00:05,  4.03it/s]
+Loading safetensors checkpoint shards:  56% Completed | 27/48 [00:05<00:05,  3.86it/s]
+Loading safetensors checkpoint shards:  58% Completed | 28/48 [00:05<00:05,  3.81it/s]
+Loading safetensors checkpoint shards:  60% Completed | 29/48 [00:05<00:05,  3.64it/s]
+Loading safetensors checkpoint shards:  65% Completed | 31/48 [00:06<00:03,  4.51it/s]
+Loading safetensors checkpoint shards:  67% Completed | 32/48 [00:06<00:03,  4.23it/s]
+Loading safetensors checkpoint shards:  71% Completed | 34/48 [00:06<00:02,  5.25it/s]
+Loading safetensors checkpoint shards:  73% Completed | 35/48 [00:06<00:02,  5.68it/s]
+Loading safetensors checkpoint shards:  75% Completed | 36/48 [00:07<00:03,  3.56it/s]
+Loading safetensors checkpoint shards:  81% Completed | 39/48 [00:07<00:01,  6.00it/s]
+Loading safetensors checkpoint shards:  83% Completed | 40/48 [00:07<00:01,  4.94it/s]
+Loading safetensors checkpoint shards:  85% Completed | 41/48 [00:08<00:01,  4.27it/s]
+Loading safetensors checkpoint shards:  88% Completed | 42/48 [00:08<00:01,  3.90it/s]
+Loading safetensors checkpoint shards:  94% Completed | 45/48 [00:08<00:00,  6.38it/s]
+Loading safetensors checkpoint shards:  96% Completed | 46/48 [00:09<00:00,  6.32it/s]
+Loading safetensors checkpoint shards: 100% Completed | 48/48 [00:09<00:00,  5.33it/s]
+
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095940
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095942
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095944
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+V41 GC expert adapter installed pid=3095946
+(Worker_TP4_EP4 pid=3095940) INFO 11-23 19:30:30 [model_runner.py:407] Model loading took 39.43 GiB memory and 93.766194 seconds
+(Worker_TP4_EP4 pid=3095940) INFO 11-23 19:30:30 [interface.py:692] Setting kv cache block size to 128 for FLASHMLA_MEGA_ATTN_DSV41/DEEPSEEK_SPARSE_SWA/DEEPSEEK_V41_INDEXER/CompressorBackend backend(s).
+(Worker_TP5_EP5 pid=3095942) INFO 11-23 19:30:30 [model_runner.py:407] Model loading took 39.43 GiB memory and 93.790632 seconds
+(Worker_TP5_EP5 pid=3095942) INFO 11-23 19:30:31 [interface.py:692] Setting kv cache block size to 128 for FLASHMLA_MEGA_ATTN_DSV41/DEEPSEEK_SPARSE_SWA/DEEPSEEK_V41_INDEXER/CompressorBackend backend(s).
+(Worker_TP6_EP6 pid=3095944) INFO 11-23 19:30:31 [model_runner.py:407] Model loading took 39.43 GiB memory and 93.926442 seconds
+(Worker_TP7_EP7 pid=3095946) INFO 11-23 19:30:31 [model_runner.py:407] Model loading took 39.43 GiB memory and 93.983677 seconds
+(Worker_TP6_EP6 pid=3095944) INFO 11-23 19:30:31 [interface.py:692] Setting kv cache block size to 128 for FLASHMLA_MEGA_ATTN_DSV41/DEEPSEEK_SPARSE_SWA/DEEPSEEK_V41_INDEXER/CompressorBackend backend(s).
+(Worker_TP7_EP7 pid=3095946) INFO 11-23 19:30:31 [interface.py:692] Setting kv cache block size to 128 for FLASHMLA_MEGA_ATTN_DSV41/DEEPSEEK_SPARSE_SWA/DEEPSEEK_V41_INDEXER/CompressorBackend backend(s).
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095925
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+V41 GC expert adapter installed pid=3095937
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:45 [default_loader.py:484] Loading weights took 40.03 seconds
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:45 [__init__.py:929] Using DeepGemmMxfp8BmmLinearKernel for MXFP8 GEMM
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:45 [deep_gemm.py:224] DeepGEMM PDL enabled on deep_gemm.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:45 [deep_gemm.py:136] DeepGEMM E8M0 enabled on current platform.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:46 [model_runner.py:407] Model loading took 39.43 GiB memory and 108.816884 seconds
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:46 [topk_topp_sampler.py:124] Using FlashInfer for top-p & top-k sampling.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:46 [torch_utils.py:286] Reducing Torch threads from 32 to 1 for serving. Set OMP_NUM_THREADS in the external environment to override.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:46 [interface.py:692] Setting kv cache block size to 128 for FLASHMLA_MEGA_ATTN_DSV41/DEEPSEEK_SPARSE_SWA/DEEPSEEK_V41_INDEXER/CompressorBackend backend(s).
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095931
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+V41 GC expert adapter installed pid=3095932
+(Worker_TP3_EP3 pid=3095937) INFO 11-23 19:30:47 [model_runner.py:407] Model loading took 39.43 GiB memory and 110.449121 seconds
+(Worker_TP3_EP3 pid=3095937) INFO 11-23 19:30:47 [interface.py:692] Setting kv cache block size to 128 for FLASHMLA_MEGA_ATTN_DSV41/DEEPSEEK_SPARSE_SWA/DEEPSEEK_V41_INDEXER/CompressorBackend backend(s).
+(Worker_TP2_EP2 pid=3095932) INFO 11-23 19:30:51 [model_runner.py:407] Model loading took 39.43 GiB memory and 113.530428 seconds
+(Worker_TP2_EP2 pid=3095932) INFO 11-23 19:30:51 [interface.py:692] Setting kv cache block size to 128 for FLASHMLA_MEGA_ATTN_DSV41/DEEPSEEK_SPARSE_SWA/DEEPSEEK_V41_INDEXER/CompressorBackend backend(s).
+(Worker_TP1_EP1 pid=3095931) INFO 11-23 19:30:51 [model_runner.py:407] Model loading took 39.43 GiB memory and 113.598905 seconds
+(Worker_TP1_EP1 pid=3095931) INFO 11-23 19:30:51 [interface.py:692] Setting kv cache block size to 128 for FLASHMLA_MEGA_ATTN_DSV41/DEEPSEEK_SPARSE_SWA/DEEPSEEK_V41_INDEXER/CompressorBackend backend(s).
+(MainProcess pid=3079399) INFO 11-23 19:30:51 [torch_utils.py:286] Reducing Torch threads from 32 to 1 for serving. Set OMP_NUM_THREADS in the external environment to override.
+(MainProcess pid=3079399) INFO 11-23 19:30:51 [utils.py:343] Using BLHNC KV cache layout.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:51 [encoder_runner.py:131] Encoder cache will be initialized with a budget of 2048 tokens, and profiled with 2 image items of the maximum feature size.
+/data0/home/admin/workspace/megamoe/v41-first-diff-9QujkJ0g/run/dsl-env/lib64/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/dsl.py:2300: UserWarning: Argument aux_data (position 19) cannot be converted to a JitArgument for function 'cutlass___call___vllmvllm_flash_attncuteflash_fwd_sm100FlashAttentionForwardSm100_object_at__Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i64i641_Tensorgm'. Its type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>` is not supported. If the value is known at compile time, annotate it: `aux_data: Constexpr`. Otherwise, implement the `JitArgument` or `DynamicExpression` protocol for type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>`, or register a custom argument adapter.
+  exe_args, func_types, adapted_args = self.generate_mlir_function_types(
+/data0/home/admin/workspace/megamoe/v41-first-diff-9QujkJ0g/run/dsl-env/lib64/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/dsl.py:2300: UserWarning: Argument aux_data (position 19) cannot be converted to a JitArgument for function 'cutlass___call___vllmvllm_flash_attncuteflash_fwd_sm100FlashAttentionForwardSm100_object_at__Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i64i641_Tensorgm'. Its type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>` is not supported. If the value is known at compile time, annotate it: `aux_data: Constexpr`. Otherwise, implement the `JitArgument` or `DynamicExpression` protocol for type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>`, or register a custom argument adapter.
+  exe_args, func_types, adapted_args = self.generate_mlir_function_types(
+/data0/home/admin/workspace/megamoe/v41-first-diff-9QujkJ0g/run/dsl-env/lib64/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/dsl.py:2300: UserWarning: Argument aux_data (position 19) cannot be converted to a JitArgument for function 'cutlass___call___vllmvllm_flash_attncuteflash_fwd_sm100FlashAttentionForwardSm100_object_at__Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i64i641_Tensorgm'. Its type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>` is not supported. If the value is known at compile time, annotate it: `aux_data: Constexpr`. Otherwise, implement the `JitArgument` or `DynamicExpression` protocol for type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>`, or register a custom argument adapter.
+  exe_args, func_types, adapted_args = self.generate_mlir_function_types(
+/data0/home/admin/workspace/megamoe/v41-first-diff-9QujkJ0g/run/dsl-env/lib64/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/dsl.py:2300: UserWarning: Argument aux_data (position 19) cannot be converted to a JitArgument for function 'cutlass___call___vllmvllm_flash_attncuteflash_fwd_sm100FlashAttentionForwardSm100_object_at__Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i64i641_Tensorgm'. Its type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>` is not supported. If the value is known at compile time, annotate it: `aux_data: Constexpr`. Otherwise, implement the `JitArgument` or `DynamicExpression` protocol for type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>`, or register a custom argument adapter.
+  exe_args, func_types, adapted_args = self.generate_mlir_function_types(
+/data0/home/admin/workspace/megamoe/v41-first-diff-9QujkJ0g/run/dsl-env/lib64/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/dsl.py:2300: UserWarning: Argument aux_data (position 19) cannot be converted to a JitArgument for function 'cutlass___call___vllmvllm_flash_attncuteflash_fwd_sm100FlashAttentionForwardSm100_object_at__Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i64i641_Tensorgm'. Its type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>` is not supported. If the value is known at compile time, annotate it: `aux_data: Constexpr`. Otherwise, implement the `JitArgument` or `DynamicExpression` protocol for type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>`, or register a custom argument adapter.
+  exe_args, func_types, adapted_args = self.generate_mlir_function_types(
+/data0/home/admin/workspace/megamoe/v41-first-diff-9QujkJ0g/run/dsl-env/lib64/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/dsl.py:2300: UserWarning: Argument aux_data (position 19) cannot be converted to a JitArgument for function 'cutlass___call___vllmvllm_flash_attncuteflash_fwd_sm100FlashAttentionForwardSm100_object_at__Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i64i641_Tensorgm'. Its type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>` is not supported. If the value is known at compile time, annotate it: `aux_data: Constexpr`. Otherwise, implement the `JitArgument` or `DynamicExpression` protocol for type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>`, or register a custom argument adapter.
+  exe_args, func_types, adapted_args = self.generate_mlir_function_types(
+/data0/home/admin/workspace/megamoe/v41-first-diff-9QujkJ0g/run/dsl-env/lib64/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/dsl.py:2300: UserWarning: Argument aux_data (position 19) cannot be converted to a JitArgument for function 'cutlass___call___vllmvllm_flash_attncuteflash_fwd_sm100FlashAttentionForwardSm100_object_at__Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i64i641_Tensorgm'. Its type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>` is not supported. If the value is known at compile time, annotate it: `aux_data: Constexpr`. Otherwise, implement the `JitArgument` or `DynamicExpression` protocol for type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>`, or register a custom argument adapter.
+  exe_args, func_types, adapted_args = self.generate_mlir_function_types(
+/data0/home/admin/workspace/megamoe/v41-first-diff-9QujkJ0g/run/dsl-env/lib64/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl/dsl.py:2300: UserWarning: Argument aux_data (position 19) cannot be converted to a JitArgument for function 'cutlass___call___vllmvllm_flash_attncuteflash_fwd_sm100FlashAttentionForwardSm100_object_at__Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i641_Tensorgmemoi64i64i641_Tensorgm'. Its type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>` is not supported. If the value is known at compile time, annotate it: `aux_data: Constexpr`. Otherwise, implement the `JitArgument` or `DynamicExpression` protocol for type `<class 'vllm.vllm_flash_attn.cute.utils.AuxData'>`, or register a custom argument adapter.
+  exe_args, func_types, adapted_args = self.generate_mlir_function_types(
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:56 [flashinfer_all_reduce.py:224] Initialized FlashInfer Allreduce norm fusion workspace with backend=mnnvl
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:30:58 [custom_all_reduce.py:658] Using the low-SM MNNVL multimem reduce-scatter kernel.
+[rank0]:[W1123 19:30:58.509840828 ProcessGroupNCCL.cpp:5276] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+(Worker_TP7_EP7 pid=3095946) INFO 11-23 19:31:09 [gpu_worker.py:603] Initial free memory 265.21 GiB, reserved 32.0 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config when you want manual control of KV cache memory size. If OOM'ed, check the difference of initial free memory between the current run and the previous run where kv_cache_memory_bytes is suggested and update it correspondingly.
+(Worker_TP4_EP4 pid=3095940) INFO 11-23 19:31:09 [gpu_worker.py:603] Initial free memory 265.22 GiB, reserved 32.0 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config when you want manual control of KV cache memory size. If OOM'ed, check the difference of initial free memory between the current run and the previous run where kv_cache_memory_bytes is suggested and update it correspondingly.
+(Worker_TP2_EP2 pid=3095932) INFO 11-23 19:31:09 [gpu_worker.py:603] Initial free memory 265.21 GiB, reserved 32.0 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config when you want manual control of KV cache memory size. If OOM'ed, check the difference of initial free memory between the current run and the previous run where kv_cache_memory_bytes is suggested and update it correspondingly.
+(Worker_TP3_EP3 pid=3095937) INFO 11-23 19:31:09 [gpu_worker.py:603] Initial free memory 265.21 GiB, reserved 32.0 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config when you want manual control of KV cache memory size. If OOM'ed, check the difference of initial free memory between the current run and the previous run where kv_cache_memory_bytes is suggested and update it correspondingly.
+(Worker_TP6_EP6 pid=3095944) INFO 11-23 19:31:09 [gpu_worker.py:603] Initial free memory 265.21 GiB, reserved 32.0 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config when you want manual control of KV cache memory size. If OOM'ed, check the difference of initial free memory between the current run and the previous run where kv_cache_memory_bytes is suggested and update it correspondingly.
+(Worker_TP5_EP5 pid=3095942) INFO 11-23 19:31:09 [gpu_worker.py:603] Initial free memory 265.09 GiB, reserved 32.0 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config when you want manual control of KV cache memory size. If OOM'ed, check the difference of initial free memory between the current run and the previous run where kv_cache_memory_bytes is suggested and update it correspondingly.
+(Worker_TP1_EP1 pid=3095931) INFO 11-23 19:31:09 [gpu_worker.py:603] Initial free memory 265.21 GiB, reserved 32.0 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config when you want manual control of KV cache memory size. If OOM'ed, check the difference of initial free memory between the current run and the previous run where kv_cache_memory_bytes is suggested and update it correspondingly.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:31:09 [gpu_worker.py:603] Initial free memory 265.09 GiB, reserved 32.0 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config when you want manual control of KV cache memory size. If OOM'ed, check the difference of initial free memory between the current run and the previous run where kv_cache_memory_bytes is suggested and update it correspondingly.
+(MainProcess pid=3079399) INFO 11-23 19:31:09 [kv_cache_utils.py:2464] GPU KV cache size: 1,522,359 tokens, Maximum concurrency for 2,144 tokens per request: 710.06x
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:31:09 [indexer.py:896] DSA indexer decode path: use_flattening=False supports_varlen=True (next_n=1, use_fp4_cache=False)
+(Worker_TP2_EP2 pid=3095932) INFO 11-23 19:31:09 [kernel_warmup.py:172] JIT kernel warmup starting.
+(Worker_TP4_EP4 pid=3095940) INFO 11-23 19:31:09 [kernel_warmup.py:172] JIT kernel warmup starting.
+(Worker_TP5_EP5 pid=3095942) INFO 11-23 19:31:09 [kernel_warmup.py:172] JIT kernel warmup starting.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:31:09 [kernel_warmup.py:172] JIT kernel warmup starting.
+(Worker_TP6_EP6 pid=3095944) INFO 11-23 19:31:09 [kernel_warmup.py:172] JIT kernel warmup starting.
+(Worker_TP7_EP7 pid=3095946) INFO 11-23 19:31:09 [kernel_warmup.py:172] JIT kernel warmup starting.
+(Worker_TP3_EP3 pid=3095937) INFO 11-23 19:31:09 [kernel_warmup.py:172] JIT kernel warmup starting.
+(Worker_TP1_EP1 pid=3095931) INFO 11-23 19:31:09 [kernel_warmup.py:172] JIT kernel warmup starting.
+JIT kernel warmup (183 compile keys):   0%|          | 0/10 [00:00<?, ?kernel/s]Elaborating:   0%|          | 0/14 [00:00<?, ?it/s]Elaborating:   0%|          | 0/14 [00:00<?, ?it/s]Elaborating:   0%|          | 0/14 [00:00<?, ?it/s]Elaborating:  21%|██▏       | 3/14 [00:00<00:00, 21.21it/s]Elaborating:   0%|          | 0/14 [00:00<?, ?it/s]Elaborating:  21%|██▏       | 3/14 [00:00<00:00, 20.93it/s]Elaborating:  21%|██▏       | 3/14 [00:00<00:00, 20.75it/s]Elaborating:  21%|██▏       | 3/14 [00:00<00:00, 20.77it/s]Elaborating:  43%|████▎     | 6/14 [00:00<00:00, 18.18it/s]Elaborating:  43%|████▎     | 6/14 [00:00<00:00, 18.06it/s]Elaborating:  43%|████▎     | 6/14 [00:00<00:00, 17.80it/s]Elaborating:  43%|████▎     | 6/14 [00:00<00:00, 17.94it/s]Elaborating:  71%|███████▏  | 10/14 [00:00<00:00, 21.05it/s]Elaborating:  71%|███████▏  | 10/14 [00:00<00:00, 20.91it/s]Elaborating:  71%|███████▏  | 10/14 [00:00<00:00, 20.64it/s]Elaborating:  93%|█████████▎| 13/14 [00:00<00:00, 22.00it/s]Elaborating: 100%|██████████| 14/14 [00:00<00:00, 22.38it/s]
+Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]Elaborating:  71%|███████▏  | 10/14 [00:00<00:00, 20.76it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]Parallel Compiling: 100%|██████████| 14/14 [00:00<00:00, 497.15it/s]
+Elaborating:  93%|█████████▎| 13/14 [00:00<00:00, 21.84it/s]Elaborating: 100%|██████████| 14/14 [00:00<00:00, 22.22it/s]
+Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]Elaborating:  93%|█████████▎| 13/14 [00:00<00:00, 21.61it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]Elaborating: 100%|██████████| 14/14 [00:00<00:00, 21.97it/s]
+Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]Parallel Compiling: 100%|██████████| 14/14 [00:00<00:00, 513.93it/s]
+                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]Parallel Compiling: 100%|██████████| 14/14 [00:00<00:00, 479.87it/s]
+Elaborating:  93%|█████████▎| 13/14 [00:00<00:00, 21.72it/s]2026-11-23 19:31:32  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:32  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:32  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+(Worker_TP7_EP7 pid=3095946) INFO 11-23 19:31:33 [kernel_warmup.py:185] JIT kernel warmup finished in 23.66s.
+Elaborating: 100%|██████████| 14/14 [00:00<00:00, 22.08it/s]
+Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]Parallel Compiling: 100%|██████████| 14/14 [00:00<00:00, 456.79it/s]
+2026-11-23 19:31:33  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:33  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:33  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+(Worker_TP4_EP4 pid=3095940) INFO 11-23 19:31:33 [kernel_warmup.py:185] JIT kernel warmup finished in 23.70s.
+2026-11-23 19:31:33  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:33  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:33  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+(Worker_TP5_EP5 pid=3095942) INFO 11-23 19:31:33 [kernel_warmup.py:185] JIT kernel warmup finished in 23.73s.
+2026-11-23 19:31:33  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:33  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:33  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+(Worker_TP6_EP6 pid=3095944) INFO 11-23 19:31:33 [kernel_warmup.py:185] JIT kernel warmup finished in 23.82s.
+(Worker_TP7_EP7 pid=3095946) INFO 11-23 19:31:34 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP4_EP4 pid=3095940) INFO 11-23 19:31:34 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP5_EP5 pid=3095942) INFO 11-23 19:31:34 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP6_EP6 pid=3095944) INFO 11-23 19:31:34 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+Elaborating:   0%|          | 0/14 [00:00<?, ?it/s]JIT kernel warmup (183 compile keys):  40%|████      | 4/10 [00:25<00:38,  6.35s/kernel, FusedWoAKernel (46 keys)]
+Elaborating:   0%|          | 0/14 [00:00<?, ?it/s][AElaborating:   0%|          | 0/14 [00:00<?, ?it/s]Elaborating:   0%|          | 0/14 [00:00<?, ?it/s]Elaborating:  21%|██▏       | 3/14 [00:00<00:00, 18.63it/s]
+Elaborating:  21%|██▏       | 3/14 [00:00<00:00, 18.34it/s][AElaborating:  21%|██▏       | 3/14 [00:00<00:00, 18.69it/s]Elaborating:  36%|███▌      | 5/14 [00:00<00:00, 16.21it/s]
+Elaborating:  36%|███▌      | 5/14 [00:00<00:00, 16.02it/s][AElaborating:  21%|██▏       | 3/14 [00:00<00:00, 18.93it/s]Elaborating:  36%|███▌      | 5/14 [00:00<00:00, 16.19it/s]Elaborating:  36%|███▌      | 5/14 [00:00<00:00, 16.28it/s]Elaborating:  64%|██████▍   | 9/14 [00:00<00:00, 19.84it/s]
+Elaborating:  64%|██████▍   | 9/14 [00:00<00:00, 19.61it/s][AElaborating:  64%|██████▍   | 9/14 [00:00<00:00, 19.70it/s]Elaborating:  79%|███████▊  | 11/14 [00:00<00:00, 17.88it/s]
+Elaborating:  79%|███████▊  | 11/14 [00:00<00:00, 17.65it/s][AElaborating:  64%|██████▍   | 9/14 [00:00<00:00, 19.81it/s]Elaborating:  79%|███████▊  | 11/14 [00:00<00:00, 17.72it/s]Elaborating: 100%|██████████| 14/14 [00:00<00:00, 19.99it/s]
+Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]Elaborating: 100%|██████████| 14/14 [00:00<00:00, 19.75it/s]
+
+Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s][A                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]Parallel Compiling: 100%|██████████| 14/14 [00:00<00:00, 440.10it/s]
+                                                                                                                  
+                                                          [AJIT kernel warmup (183 compile keys):  40%|████      | 4/10 [00:26<00:38,  6.35s/kernel, MHCPreNormKernel (15 keys)]
+Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s][A                                                                                                                    
+                                                          [AJIT kernel warmup (183 compile keys):  40%|████      | 4/10 [00:26<00:38,  6.35s/kernel, MHCPreNormKernel (15 keys)]
+Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s][A                                                                                                                    
+                                                          [AJIT kernel warmup (183 compile keys):  40%|████      | 4/10 [00:26<00:38,  6.35s/kernel, MHCPreNormKernel (15 keys)]
+Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s][AParallel Compiling: 100%|██████████| 14/14 [00:00<00:00, 438.65it/s]
+JIT kernel warmup (183 compile keys):  50%|█████     | 5/10 [00:26<00:24,  4.87s/kernel, MHCPreNormKernel (15 keys)]Elaborating: 100%|██████████| 14/14 [00:00<00:00, 19.79it/s]
+Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]Elaborating:  79%|███████▊  | 11/14 [00:00<00:00, 17.82it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]Parallel Compiling: 100%|██████████| 14/14 [00:00<00:00, 456.10it/s]
+Elaborating: 100%|██████████| 14/14 [00:00<00:00, 19.97it/s]
+Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]2026-11-23 19:31:35  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:35  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:35  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+(Worker_TP3_EP3 pid=3095937) INFO 11-23 19:31:35 [kernel_warmup.py:185] JIT kernel warmup finished in 26.26s.
+                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]JIT kernel warmup (183 compile keys): 100%|██████████| 10/10 [00:26<00:00,  1.71s/kernel, BuildPrefillChunkMetadataKernel (72 keys)]JIT kernel warmup (183 compile keys): 100%|██████████| 10/10 [00:26<00:00,  2.63s/kernel, BuildPrefillChunkMetadataKernel (72 keys)]
+2026-11-23 19:31:35  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:35  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:35  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:31:35 [kernel_warmup.py:185] JIT kernel warmup finished in 26.28s.
+                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]                                                          Parallel Compiling:   0%|          | 0/14 [00:00<?, ?it/s]Parallel Compiling: 100%|██████████| 14/14 [00:00<00:00, 473.78it/s]
+2026-11-23 19:31:35  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:35  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:35  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+(Worker_TP2_EP2 pid=3095932) INFO 11-23 19:31:35 [kernel_warmup.py:185] JIT kernel warmup finished in 26.31s.
+2026-11-23 19:31:35  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:35  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+2026-11-23 19:31:35  [TileLang:tilelang.cache.kernel_cache:WARNING] (kernel_cache.py:357): Found kernel 'mhc_pre_big_fuse_with_norm_tilelang' in memory cache. For better performance, consider using `@tilelang.jit` instead of direct kernel caching.
+(Worker_TP1_EP1 pid=3095931) INFO 11-23 19:31:35 [kernel_warmup.py:185] JIT kernel warmup finished in 26.41s.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:31:35 [kernel_warmup.py:94] Warming up ll_bf16 router GEMM kernels for shapes: ((5120, 384),).
+(Worker_TP3_EP3 pid=3095937) INFO 11-23 19:31:37 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:31:37 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP2_EP2 pid=3095932) INFO 11-23 19:31:37 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP1_EP1 pid=3095931) INFO 11-23 19:31:37 [flashinfer_sparse_mla_warmup.py:267] Warming up DeepSeek V4 sparse MLA attention for mixed tokens=16.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:31:37 [custom_all_reduce.py:576] Using the MNNVL Lamport all-gather kernel.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:31:39 [custom_all_reduce.py:672] Using the MNNVL Lamport reduce-scatter kernel.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:31:43 [kernel_warmup.py:255] Skipping FlashInfer autotune because it is disabled.
+Capturing CUDA graphs (FULL):   0%|          | 0/1 [00:00<?, ?it/s]Capturing CUDA graphs (FULL): 100%|██████████| 1/1 [00:00<00:00,  1.83it/s]Capturing CUDA graphs (FULL): 100%|██████████| 1/1 [00:00<00:00,  1.83it/s]
+(Worker_TP7_EP7 pid=3095946) INFO 11-23 19:31:50 [model_runner.py:1087] Graph capturing finished in 2 secs, took 0.22 GiB
+(Worker_TP7_EP7 pid=3095946) INFO 11-23 19:31:50 [jit_monitor.py:84] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(Worker_TP6_EP6 pid=3095944) INFO 11-23 19:31:50 [model_runner.py:1087] Graph capturing finished in 2 secs, took 0.22 GiB
+(Worker_TP6_EP6 pid=3095944) INFO 11-23 19:31:50 [jit_monitor.py:84] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(Worker_TP5_EP5 pid=3095942) INFO 11-23 19:31:50 [model_runner.py:1087] Graph capturing finished in 2 secs, took 0.22 GiB
+(Worker_TP5_EP5 pid=3095942) INFO 11-23 19:31:50 [jit_monitor.py:84] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(Worker_TP3_EP3 pid=3095937) INFO 11-23 19:31:50 [model_runner.py:1087] Graph capturing finished in 2 secs, took 0.22 GiB
+(Worker_TP3_EP3 pid=3095937) INFO 11-23 19:31:50 [jit_monitor.py:84] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(Worker_TP4_EP4 pid=3095940) INFO 11-23 19:31:50 [model_runner.py:1087] Graph capturing finished in 2 secs, took 0.22 GiB
+(Worker_TP4_EP4 pid=3095940) INFO 11-23 19:31:50 [jit_monitor.py:84] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(Worker_TP1_EP1 pid=3095931) INFO 11-23 19:31:50 [model_runner.py:1087] Graph capturing finished in 2 secs, took 0.22 GiB
+(Worker_TP1_EP1 pid=3095931) INFO 11-23 19:31:50 [jit_monitor.py:84] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(Worker_TP2_EP2 pid=3095932) INFO 11-23 19:31:50 [model_runner.py:1087] Graph capturing finished in 2 secs, took 0.22 GiB
+(Worker_TP2_EP2 pid=3095932) INFO 11-23 19:31:50 [jit_monitor.py:84] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:31:50 [model_runner.py:1087] Graph capturing finished in 2 secs, took 0.22 GiB
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:31:50 [jit_monitor.py:84] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+(MainProcess pid=3079399) INFO 11-23 19:31:51 [core.py:380] init engine (profile, create kv cache, warmup model) took 59.92 s
+(MainProcess pid=3079399) INFO 11-23 19:31:51 [kv_cache_utils.py:772] kv cache group sizes [32, 32, 32, 32, 32, 128, 8]
+(MainProcess pid=3079399) INFO 11-23 19:31:51 [kv_cache_utils.py:773] kv lcm block sizes 128
+(MainProcess pid=3079399) INFO 11-23 19:31:51 [base.py:255] Multi-modal warmup completed in 0.066s
+(MainProcess pid=3079399) WARNING 11-23 19:31:51 [input_processor.py:375] Passing raw prompts to InputProcessor is deprecated and will be removed in the future. You should instead pass the outputs of Renderer.render_cmpl() or Renderer.render_chat().
+(MainProcess pid=3079399) WARNING 11-23 19:31:51 [input_processor.py:332] VLLM_DISABLE_REQUEST_ID_RANDOMIZATION is set and will be removed in a future release. Duplicate externally-provided request IDs may cause failures and/or subtle correctness errors.
+(Worker_TP0_EP0 pid=3095925) WARNING 11-23 19:31:52 [jit_monitor.py:140] CuTeDSL JIT compilation during inference: GCMoERoleKernel. This causes a latency spike; consider extending warmup to cover this shape/config.
+(Worker_TP0_EP0 pid=3095925) INFO 11-23 19:31:54 [multiproc_executor.py:838] Parent process exited, terminating worker queues
+(MainProcess pid=3079399) INFO 11-23 19:31:54 [multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+(MainProcess pid=3079399) WARNING 11-23 19:31:59 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=3079399) WARNING 11-23 19:32:03 [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=8

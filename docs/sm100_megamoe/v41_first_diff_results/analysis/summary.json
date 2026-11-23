@@ -1,0 +1,111 @@
+{
+  "task": "docs/sm100_megamoe/V41_BS512_FIRST_DIFF.md",
+  "execution_sha": "f96d5b47994d10ead36bb84e55039032376dc80a",
+  "old_anchor_archive_commit": "37bc326",
+  "old_anchor_run_revision": "ecf5c52332c4bed43786f96118a6e3f5d863458a",
+  "gc_upstream_commit": "fb8b65fa829c97962eb2dbc9a4ad8b759b9cd736",
+  "exit_codes": {
+    "mega": 0,
+    "gc": 0
+  },
+  "stats_steps_per_arm": 1,
+  "ordered_moe_calls_per_rank": 40,
+  "block_m": 16,
+  "full_decode": true,
+  "mega_sm_split": null,
+  "gc_sm_split": {
+    "dispatch": 20,
+    "compute": 128
+  },
+  "prefill_tokens_equal": true,
+  "prompt_sha256": "b4fee0121ad43c17fdd5fccf5c4809602468725776257facc16f867e4c25cd86",
+  "snapshot_count": 64,
+  "snapshot_shape": {
+    "x": [
+      64,
+      5120
+    ],
+    "sf": [
+      64,
+      40
+    ],
+    "ids": [
+      64,
+      6
+    ],
+    "weights": [
+      64,
+      6
+    ],
+    "y": [
+      64,
+      5120
+    ]
+  },
+  "stored_dtypes": {
+    "x": "uint8 (FP8 bytes)",
+    "sf": "int32",
+    "ids": "int64",
+    "weights": "float32",
+    "y": "int16 (bfloat16 bits)"
+  },
+  "differing_tensors": [
+    {
+      "layer": 3,
+      "rank": 7,
+      "tensor": "x",
+      "different": 1263,
+      "elements": 327680,
+      "first": [
+        33,
+        2
+      ],
+      "mega": 209,
+      "gc": 210
+    },
+    {
+      "layer": 3,
+      "rank": 7,
+      "tensor": "weights",
+      "different": 6,
+      "elements": 384,
+      "first": [
+        33,
+        0
+      ],
+      "mega": 0.2723998427391052,
+      "gc": 0.27266591787338257
+    },
+    {
+      "layer": 3,
+      "rank": 7,
+      "tensor": "y",
+      "different": 4863,
+      "elements": 327680,
+      "first": [
+        33,
+        0
+      ],
+      "mega": -0.049072265625,
+      "gc": -0.0517578125
+    }
+  ],
+  "first_observable_difference": {
+    "layer": 3,
+    "rank": 7,
+    "row": 33,
+    "tensor": "x",
+    "index": [
+      33,
+      2
+    ],
+    "interpretation": "first captured tensor difference is the MoE input x; it appears before the captured output y",
+    "output_cannot_be_attributed_alone": "x and weights already differ on the same row, so y is not independent evidence of GC kernel output divergence",
+    "remaining_attribution": "prefill KV/attention and the upstream path feeding this captured MoE input remain to be distinguished"
+  },
+  "conclusion": "first captured divergence is at the MoE input x; this round does not attribute the captured y difference solely to the GC MoE kernel",
+  "lock": {
+    "acquired": "2026-11-23T19:23:21+08:00",
+    "released": "2026-11-23T19:32:24+08:00"
+  }
+}

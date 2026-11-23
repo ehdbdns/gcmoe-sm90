@@ -1,0 +1,34 @@
+[SM100] validation checklist
+
+PASS  execution revision = f96d5b47994d10ead36bb84e55039032376dc80a
+PASS  Mega formal exit = 0
+PASS  GC formal exit = 0
+PASS  each arm = exactly one stats decode step
+PASS  each rank full_decode = true
+PASS  each rank full_graph_observed_calls = 40
+PASS  each rank block_m = 16
+PASS  Mega sm_split = none
+PASS  GC sm_split = dispatch 20 / compute 128
+PASS  snapshots present = 64 = 2 arms x 4 layers x 8 ranks
+PASS  every snapshot shape = x(64,5120), sf(64,40), ids(64,6), weights(64,6), y(64,5120)
+PASS  every snapshot dtype = uint8, int32, int64, float32, int16 (bf16 bits)
+PASS  L0, L1, L2: all ranks and all tensors equal
+PASS  L3: ranks 0-6 equal; rank 7 differs only on row 33
+PASS  x differs only on row 33: 1263 / 327680 elements, columns 2-5115
+PASS  sf and ids are equal in every captured layer/rank
+PASS  weights differ only on row 33: 6 / 384 elements, all six gates
+PASS  y differs only on row 33: 4863 / 327680 bf16 elements, columns 0-5119
+PASS  first captured observable difference is MoE input x at L3/rank7/[33,2]
+PASS  output y is not treated as independent GC-kernel evidence because x and weights already differ
+PASS  prefill.json bytes equal across arms
+PASS  stats-tokens.npy bytes equal across arms
+PASS  prompt SHA256 equal across arms
+PASS  old anchor 37bc326 IDs exactly reproduced
+PASS  old anchor 37bc326 all six gate weights exactly reproduced; max abs delta = 0.0
+PASS  post-run compute apps empty
+PASS  post-run /dev/nvidia* holders none
+PASS  post-run group lock available
+
+NOTE  Wall-clock timings from this one-step capture are not used as performance conclusions.
+NOTE  The first captured x is already different, so prefill KV/attention and the upstream path feeding this MoE input remain to be distinguished.
+
