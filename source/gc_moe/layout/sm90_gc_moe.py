@@ -191,6 +191,8 @@ class SM90GCBufferLayout:
                     raise ValueError('single push requires streamed blocks and baseline replica transport')
                 # Alternate epochs so early peers never race a destination reset.
                 slot_words = ranks + 2 + (rows + min_block_m - 1) // min_block_m
+                if self.source_inbox:
+                    slot_words += 1  # closed source queues (after all their writes retire)
                 reserve('push_state', (2, local, slot_words), 'int32', 4)
                 reserve('push_ticket', (1,), 'int32', 4)
                 if self.source_inbox:
