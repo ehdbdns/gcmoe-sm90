@@ -1,0 +1,6 @@
+captured_at=2026-11-23T18:53:52+08:00
+command: nvidia-smi --query-compute-apps=gpu_uuid,pid --format=csv,noheader
+exit=0; empty output means no compute applications remain.
+
+command: fuser /dev/nvidia0 /dev/nvidia1 /dev/nvidia2 /dev/nvidia3 /dev/nvidia4 /dev/nvidia5 /dev/nvidia6 /dev/nvidia7
+no device holders

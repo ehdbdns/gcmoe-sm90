@@ -1,0 +1,67 @@
+captured_at=2026-11-23T18:53:49+08:00
+repo_commit=ecf5c52332c4bed43786f96118a6e3f5d863458a
+task_sha256=ab8b68706f58a66076d02ba035af30f0053294754a6c5bcac6445b9034b629ea
+upstream_commit=fb8b65fa829c97962eb2dbc9a4ad8b759b9cd736
+python=/data0/home/admin/workspace/megamoe/v41-native-greedy-VPCWiSrW/run/dsl-env/bin/python
+model=/data0/home/admin/workspace/megamoe/native-v41-KO1hTbTj/model
+model_layout=DeepSeek V4.1 Flash, TP8/EP8, fused shared, greedy, BS512, 40 expert layers, top-6, 48 local slots/rank
+workload=independent native greedy decode
+mega_backend_file=/data0/home/admin/workspace/megamoe/v41-native-greedy-VPCWiSrW/run/overlay/deep_gemm/mega/__init__.py
+mega_backend_sha256=9b391d7a93e4bbfc8b8de4041e9628272e9d3bd531e385a4c6318b700fd692c1
+gc_backend_file=/data0/home/admin/workspace/megamoe/v41-native-greedy-VPCWiSrW/run/upstream/gc_moe/gc/__init__.py
+gc_backend_sha256=c4f01e5ee8b0fd564a4548b16857aaca013a119f0c901c22798c39404c9a38c6
+gc_upstream_diff_sha256=487fdc6c60fcee3ad313e9ae61e33396b5d2bda082fc2c9d6e3f415a50f879a3
+prompt_sha256=b4fee0121ad43c17fdd5fccf5c4809602468725776257facc16f867e4c25cd86
+
+--- nvidia-smi -L ---
+GPU 0: NVIDIA L20D (UUID: GPU-3aad6312-0e20-d01b-4249-71cb090c2127)
+GPU 1: NVIDIA L20D (UUID: GPU-b0ac7f5d-738f-cdad-423f-456f4c26947e)
+GPU 2: NVIDIA L20D (UUID: GPU-c5a93c78-be0c-2648-564a-4b4666671960)
+GPU 3: NVIDIA L20D (UUID: GPU-77463de9-85e0-a6f3-2c7e-f1147d6f7f49)
+GPU 4: NVIDIA L20D (UUID: GPU-4a493131-84b9-4c88-18ee-50fc6f213a36)
+GPU 5: NVIDIA L20D (UUID: GPU-045e62f4-d04d-2f9e-e456-1fb82810029f)
+GPU 6: NVIDIA L20D (UUID: GPU-6b44066c-6712-30f2-02d0-fa0cb91733a3)
+GPU 7: NVIDIA L20D (UUID: GPU-31a509fd-e741-5ab8-b837-443ad986c404)
+
+--- nvidia-smi query ---
+0, GPU-3aad6312-0e20-d01b-4249-71cb090c2127, NVIDIA L20D, 8.9, 275040 MiB, 580.105.08
+1, GPU-b0ac7f5d-738f-cdad-423f-456f4c26947e, NVIDIA L20D, 8.9, 275040 MiB, 580.105.08
+2, GPU-c5a93c78-be0c-2648-564a-4b4666671960, NVIDIA L20D, 8.9, 275040 MiB, 580.105.08
+3, GPU-77463de9-85e0-a6f3-2c7e-f1147d6f7f49, NVIDIA L20D, 8.9, 275040 MiB, 580.105.08
+4, GPU-4a493131-84b9-4c88-18ee-50fc6f213a36, NVIDIA L20D, 8.9, 275040 MiB, 580.105.08
+5, GPU-045e62f4-d04d-2f9e-e456-1fb82810029f, NVIDIA L20D, 8.9, 275040 MiB, 580.105.08
+6, GPU-6b44066c-6712-30f2-02d0-fa0cb91733a3, NVIDIA L20D, 8.9, 275040 MiB, 580.105.08
+7, GPU-31a509fd-e741-5ab8-b837-443ad986c404, NVIDIA L20D, 8.9, 275040 MiB, 580.105.08
+
+--- torch view ---
+torch 2.13.0+cu130 cuda 13.0 cudnn 92000 devices 8
+0 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid 3aad6312-0e20-d01b-4249-71cb090c2127
+1 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid b0ac7f5d-738f-cdad-423f-456f4c26947e
+2 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid c5a93c78-be0c-2648-564a-4b4666671960
+3 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid 77463de9-85e0-a6f3-2c7e-f1147d6f7f49
+4 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid 4a493131-84b9-4c88-18ee-50fc6f213a36
+5 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid 045e62f4-d04d-2f9e-e456-1fb82810029f
+6 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid 6b44066c-6712-30f2-02d0-fa0cb91733a3
+7 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid 31a509fd-e741-5ab8-b837-443ad986c404
+
+--- installed versions ---
+numpy==2.3.5
+nvidia-cutlass-dsl==4.8.1
+nvidia-cutlass-dsl-libs-base==4.8.1
+nvidia-cutlass-dsl-libs-core==4.8.1
+nvidia-cutlass-dsl-libs-cu12==4.8.1
+nvidia-cutlass-dsl-libs-cu13==4.8.1
+torch==2.13.0
+triton==3.7.1
+vllm @ file:///data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/vllm-0.31.0-cp38-abi3-manylinux_2_28_x86_64.whl#sha256=39132b433967f0962d03d8a5f633b9bee6b32708f566c7d5637b79f8d0ef3433
+
+--- ptxas ---
+ptxas: NVIDIA (R) Ptx optimizing assembler
+Copyright (c) 2005-2026 NVIDIA Corporation
+Built on Mon_Oct_12_19:25:48_PDT_2026
+Cuda compilation tools, release 13.5, V13.5.37
+
+--- model index sha256 ---
+74b0686a3d2891980d5e303251b075a3bccae2c2ff650747db2620a649b98fa8  /data0/home/admin/workspace/megamoe/native-v41-KO1hTbTj/model/model.safetensors.index.json
+
+NOTE: nvidia-smi reports name L20D and compute_cap 8.9, while Torch reports capability (10,3); both observations are preserved verbatim.

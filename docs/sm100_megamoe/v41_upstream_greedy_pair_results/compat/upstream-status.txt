@@ -1,0 +1,19 @@
+ M gc_moe/eco/eco_unit_auction.cuh
+ M gc_moe/eco/eco_unit_kernel.cu
+ M gc_moe/eco/plan.py
+ M gc_moe/gc/__init__.py
+ M gc_moe/impls/sm100_fp8_fp4_gc_moe.py
+ M gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py
+ M gc_moe/runtime/gc_moe.py
+?? gc_moe/eco/meta_sm100.py
+?? gc_moe/eco/meta_sm90.py
+?? gc_moe/eplb/
+---
+ gc_moe/eco/eco_unit_auction.cuh                  |  4 +-
+ gc_moe/eco/eco_unit_kernel.cu                    | 24 ++++++----
+ gc_moe/eco/plan.py                               |  1 +
+ gc_moe/gc/__init__.py                            |  8 +++-
+ gc_moe/impls/sm100_fp8_fp4_gc_moe.py             | 59 +++++++++++++++++++++++-
+ gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py | 11 +++--
+ gc_moe/runtime/gc_moe.py                         |  3 +-
+ 7 files changed, 95 insertions(+), 15 deletions(-)

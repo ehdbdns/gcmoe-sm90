@@ -1,0 +1,11 @@
+{
+  "mega_ms": 7.721903471471472,
+  "gc_ms": 8.43966203003003,
+  "gc_minus_mega_percent": 9.295098821298575,
+  "signed_gc_time_change_percent": 9.295098821298575,
+  "clean_steps": 999,
+  "method": "per step/layer max of eight local full-MoE durations; sum 40 layers; mean over 999 steps excluding step 2",
+  "independent_generation": true,
+  "route_divergence_expected": true,
+  "comparison_note": "Each arm decodes its own trajectory; after the first token divergence, context, routes and per-layer work are no longer the same even though the launch envelope remains BS512."
+}

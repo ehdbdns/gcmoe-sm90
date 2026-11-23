@@ -1,0 +1,19 @@
+captured_at=2026-11-23T18:53:52+08:00
+GC_MOE_DISPATCH_SMS=<unset>
+GC_MOE_BALANCED_WORKQUEUES=<unset>
+runner_explicitly_unsets_native_greedy_partition:
+if [[ ${2:-} == full-native-bs512 ]]; then export SM100_FULL_DECODE=1 SM100_PHASE_TRACE=1; fi
+if [[ ${SM100_FULL_DECODE:-} == 1 || ${2:-} == formal-bs512 || ${SM100_DIRECT_512:-} == 1 ]]; then
+  export SM100_FORMAL_512=1 SM100_MATRIX_BS=512 GC_MOE_DISPATCH_SMS=8
+  if [[ ${SM100_NATIVE_GREEDY:-} == 1 ]]; then
+    unset GC_MOE_DISPATCH_SMS
+  fi
+  export PATH="$root/dsl-env/bin:$PATH"
+    export PATH="$root/dsl-env/bin:$PATH"
+    test "$(command -v python)" = "$root/dsl-env/bin/python"
+    unset GC_MOE_DISPATCH_SMS GC_MOE_PRIMARY_CTX GC_MOE_BALANCED_WORKQUEUES
+    python -c 'import gc_moe,cutlass,os; from pathlib import Path; from importlib.metadata import version; assert Path(os.environ["SM100_UPSTREAM_PAIR"]).resolve() in Path(gc_moe.__file__).resolve().parents; assert version("nvidia-cutlass-dsl") == "4.8.1"; print(gc_moe.__file__,cutlass.__file__)' > "$root/imports.txt"
+    python -m pip freeze > "$root/versions.txt"
+actual_gc_sm_split_from_result_json:
+stats {'dispatch': 20, 'compute': 128}
+measure {'dispatch': 20, 'compute': 128}
