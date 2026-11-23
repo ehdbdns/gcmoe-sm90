@@ -1,0 +1,23 @@
+diff --git a/scripts/trace_layer/pull_gemm_detail.py b/scripts/trace_layer/pull_gemm_detail.py
+index d1b46f9..eb36a80 100644
+--- a/scripts/trace_layer/pull_gemm_detail.py
++++ b/scripts/trace_layer/pull_gemm_detail.py
+@@ -369,8 +369,17 @@ def analyze(capture_dir, deliver_dir, require_streamed_blocks=False, require_bat
+                 raise ValueError(f'epoch {epoch}, rank {rank}: {exc}') from exc
+         stem = path.name.removesuffix('.counts.json')
+         coarse = json.loads((deliver_dir / f'{stem}.perfetto.json').read_text())
+-        spans = [event for event in coarse['traceEvents'] if event.get('ph') == 'X']
++        # The plan-on-communication arm emits an extra admission gate span
++        # ("wait for resident plan CTA") that is not part of segment_us; keep
++        # it out of the segment cross-check but require one per rank.
++        gates = [event for event in coarse['traceEvents']
++                 if event.get('ph') == 'X' and event.get('cat') == 'admission']
++        spans = [event for event in coarse['traceEvents']
++                 if event.get('ph') == 'X' and event.get('cat') != 'admission']
+         by_rank = {row['rank']: row for row in counts['ranks']}
++        require(len(gates) in (0, RANKS)
++                and len({event['pid'] for event in gates}) == len(gates),
++                'unexpected admission gate spans')
+         require(len(spans) == RANKS * (6 if manifest.get("arm") == "rr" else 7)
+                 and len({(event['args']['rank'], event['name']) for event in spans}) == len(spans)
+                 and all(event['args']['epoch'] == epoch

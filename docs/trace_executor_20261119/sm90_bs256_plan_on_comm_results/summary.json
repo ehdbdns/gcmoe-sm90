@@ -1,0 +1,787 @@
+{
+ "task": "SM90_BS256_PLAN_ON_COMM",
+ "execution_sha": "63b70e6975c7dc8138bd4e5967b0265830108fac",
+ "trial_workspace": "/tmp/sm90-bs256-eco-J7wY5kWu",
+ "arms": {
+  "baseline": {
+   "stats_ms": 99.47907416382805,
+   "measured_ms": 92.95735667925328
+  },
+  "dispatch": {
+   "stats_ms": 96.41264479793608,
+   "measured_ms": 92.4478155891411
+  }
+ },
+ "samples": {
+  "baseline": {
+   "0": {
+    "epoch": 46481,
+    "capture_id": "3c9baba8bffa4da3a0440ded792b5b42",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 32.62,
+     "pull token": 139.36,
+     "shared L1+L2": 195.64,
+     "ECO plan": 110.74,
+     "wait token": 2.0,
+     "GEMM": 663.83,
+     "combine": 42.81
+    },
+    "m_blocks_total": 393,
+    "rank0_rel_us": {
+     "dispatch": 180.0,
+     "shared": 194.8,
+     "plan": 113.8,
+     "routed": 847.4,
+     "combine": 912.4
+    },
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 188.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 1,
+      "tokens": 189.0,
+      "m_blocks": 51
+     },
+     {
+      "rank": 2,
+      "tokens": 194.0,
+      "m_blocks": 50
+     },
+     {
+      "rank": 3,
+      "tokens": 197.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 4,
+      "tokens": 190.0,
+      "m_blocks": 52
+     },
+     {
+      "rank": 5,
+      "tokens": 189.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 6,
+      "tokens": 190.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 7,
+      "tokens": 199.0,
+      "m_blocks": 48
+     }
+    ]
+   },
+   "8": {
+    "epoch": 46489,
+    "capture_id": "3c9baba8bffa4da3a0440ded792b5b42",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 24.38,
+     "pull token": 174.17,
+     "shared L1+L2": 194.95,
+     "ECO plan": 122.6,
+     "wait token": 2.12,
+     "GEMM": 664.7,
+     "combine": 38.72
+    },
+    "m_blocks_total": 377,
+    "rank0_rel_us": {
+     "dispatch": 215.9,
+     "shared": 193.6,
+     "plan": 122.8,
+     "routed": 875.7,
+     "combine": 906.7
+    },
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 202.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 1,
+      "tokens": 184.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 2,
+      "tokens": 194.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 3,
+      "tokens": 189.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 4,
+      "tokens": 193.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 5,
+      "tokens": 178.0,
+      "m_blocks": 43
+     },
+     {
+      "rank": 6,
+      "tokens": 198.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 7,
+      "tokens": 198.0,
+      "m_blocks": 48
+     }
+    ]
+   },
+   "20": {
+    "epoch": 46501,
+    "capture_id": "3c9baba8bffa4da3a0440ded792b5b42",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 23.62,
+     "pull token": 193.48,
+     "shared L1+L2": 196.24,
+     "ECO plan": 126.12,
+     "wait token": 2.0,
+     "GEMM": 658.09,
+     "combine": 45.52
+    },
+    "m_blocks_total": 362,
+    "rank0_rel_us": {
+     "dispatch": 217.2,
+     "shared": 193.9,
+     "plan": 128.9,
+     "routed": 822.8,
+     "combine": 906.6
+    },
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 185.0,
+      "m_blocks": 45
+     },
+     {
+      "rank": 1,
+      "tokens": 183.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 2,
+      "tokens": 193.0,
+      "m_blocks": 44
+     },
+     {
+      "rank": 3,
+      "tokens": 180.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 4,
+      "tokens": 202.0,
+      "m_blocks": 45
+     },
+     {
+      "rank": 5,
+      "tokens": 185.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 6,
+      "tokens": 211.0,
+      "m_blocks": 42
+     },
+     {
+      "rank": 7,
+      "tokens": 197.0,
+      "m_blocks": 43
+     }
+    ]
+   },
+   "32": {
+    "epoch": 46513,
+    "capture_id": "3c9baba8bffa4da3a0440ded792b5b42",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 25.0,
+     "pull token": 174.66,
+     "shared L1+L2": 196.84,
+     "ECO plan": 118.35,
+     "wait token": 2.0,
+     "GEMM": 668.69,
+     "combine": 37.55
+    },
+    "m_blocks_total": 375,
+    "rank0_rel_us": {
+     "dispatch": 194.9,
+     "shared": 195.0,
+     "plan": 122.2,
+     "routed": 866.8,
+     "combine": 913.1
+    },
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 186.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 1,
+      "tokens": 186.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 2,
+      "tokens": 190.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 3,
+      "tokens": 198.0,
+      "m_blocks": 45
+     },
+     {
+      "rank": 4,
+      "tokens": 203.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 5,
+      "tokens": 187.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 6,
+      "tokens": 202.0,
+      "m_blocks": 46
+     },
+     {
+      "rank": 7,
+      "tokens": 184.0,
+      "m_blocks": 45
+     }
+    ]
+   },
+   "39": {
+    "epoch": 46520,
+    "capture_id": "3c9baba8bffa4da3a0440ded792b5b42",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 22.0,
+     "pull token": 155.32,
+     "shared L1+L2": 195.35,
+     "ECO plan": 110.89,
+     "wait token": 2.0,
+     "GEMM": 662.35,
+     "combine": 33.94
+    },
+    "m_blocks_total": 385,
+    "rank0_rel_us": {
+     "dispatch": 173.7,
+     "shared": 193.1,
+     "plan": 111.5,
+     "routed": 866.8,
+     "combine": 897.0
+    },
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 188.0,
+      "m_blocks": 50
+     },
+     {
+      "rank": 1,
+      "tokens": 181.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 2,
+      "tokens": 187.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 3,
+      "tokens": 208.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 4,
+      "tokens": 200.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 5,
+      "tokens": 183.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 6,
+      "tokens": 200.0,
+      "m_blocks": 46
+     },
+     {
+      "rank": 7,
+      "tokens": 189.0,
+      "m_blocks": 47
+     }
+    ]
+   }
+  },
+  "dispatch": {
+   "0": {
+    "epoch": 46481,
+    "capture_id": "1ab232f8e84d40ea8c3806410a42d910",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 28.88,
+     "pull token": 150.48,
+     "shared L1+L2": 153.33,
+     "ECO plan": 110.58,
+     "wait token": 2.25,
+     "GEMM": 658.78,
+     "combine": 39.07
+    },
+    "m_blocks_total": 393,
+    "rank0_rel_us": {
+     "dispatch": 201.3,
+     "shared": 163.3,
+     "plan": 113.6,
+     "routed": 814.5,
+     "combine": 863.6,
+     "gate_end": 3.5
+    },
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 188.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 1,
+      "tokens": 189.0,
+      "m_blocks": 51
+     },
+     {
+      "rank": 2,
+      "tokens": 194.0,
+      "m_blocks": 50
+     },
+     {
+      "rank": 3,
+      "tokens": 197.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 4,
+      "tokens": 190.0,
+      "m_blocks": 52
+     },
+     {
+      "rank": 5,
+      "tokens": 189.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 6,
+      "tokens": 190.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 7,
+      "tokens": 199.0,
+      "m_blocks": 48
+     }
+    ]
+   },
+   "8": {
+    "epoch": 46489,
+    "capture_id": "1ab232f8e84d40ea8c3806410a42d910",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 22.38,
+     "pull token": 182.97,
+     "shared L1+L2": 156.22,
+     "ECO plan": 125.98,
+     "wait token": 2.62,
+     "GEMM": 659.16,
+     "combine": 42.33
+    },
+    "m_blocks_total": 377,
+    "rank0_rel_us": {
+     "dispatch": 230.4,
+     "shared": 155.8,
+     "plan": 127.9,
+     "routed": 834.3,
+     "combine": 864.7,
+     "gate_end": 5.3
+    },
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 202.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 1,
+      "tokens": 184.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 2,
+      "tokens": 194.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 3,
+      "tokens": 189.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 4,
+      "tokens": 193.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 5,
+      "tokens": 178.0,
+      "m_blocks": 43
+     },
+     {
+      "rank": 6,
+      "tokens": 198.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 7,
+      "tokens": 198.0,
+      "m_blocks": 48
+     }
+    ]
+   },
+   "20": {
+    "epoch": 46501,
+    "capture_id": "1ab232f8e84d40ea8c3806410a42d910",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 21.38,
+     "pull token": 203.15,
+     "shared L1+L2": 153.29,
+     "ECO plan": 131.5,
+     "wait token": 2.25,
+     "GEMM": 651.89,
+     "combine": 34.59
+    },
+    "m_blocks_total": 362,
+    "rank0_rel_us": {
+     "dispatch": 222.0,
+     "shared": 158.0,
+     "plan": 131.9,
+     "routed": 784.4,
+     "combine": 848.6,
+     "gate_end": 4.3
+    },
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 185.0,
+      "m_blocks": 45
+     },
+     {
+      "rank": 1,
+      "tokens": 183.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 2,
+      "tokens": 193.0,
+      "m_blocks": 44
+     },
+     {
+      "rank": 3,
+      "tokens": 180.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 4,
+      "tokens": 202.0,
+      "m_blocks": 45
+     },
+     {
+      "rank": 5,
+      "tokens": 185.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 6,
+      "tokens": 211.0,
+      "m_blocks": 42
+     },
+     {
+      "rank": 7,
+      "tokens": 197.0,
+      "m_blocks": 43
+     }
+    ]
+   },
+   "32": {
+    "epoch": 46513,
+    "capture_id": "1ab232f8e84d40ea8c3806410a42d910",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 22.75,
+     "pull token": 183.99,
+     "shared L1+L2": 154.51,
+     "ECO plan": 125.76,
+     "wait token": 2.25,
+     "GEMM": 661.34,
+     "combine": 42.01
+    },
+    "m_blocks_total": 375,
+    "rank0_rel_us": {
+     "dispatch": 212.5,
+     "shared": 155.9,
+     "plan": 125.9,
+     "routed": 806.2,
+     "combine": 865.6,
+     "gate_end": 4.1
+    },
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 186.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 1,
+      "tokens": 186.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 2,
+      "tokens": 190.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 3,
+      "tokens": 198.0,
+      "m_blocks": 45
+     },
+     {
+      "rank": 4,
+      "tokens": 203.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 5,
+      "tokens": 187.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 6,
+      "tokens": 202.0,
+      "m_blocks": 46
+     },
+     {
+      "rank": 7,
+      "tokens": 184.0,
+      "m_blocks": 45
+     }
+    ]
+   },
+   "39": {
+    "epoch": 46520,
+    "capture_id": "1ab232f8e84d40ea8c3806410a42d910",
+    "kineto_base_time_ns": {
+     "0": 1790857026000000000,
+     "1": 1790857026000000000,
+     "2": 1790857026000000000,
+     "3": 1790857026000000000,
+     "4": 1790857026000000000,
+     "5": 1790857026000000000,
+     "6": 1790857026000000000,
+     "7": 1790857026000000000
+    },
+    "segment_us_avg": {
+     "count exchange": 21.75,
+     "pull token": 168.43,
+     "shared L1+L2": 154.25,
+     "ECO plan": 113.84,
+     "wait token": 2.12,
+     "GEMM": 657.39,
+     "combine": 35.81
+    },
+    "m_blocks_total": 385,
+    "rank0_rel_us": {
+     "dispatch": 207.3,
+     "shared": 152.2,
+     "plan": 119.3,
+     "routed": 822.8,
+     "combine": 852.6,
+     "gate_end": 5.4
+    },
+    "per_rank": [
+     {
+      "rank": 0,
+      "tokens": 188.0,
+      "m_blocks": 50
+     },
+     {
+      "rank": 1,
+      "tokens": 181.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 2,
+      "tokens": 187.0,
+      "m_blocks": 48
+     },
+     {
+      "rank": 3,
+      "tokens": 208.0,
+      "m_blocks": 47
+     },
+     {
+      "rank": 4,
+      "tokens": 200.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 5,
+      "tokens": 183.0,
+      "m_blocks": 49
+     },
+     {
+      "rank": 6,
+      "tokens": 200.0,
+      "m_blocks": 46
+     },
+     {
+      "rank": 7,
+      "tokens": 189.0,
+      "m_blocks": 47
+     }
+    ]
+   }
+  }
+ },
+ "placement": {
+  "0": {
+   "1": [
+    73,
+    74,
+    75,
+    76,
+    77
+   ],
+   "5": [
+    72
+   ]
+  },
+  "1": {
+   "1": [
+    72,
+    73,
+    75,
+    76,
+    77
+   ],
+   "5": [
+    74
+   ]
+  }
+ },
+ "executor_fix": {
+  "file": "scripts/trace_layer/pull_gemm_detail.py",
+  "reason": "coarse-span cross-check hard-coded RANKS*7 but the plan-on-comm arm emits an extra admission gate span per rank",
+  "semantics": "unchanged; the gate span is excluded from the segment match and required to be 0 or one per rank"
+ }
+}
