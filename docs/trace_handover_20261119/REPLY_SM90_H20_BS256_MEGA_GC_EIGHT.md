@@ -163,3 +163,74 @@ sudo mount -t nfs -o vers=4,minorversion=0,noresvport \
 | 历史回执与产物 | ✅ 完整（`docs/trace_handover_20261119`、`docs/trace_executor_20261119`）|
 
 > 注：重启后仓库的 `remote` 仍带 token；`git fetch` 正常，已与 `origin/main` 同步到 `a9f58ca`。
+
+
+---
+
+# 追加：CPU 私有构建（`27473c1`）— ✅ **成功**
+
+## A. 构建结果
+
+`deep_gemm` 已在**私有持久目录**成功构建并安装，**共享 `env3` 未被改动**（`--target` 到私有 `site/`）。
+
+| 项 | 值 |
+|---|---|
+| 构建目录 | `app_source/sm90_persist_20261123/dg-sm90-build-ohe59RVP` |
+| 源码 revision | **`7292e7bd0ef3b497ca948a7239d55f3f01539048`**（= 任务书指定）|
+| submodules | cutlass `f3fde58`（v4.2.1）、deep_jit `2efdab4` |
+| **wheel** | `deep_gemm-2.8.2+7292e7b-cp310-cp310-linux_x86_64.whl` |
+| **wheel SHA256** | **`7c848494dbd01daa77ea80765888073cb63b85d7f74054fbcead404598ddf61e`** |
+| 安装目标 | `<area>/site/deep_gemm` + `deep_gemm-2.8.2+7292e7b.dist-info` |
+| 编译架构 | `TORCH_CUDA_ARCH_LIST=9.0`（SM90/H20）、`DG_FORCE_BUILD=1`、`MAX_JOBS=8`、`CUDA_VISIBLE_DEVICES=''` |
+
+## B. 三个官方入口已可用（CPU 导入验证，未上卡）
+
+```
+deep_gemm.__version__ = 2.8.2
+fp8_mega_moe -> (y, l1_weights, l2_weights, sym_buffer,
+                 cumulative_local_expert_recv_stats=None, recipe=(128,128,128),
+                 activation='swiglu', activation_clamp=None, fast_math=True)
+get_symm_buffer_for_sm90_mega_moe -> (group, num_experts, num_max_tokens_per_rank,
+                 num_topk, hidden, intermediate_hidden, use_fp8_dispatch=True, activation='swiglu')
+transform_weights_for_mega_moe_sm90 -> (l1_weights, l2_weights) -> ...
+```
+
+完整记录见 `deepgemm_wheel_and_import.txt`。
+
+## C. 途中解决的两个环境阻塞（均为**不改语义**的系统/构建配置）
+
+| # | 阻塞 | 解决方式 | 是否改动实验代码 |
+|---|---|---|---|
+| 1 | 头文件 `elfutils/libdwfl.h` 缺失 | `sudo yum install -y --disablerepo='epel*' elfutils-devel`（**禁用不可达的 epel 源**后用 Alinux 源成功；`libdw.so.1` 本就存在）| ❌ 否（仅系统开发包）|
+| 2 | `g++` 10.2 不支持 C++20 `<format>` | 改用本机已有的 **conda-forge GCC 15.3.0**（`app_source/deep_ep25_ar_probe_20261025/toolchain`）作为 `CC`/`CXX` | ❌ 否（仅编译器选择）|
+| 3 | 导入时 `GLIBCXX_3.4.31` 缺失 | 运行时把该 toolchain 的 `lib` 前置到 `LD_LIBRARY_PATH`（仓库 `scripts/env.sh` 本就这么做，第 18 行 `LD_LIBRARY_PATH=$NCCL_ROOT/lib:$TOOLCHAIN/lib:...`）| ❌ 否（与既有 env.sh 一致）|
+
+**未做**：没有改写 `deep_jit` 源码、没有伪造头文件、没有改 `setup.py` 的宏或编译开关。
+三次尝试的原始记录留在 `dgbuild-blocker.txt`（首错）与 `implicit-build-dependency.txt`（grep 摘录）。
+
+## D. 正式运行时如何使用这个私有包
+
+任务书要求"正式运行使用单进程私有包路径"。启动器需要：
+
+```bash
+export PYTHONPATH=<area>/site:$PWD/source:$PWD/patches:$PWD/integration
+export LD_LIBRARY_PATH=<toolchain>/lib:$LD_LIBRARY_PATH   # scripts/env.sh 已含同类设置
+```
+
+（`<area>` = `app_source/sm90_persist_20261123/dg-sm90-build-ohe59RVP`）
+
+## E. 仍缺的一项
+
+八臂启动器与正式命令：任务书 §"用卡、交付和执行边界"说由设计端补充固定 SHA，
+`27473c1` 只补了 CPU 构建这一段，**尚未给出八臂命令**。模型、数据集、`deep_gemm` 均已就绪，
+只等这一项即可在八卡全空闲时开跑。
+
+## F. 现场
+
+| 内容 | 路径 |
+|---|---|
+| 构建区（源码/submodule/wheel/site/日志）| `app_source/sm90_persist_20261123/dg-sm90-build-ohe59RVP/` |
+| wheel 与导入验证日志 | `.../sm90_h20_bs256_mega_gc_eight_results/deepgemm_wheel_and_import.txt` |
+| 首错与三次尝试记录 | `.../dgbuild-blocker.txt`、`.../implicit-build-dependency.txt` |
+
+GPU：八卡仍全空闲（各 4 MiB，0 个 compute app），**本轮未占用**。

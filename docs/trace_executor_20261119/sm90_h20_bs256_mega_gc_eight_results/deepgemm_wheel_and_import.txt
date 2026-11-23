@@ -1,0 +1,18 @@
+=== deep_gemm wheel + import verification (CPU, no GPU)
+area=/home/admin/workspace/aop_lab/app_source/sm90_persist_20261123/dg-sm90-build-ohe59RVP
+src_rev=7292e7bd0ef3b497ca948a7239d55f3f01539048
+ f3fde58372d33e9a5650ba7b80fc48b3b49d40c8 third-party/cutlass (v4.2.1)
+ 2efdab421e1cfb17fe8bc20e11ca72aa6d0e6c43 third-party/deep_jit (2efdab4)
+--- wheel:
+7c848494dbd01daa77ea80765888073cb63b85d7f74054fbcead404598ddf61e  /home/admin/workspace/aop_lab/app_source/sm90_persist_20261123/dg-sm90-build-ohe59RVP/wheels/deep_gemm-2.8.2+7292e7b-cp310-cp310-linux_x86_64.whl
+--- build env:
+CC=x86_64-conda-linux-gnu-gcc 15.3.0 (deep_ep25_ar_probe_20261025/toolchain)
+CXX=x86_64-conda-linux-gnu-g++ 15.3.0
+TORCH_CUDA_ARCH_LIST=9.0 DG_FORCE_BUILD=1 MAX_JOBS=8 CUDA_VISIBLE_DEVICES=''
+system elfutils-devel: installed via sudo yum install -y --disablerepo='epel*' elfutils-devel
+--- import check + signatures:
+origin: /home/admin/workspace/aop_lab/app_source/sm90_persist_20261123/dg-sm90-build-ohe59RVP/site/deep_gemm/__init__.py
+version: 2.8.2
+fp8_mega_moe -> (y: torch.Tensor, l1_weights: Tuple[torch.Tensor, torch.Tensor], l2_weights: Tuple[torch.Tensor, torch.Tensor], sym_buffer: deep_gemm.mega.SM90SymmBuffer, cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None, recipe: Tuple[int, int, int] = (128, 128, 128), activation: str = 'swiglu', activation_clamp: Optional[float] = None, fast_math: bool = True)
+get_symm_buffer_for_sm90_mega_moe -> (group: torch.distributed.distributed_c10d.ProcessGroup, num_experts: int, num_max_tokens_per_rank: int, num_topk: int, hidden: int, intermediate_hidden: int, use_fp8_dispatch: bool = True, activation: str = 'swiglu') -> deep_gemm.mega.SM90SymmBuffer
+transform_weights_for_mega_moe_sm90 -> (l1_weights: Tuple[torch.Tensor, torch.Tensor], l2_weights: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]

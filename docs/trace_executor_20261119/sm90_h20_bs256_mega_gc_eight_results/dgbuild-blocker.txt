@@ -1,0 +1,17 @@
+=== dgbuild attempt 1 (27473c1)
+area=/home/admin/workspace/aop_lab/app_source/sm90_persist_20261123/dg-sm90-build-ohe59RVP
+src_rev=7292e7bd0ef3b497ca948a7239d55f3f01539048
+submodules:
+ f3fde58372d33e9a5650ba7b80fc48b3b49d40c8 third-party/cutlass (v4.2.1)
+ 2efdab421e1cfb17fe8bc20e11ca72aa6d0e6c43 third-party/deep_jit (2efdab4)
+--- first error:
+164-                       from third-party/deep_jit/include/deep_jit/backend/cuda/backend.hpp:12,
+165-                       from csrc/python_api.cpp:4:
+166:      third-party/deep_jit/include/deep_jit/utils/exception.hpp:3:10: fatal error: elfutils/libdwfl.h: No such file or directory
+167:          3 | #include <elfutils/libdwfl.h>
+168-            |          ^~~~~~~~~~~~~~~~~~~~
+169-      compilation terminated.
+--- yum attempt:
+sudo yum install -y elfutils-devel -> failed: mirrors.cloud.aliyuncs.com port 80 timeout
+--- pypi attempt:
+pip download elfutils-devel -> No matching distribution found
