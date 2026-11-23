@@ -161,8 +161,11 @@ def setup(worker, root, arm, bs):
     buf = experts[0].get_symm_buffer()
     m.bm = dg.get_block_m_for_mega_moe(8,384,buf.num_max_tokens_per_rank,ROWS,K,"fp8xfp4")
     if FAIR:
-        from vllm.models.deepseek_v4.nvidia.model import DeepseekV4DecoderLayer
-        m.fair_layers = [v for v in worker.get_model().modules() if isinstance(v, DeepseekV4DecoderLayer)]
+        from vllm.models.deepseek_v41.nvidia.model import DeepseekV4DecoderLayer
+        m.fair_layers = sorted(
+            (v for v in worker.get_model().modules() if isinstance(v, DeepseekV4DecoderLayer)),
+            key=lambda v: v.ffn.experts.layer_id,
+        )
         assert [v.ffn.experts.layer_id for v in m.fair_layers] == list(range(LAYERS))
     worker._matrix = m
     return True

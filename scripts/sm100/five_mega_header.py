@@ -82,6 +82,9 @@ def fp8_fp4_mega_moe(*args, **kwargs):
     return _matrix_original(*args, **kwargs)
 """)
     header = dest / "include/deep_gemm/impls/sm100_fp8_fp4_mega_moe.cuh"
+    if os.getenv("SM100_VLLM_COMBINE_ORDER") == "1":
+        if "const uint32_t slot_idx = __ffs(mask) - 1;" not in header.read_text():
+            raise RuntimeError("Installed Mega combine slot order differs from the pinned vLLM fork")
     source = instrument(header.read_text())
     if os.getenv("SM100_PHASE_TRACE"):
         from native_phase_instrument import mega

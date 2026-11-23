@@ -1,0 +1,30 @@
+--- a/gc_moe/impls/sm100_fp8_fp4_gc_moe.py
++++ b/gc_moe/impls/sm100_fp8_fp4_gc_moe.py
+@@ -731,12 +731,7 @@
+                 # before waiting/accumulating the current load.
+                 do_reduce = mask != Uint32(0)
+                 if do_reduce:
+-                    if cutlass.const_expr(self.shared_experts > 0):
+-                        slot = (Uint32(self.topk) if
+-                                (mask & (Uint32(1) << Uint32(self.topk))) != Uint32(0)
+-                                else warp_first_set_bit(mask))
+-                    else:
+-                        slot = warp_first_set_bit(mask)
++                    slot = warp_first_set_bit(mask)
+                     mask ^= Uint32(1) << slot
+                     if elect_one_sync():
+                         src = combine + \
+@@ -755,12 +750,7 @@
+                 while do_reduce:
+                     next_reduce = mask != Uint32(0)
+                     if next_reduce:
+-                        if cutlass.const_expr(self.shared_experts > 0):
+-                            slot = (Uint32(self.topk) if
+-                                    (mask & (Uint32(1) << Uint32(self.topk))) != Uint32(0)
+-                                    else warp_first_set_bit(mask))
+-                        else:
+-                            slot = warp_first_set_bit(mask)
++                        slot = warp_first_set_bit(mask)
+                         mask ^= Uint32(1) << slot
+                         if elect_one_sync():
+                             src = combine + \

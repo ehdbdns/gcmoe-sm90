@@ -54,6 +54,9 @@ if [[ ${SM100_FULL_DECODE:-} == 1 || ${2:-} == formal-bs512 || ${SM100_DIRECT_51
   if [[ ${SM100_NATIVE_GREEDY:-} == 1 || ${2:-} == strict-native-bs512 ]]; then
     git -C "$root/upstream" apply "$repo/docs/sm100_megamoe/v41_full_decode_pair_results/compat/gc_capture_fix.diff"
   fi
+  if [[ ${SM100_VLLM_COMBINE_ORDER:-0} == 1 ]]; then
+    git -C "$root/upstream" apply "$repo/scripts/sm100/vllm_combine_order.patch"
+  fi
   cp -R "$repo/source/gc_moe/eplb" "$root/upstream/gc_moe/"
   cp "$repo/source/gc_moe/eco/"meta_sm{90,100}.py "$root/upstream/gc_moe/eco/"
   unset GC_MOE_ECO_BLOCK_M GC_MOE_ECO_PLAN_DISPATCH GC_MOE_ECO_HELPER GC_MOE_ECO_TRACE

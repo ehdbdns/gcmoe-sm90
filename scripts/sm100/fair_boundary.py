@@ -1,6 +1,7 @@
 """Short, untimed native trace and paired expert replay with actual decode operands."""
 import hashlib
 import json
+import os
 from functools import wraps
 from types import SimpleNamespace
 
@@ -10,7 +11,8 @@ from stream_checkpoint import checkpoint, named_caches, runner_boundary, tensor_
 
 
 def install():
-    from vllm.models.deepseek_v4.nvidia.model import DeepseekV4DecoderLayer, DeepseekV4MegaMoEExperts
+    from vllm.models.deepseek_v4.nvidia.model import DeepseekV4MegaMoEExperts
+    from vllm.models.deepseek_v41.nvidia.model import DeepseekV4DecoderLayer
 
     init = DeepseekV4DecoderLayer.__init__
 
@@ -116,10 +118,12 @@ def replay(m):
             size = slots * buf.num_max_tokens_per_rank * buf.hidden * 2
             partials = buf.buffer.narrow(0, start, size).view(torch.bfloat16).reshape(
                 slots, buf.num_max_tokens_per_rank, buf.hidden)[:, :n]
-            # Reconstruct shared-first, then routed-slot order. This guards the
+            # Reconstruct the selected backend reduction order. This guards the
             # raw layout calculation before interpreting any per-slot hash.
-            total = partials[-1].float()
-            for partial in partials[:-1]:
+            routed_first = m.publisher or os.getenv("SM100_VLLM_COMBINE_ORDER") == "1"
+            ordered = list(partials) if routed_first else [partials[-1], *partials[:-1]]
+            total = ordered[0].float()
+            for partial in ordered[1:]:
                 total = total + partial.float()
             item["partials_verified"] = torch.equal(total.bfloat16().cpu(), actual)
             item["partial_hashes"] = [tensor_hash(v) for v in partials]
