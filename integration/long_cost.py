@@ -64,6 +64,13 @@ class LongRouteTape(RouteTape):
             or (self.counts < 0).any().item()
             or (os.getenv("SM90_EIGHT_BACKEND") != "mega" and not (self.ordinal_match.all().item() if self.compact_audit else torch.equal(self.ordinals, self.used_ordinals)))
         ):
+            import torch as _t
+            _e = self.epochs.cpu().long(); _l = self.layer_ids.cpu()
+            _pos = self.position.item(); _exp = _t.arange(first_epoch, first_epoch + len(_e))
+            _ord = bool(self.ordinal_match.all().item() if self.compact_audit else _t.equal(self.ordinals, self.used_ordinals))
+            print('[route-diag] pos=%d n=%d epochs_eq=%s layers_eq=%s layer0=%d counts_min=%d ord_ok=%s' % (
+                _pos, len(_e), bool(_t.equal(_e, _exp)), bool(_t.equal(_l, (_e - 1) % self.layers)),
+                _l[0].item(), int(self.counts.min()), _ord), flush=True)
             raise ValueError("incomplete 1000-step route, layer, epoch or ordinal history")
         bank = {k: getattr(self, k).cpu() for k in ("ids", "weights")}
         if self.publish:
