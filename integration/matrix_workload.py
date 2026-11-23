@@ -80,7 +80,7 @@ def prepare_matrix(worker, buf, modules, ref):
     else:
         layers = owner._eplb_shuffler.components
         layout = owner._eplb["plan"].tolist()
-    if len(layers) != tape.layers or any(len(parts) != 6 for parts in layers):
+    if len(layers) != tape.layers or any(len(parts) != (4 if hasattr(buf, "mega") else 6) for parts in layers):
         raise ValueError("incomplete packed weights")
     # Compare logical weights across physically different placements. Include all
     # six tensors and verify every additional copy against its logical expert.
@@ -106,7 +106,7 @@ def prepare_matrix(worker, buf, modules, ref):
     if rank == 0:
         import json
 
-        path = Path(os.environ["GC_MOE_FIXED_DIR"]) / (os.environ["GC_MOE_MATRIX_ARM"] + "-layout.json")
+        path = Path(os.environ["GC_MOE_FIXED_DIR"]) / (os.getenv("SM90_EIGHT_ARM", os.environ["GC_MOE_MATRIX_ARM"]) + "-layout.json")
         with path.open("x") as f:
             json.dump(layout, f)
     plan_price = None
@@ -125,6 +125,11 @@ def prepare_matrix(worker, buf, modules, ref):
     controls.update(
         next_epoch=int(buf.header[0].item()), logical_weights=json_hash(canonical), demand=buf._matrix_demand
     )
+    weights_digest = controls["logical_weights"]
+    if os.getenv("SM90_EIGHT_ARM"):
+        # Packed hashes are comparable within one backend; the runner compares
+        # these separately. KV, routing demand and request controls remain strict.
+        del controls["logical_weights"]
     snap = checkpoint(
         os.environ["GC_MOE_STRICT_STATE_DIR"],
         rank,
@@ -142,7 +147,7 @@ def prepare_matrix(worker, buf, modules, ref):
     return dict(
         snapshot=snap,
         plan_price=plan_price,
-        logical_weights=controls["logical_weights"],
+        logical_weights=weights_digest,
         placement=json_hash(by_rank),
         installed_layout=json_hash(layout),
         demand=buf._matrix_demand,

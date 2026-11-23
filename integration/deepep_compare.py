@@ -682,8 +682,12 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                 raise RuntimeError(f'GC MoE needs {name} in the checkpoint')
         import time as _t
         _s = _t.time()
-        packed = self._gc.transform_weights_for_gc_moe_sm90(
-            (w13.data, s13.data), (w2.data, s2.data))
+        if os.getenv('SM90_EIGHT_BACKEND') == 'mega':
+            from sm90_eight import mega_weights
+            packed = mega_weights(w13.data, s13.data, w2.data, s2.data)
+        else:
+            packed = self._gc.transform_weights_for_gc_moe_sm90(
+                (w13.data, s13.data), (w2.data, s2.data))
         print(f'[eplb-dbg] transform {_t.time()-_s:.2f}s', flush=True)
         self._packed[id(w13)] = packed
         self._packed[id(layer)] = packed
@@ -872,15 +876,16 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                                                  buf.route_ordinal[:tokens])
         elif tape is not None and not buf.layout.matrix:
             buf.route_ordinal[:tokens].fill_(-1)
-        buf.x[:tokens].copy_(xq.view(tokens, -1))
-        buf.x_sf[:tokens].copy_(xsf.view(tokens, -1))
+        destination = getattr(buf, 'mega', buf)
+        destination.x[:tokens].copy_(xq.view(tokens, -1))
+        destination.x_sf[:tokens].copy_(xsf.view(tokens, -1))
         if self._eplb is not None and _eco_enabled():
             # [ECO-SM90] ECO dispatch: `topk_idx` keeps the LOGICAL expert id.
             # The kernel pushes every route to each active copy of that expert
             # and the plan decides how many tokens each copy keeps, so doing
             # the slot choice here would defeat the plan (and make the quota
             # slices overlap).
-            buf.topk_idx[:tokens].copy_(topk_ids.to(torch.int64).view(tokens, -1))
+            destination.topk_idx[:tokens].copy_(topk_ids.to(torch.int64).view(tokens, -1))
         elif self._eplb is not None:
             # [SME-EPLB] B-arm routing: logical id -> one of its physical slots,
             # handed out round-robin per route. That is the "实时分发" half of
@@ -928,19 +933,19 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             slots = self._scratch(buf, 'slots', n, torch.int32)[:n]
             torch.index_select(e['slot_table'], 0, base + safe_ids * width + pick, out=slots)
             slots.masked_fill_(~valid, -1)
-            buf.topk_idx[:tokens].copy_(slots.view(tokens, -1))
+            destination.topk_idx[:tokens].copy_(slots.view(tokens, -1))
         else:
-            buf.topk_idx[:tokens].copy_(topk_ids.to(torch.int64).view(tokens, -1))
+            destination.topk_idx[:tokens].copy_(topk_ids.to(torch.int64).view(tokens, -1))
         if use_tape and buf.layout.matrix:
             # ECO addresses a logical expert, RR addresses a physical slot.
-            tape.record_ordinals(buf.topk_idx[:tokens].unsqueeze(0), buf.route_ordinal[:tokens])
+            tape.record_ordinals(destination.topk_idx[:tokens].unsqueeze(0), buf.route_ordinal[:tokens])
         elif tape is not None and buf.layout.matrix:
             # Mixed-size prefill also needs a deterministic row within the
             # actual dispatch destination (physical for RR, logical for ECO).
             from fixed_workload import route_ordinals
-            ordered = route_ordinals(buf.topk_idx[:tokens].unsqueeze(0))
+            ordered = route_ordinals(destination.topk_idx[:tokens].unsqueeze(0))
             buf.route_ordinal[:tokens].copy_(ordered[0])
-        buf.topk_weights[:tokens].copy_(topk_weights.to(torch.float32).view(tokens, -1))
+        destination.topk_weights[:tokens].copy_(topk_weights.to(torch.float32).view(tokens, -1))
 
         probe = (tape.boundary_probe if use_tape and hasattr(tape, 'boundary_probe')
                  and _LAYER_ROW[id(packed[0][0])] == 0 else None)
@@ -1106,6 +1111,10 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         # [ROLE4] When the buffer reserves shared experts, role 4 computes
         # them and `combine` adds `shared_y`; vLLM's own shared MLP is then
         # skipped (see _install_role4) so the term is added exactly once.
+        if hasattr(buf, 'mega'):
+            from sm90_eight import launch_mega
+            launch_mega(buf, packed, output, tokens, stats)
+            return
         _sw = None
         if int(os.environ.get('GC_MOE_SHARED_IN_GC', '0') or 0):
             if not hasattr(self, '_r4_dbg'):
@@ -1349,8 +1358,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                 layer_of[id(pair[0][0])] = idx
                 # Each layer gets its own window row.
                 m._eplb.setdefault('stats', stats)
-                components.append([pair[0][0], pair[0][1], pair[0][2],
-                                   pair[1][0], pair[1][1], pair[1][2]])
+                components.append([*pair[0], *pair[1]])
                 _names.append(str(getattr(layer, 'layer_name', '') or ''))
                 layer_keys.append((m, layer))
 
@@ -1438,6 +1446,9 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                 trace=os.environ.get('GC_MOE_ECO_TRACE') == '1'
                       or os.environ.get('GC_MOE_PULL_TRACE') == '1')
             self._buffer_key = key
+            if os.getenv('SM90_EIGHT_BACKEND') == 'mega':
+                from sm90_eight import init_mega
+                init_mega(self._buffer, self.moe_config.hidden_dim, self.moe_config.intermediate_size)
             if os.environ.get('GC_MOE_FIXED_DIR'):
                 from fixed_workload import RouteTape
                 buf = self._buffer
@@ -2901,6 +2912,12 @@ def register() -> None:
     # 4a. Let the driver trigger an EPLB replan inside every worker.
     _install_worker_rpc()
 
+    if os.getenv("SM90_EIGHT_ARM"):
+        # Request local TP finalization before decoder construction, so all
+        # reduce_results flags and downstream model boundaries stay consistent.
+        from vllm.models.deepseek_v41.nvidia import model as v41_model
+        v41_model.supports_mhc_all_reduce = lambda config: False
+
     # 5. Allocate GC MoE's symmetric buffer at the end of weight loading.
     #    The model's own finalize hook runs once, after every layer is packed,
     #    which is the only point where the buffer can be created without
@@ -2921,6 +2938,9 @@ def register() -> None:
             _orig(model, model_config, target_device)
             _run_eplb_replication(model)
             _allocate_all_gc_workspaces(model)
+            if os.getenv("SM90_EIGHT_ARM"):
+                from sm90_eight import install_clocks
+                install_clocks(model, _SHARED_BUFFER["buf"])
 
         _loader_utils.process_weights_after_loading = process_weights_after_loading
         _loader_utils._gc_moe_post_hook = True

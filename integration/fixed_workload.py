@@ -7,6 +7,8 @@ import torch
 
 
 def publishes_checkpoint():
+    if os.getenv("SM90_EIGHT_ARM"):
+        return os.environ["SM90_EIGHT_ARM"] == "2"
     if os.getenv("GC_MOE_VANILLA_STATS_REPLAY") == "1":
         if os.getenv("GC_MOE_MATRIX_ARM") != "vanilla":
             raise ValueError("vanilla statistics replay requires the vanilla arm")
@@ -87,6 +89,9 @@ class RouteTape:
     def finish_call(self, buf, output=None):
         if hasattr(self, 'first_step_probe'):
             self.first_step_probe.record(buf, output)
+        elif hasattr(buf, "mega"):
+            # Official Mega exposes received counts, no physical ordinal readback.
+            pass
         elif self.compact_audit:
             matched = (self.expected_ordinal == buf.used_route_ordinal[:self.batch]).all().reshape(1)
             self.ordinal_match.index_copy_(0, self.index, matched)

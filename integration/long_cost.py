@@ -62,7 +62,7 @@ class LongRouteTape(RouteTape):
             or not torch.equal(layers, (epochs - 1) % self.layers)
             or layers[0].item() != 0
             or (self.counts < 0).any().item()
-            or not (self.ordinal_match.all().item() if self.compact_audit else torch.equal(self.ordinals, self.used_ordinals))
+            or (os.getenv("SM90_EIGHT_BACKEND") != "mega" and not (self.ordinal_match.all().item() if self.compact_audit else torch.equal(self.ordinals, self.used_ordinals)))
         ):
             raise ValueError("incomplete 1000-step route, layer, epoch or ordinal history")
         bank = {k: getattr(self, k).cpu() for k in ("ids", "weights")}
@@ -71,7 +71,7 @@ class LongRouteTape(RouteTape):
                 torch.save(bank, f)
         hashes = {key: hashlib.sha256(value.numpy()).hexdigest() for key, value in bank.items()}
         if self.compact_audit:
-            hashes["ordinal_calls_verified"] = len(epochs)
+            hashes["ordinal_calls_verified"] = None if os.getenv("SM90_EIGHT_BACKEND") == "mega" else len(epochs)
         else:
             hashes["ordinals"] = hashlib.sha256(self.used_ordinals.cpu().numpy()).hexdigest()
         return dict(first_epoch=first_epoch, calls=len(epochs), **hashes)
@@ -122,6 +122,12 @@ def register_long_rpc(worker_class, get_buffer, modules):
                 )
         else:
             raise ValueError(phase)
+        if hasattr(buf, "ffn_counter"):
+            buf.ffn_counter.zero_()
+            buf.ffn_stamps.zero_()
+            if phase == "measure":
+                from sm90_eight import count_graph_replays
+                self._finish_replay_count = count_graph_replays(buf)
         tape.start_phase(phase, rank)
         if phase == "measure":
             reset_order(tape, self.model_runner.model.modules(), DeepseekV4FlashMLAAttention)
@@ -188,6 +194,19 @@ def register_long_rpc(worker_class, get_buffer, modules):
             audit["batch_order"] = ref.batch_hash.hexdigest()
             path = Path(directory) / f"rank{rank}.npz"
             extra = {}
+            if hasattr(buf, "ffn_counter"):
+                self._finish_replay_count()
+                audit["full_graph_replays"] = buf.full_replays
+                audit["shared_modules"] = buf.shared_paths
+                if buf.full_replays != tape.steps:
+                    raise ValueError(f"expected {tape.steps} BS256 full graph replays, got {buf.full_replays}")
+                if buf.ffn_counter.tolist() != [1000] * tape.layers:
+                    raise ValueError("model FFN timer missed or duplicated calls")
+                stamps = buf.ffn_stamps.cpu().numpy()
+                if np.any(stamps[:, :, 1] <= stamps[:, :, 0]) or np.any(stamps[:, :, 0] <= 0):
+                    raise ValueError("invalid finalized FFN timestamps")
+                extra["ffn_ns"] = stamps
+                audit["native_differences"] = getattr(ref, "differences", {})
             if hasattr(self, '_boundary_clocks'):
                 extra['step_boundary'] = self._boundary_clocks.finish()
                 del self._boundary_clocks
