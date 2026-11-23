@@ -1,0 +1,40 @@
+diff --git a/integration/deepep_compare.py b/integration/deepep_compare.py
+index 87ad253..8d22c2b 100644
+--- a/integration/deepep_compare.py
++++ b/integration/deepep_compare.py
+@@ -2738,13 +2738,16 @@ def _allocate_all_gc_workspaces(model) -> None:
+     illegal (CUDA forbids context/stream creation inside a capture), so they
+     must exist before the engine captures its graphs.
+     """
+-    for module in model.modules():
+-        if not isinstance(module, GCMoEExperts):
+-            continue
++    # GCMoEExperts is NOT an nn.Module (see the note by _EXPERT_REGISTRY): vLLM
++    # creates it inside Mxfp4MoEMethod, so a walk over model.modules() never
++    # finds one and the symmetric buffer would stay None. Use the live registry
++    # the rest of this file already relies on.
++    live = [m for m in _EXPERT_REGISTRY if isinstance(m, GCMoEExperts)]
++    for module in live:
+         if module._buffer is None:
+             module.allocate_workspace()
+-    if any(isinstance(m, GCMoEExperts) for m in model.modules()):
+-        _warm_gc_child_graph(model)
++    if live:
++        _warm_gc_child_graph(live[0])
+ 
+ 
+ def _warm_gc_child_graph(model) -> None:
+@@ -2756,7 +2759,12 @@ def _warm_gc_child_graph(model) -> None:
+     few eager calls before capturing; vLLM needs the same, so this runs at the
+     end of weight loading where no capture is active.
+     """
+-    module = next(m for m in model.modules() if isinstance(m, GCMoEExperts))
++    # Accept either a live GCMoEExperts (the registry path above) or a model
++    # object, since GCMoEExperts is not part of the nn.Module tree.
++    if isinstance(model, GCMoEExperts):
++        module = model
++    else:
++        module = next(m for m in model.modules() if isinstance(m, GCMoEExperts))
+     if module._warmed:
+         return
+     try:

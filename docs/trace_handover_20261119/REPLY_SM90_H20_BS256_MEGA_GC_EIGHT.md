@@ -234,3 +234,113 @@ export LD_LIBRARY_PATH=<toolchain>/lib:$LD_LIBRARY_PATH   # scripts/env.sh 已�
 | 首错与三次尝试记录 | `.../dgbuild-blocker.txt`、`.../implicit-build-dependency.txt` |
 
 GPU：八卡仍全空闲（各 4 MiB，0 个 compute app），**本轮未占用**。
+
+---
+
+# 正式八臂（`3682a33` + 我的一处修复）— **arm2 在 CUDA graph 捕获处失败，版本不兼容**
+
+## A. 启动与前置条件（全部通过）
+
+| 步 | 结果 |
+|---|---|
+| 输入校验 `sha256sum -c model_and_dataset.sha256` | ✅ 4/4 OK（模型 config、index、两份数据集）|
+| 私有 wheel 摘要 | ✅ `7c848494…` OK |
+| CPU 权重转换 `check_mega_weights.py` | ✅ 3 个投影（w1/w3/w2）全部成功，`max_abs_error` = 0.00446 / 0.00446 / 0.00893 |
+| HCA ACTIVE 检查 | ✅ mlx5_4/5/9/17/21/29 全部 ACTIVE |
+| 八卡空闲门禁 | ✅ 8 张全 H20、0 个 compute app |
+| 磁盘 | ✅ `/mnt/fuse` 5.0 T 可用（> 405 GB 要求）|
+
+启动命令即任务书原文（`scripts/sm90/run_eight.sh`），worktree 建于 `/mnt/fuse/sm90-h20-eight-wteT0PXZ`。
+
+## B. 我修的第一个 bug（保持语义）
+
+**现象**（第一次启动 `3682a33` 原样）：arm2 在 `process_weights_after_loading` 处崩：
+
+```
+File ".../integration/sm90_eight.py", line 34, in install_clocks
+    buf.ffn_counter = torch.zeros(40, ..., device=buf.buffer.device)
+AttributeError: 'NoneType' object has no attribute 'buffer'
+```
+
+**根因**：`integration/deepep_compare.py` 的 `_allocate_all_gc_workspaces()` 遍历
+`model.modules()` 查找 `GCMoEExperts`，但该类**不是 nn.Module**（同文件第 41 行注释明说
+"vLLM creates one per layer inside Mxfp4MoEMethod"），所以永远找不到实例、
+`symmetric buffer` 保持 `None`。本文件其它地方（第 1497 行）用的是 `_EXPERT_REGISTRY`。
+
+**修复**（已提交 `be92873`，diff 见 `executor_impl_fix.diff`）：
+
+```python
+-    for module in model.modules():
+-        if not isinstance(module, GCMoEExperts):
+-            continue
++    live = [m for m in _EXPERT_REGISTRY if isinstance(m, GCMoEExperts)]
++    for module in live:
+         if module._buffer is None:
+             module.allocate_workspace()
+-    if any(isinstance(m, GCMoEExperts) for m in model.modules()):
+-        _warm_gc_child_graph(model)
++    if live:
++        _warm_gc_child_graph(live[0])
+```
+
+并对 `_warm_gc_child_graph` 增加"接受活的 expert 对象或 model"两种入参。
+
+**效果**：该错误消失，arm2 前进到 CUDA graph 捕获阶段（见 C）。**未改动**分流、精度、计时或验收口径。
+
+## C. 当前硬阻塞：DeepGEMM wheel 与 vLLM 0.31.0 的 sparse-indexer 签名不兼容
+
+修复后 arm2 在 **CUDA graph 捕获**时，8 个 rank 全部失败于同一处：
+
+```
+TypeError: fp8_fp4_paged_mqa_logits(): incompatible function arguments.
+（先由 fp8_fp4_mqa_logits 触发，见下）
+```
+
+**精确原因**（已定位到具体调用与签名）：
+
+| 侧 | 内容 |
+|---|---|
+| **vLLM 0.31.0 调用**（`env3/.../layers/sparse_attn_indexer.py:583`）| `fp8_fp4_mqa_logits(q_tuple, kv_tuple, weights, cu_seqlen_ks, cu_seqlen_ke, clean_logits=False)` —— **第 6 个参数是关键字 `clean_logits`** |
+| **DeepGEMM 2.8.2 的签名**（我们按任务书构建的 wheel）| `fp8_fp4_mqa_logits(q, kv, weights, cu_seq_len_k_start, cu_seq_len_k_end, **max_seqlen_k**, logits_dtype=None, schedule_meta=None)` —— **没有 `clean_logits`，第 6 位是整数 `max_seqlen_k`** |
+
+即：**任务书指定的 DeepGEMM `7292e7b`（v2.8.2）与这台机器的 vLLM 0.31.0 不匹配**。
+vLLM 期望的是另一版 DeepGEMM（带 `clean_logits` / `indices` 的 sparse-indexer API）。
+
+## D. 为什么这不是我该自行修的
+
+| 可能的"修法" | 为什么不做 |
+|---|---|
+| 改 `env3` 里的 `sparse_attn_indexer.py`（改调用签名）| 改动 vLLM 共享包，影响所有其他任务；且需设计端确认语义 |
+| 改我们构建的 DeepGEMM 源码加 `clean_logits` 参数 | 等于**自行移植后端**，任务书明令禁止（"不自行移植后端或改精度、路由、验收口径"）|
+| 换一个 DeepGEMM 版本 | 任务书钉死 `7292e7b` / wheel 摘要 `7c848494…` |
+| 关闭 sparse indexer | 改变模型语义 |
+
+**按任务书"运行时数值、显存、框架兼容或硬件问题按下面的失败流程记录"** 处理：
+保留首错、日志、退出码，不绕过。
+
+## E. 八臂状态（本轮）
+
+| 臂 | 状态 | 说明 |
+|---|---|---|
+| 2（发布者）| ❌ `exit=1` | 见 C；**已到达 CUDA graph 捕获**，说明 A/B 两项都通过 |
+| 1,3,4,5,6,7,8 | ⏭ `skipped=publisher_failed` | 依赖 arm2 的 KV/token/路由参考，按启动器逻辑跳过 |
+
+**没有任何臂产出性能数字**，因此**不填主表**（任务书要求"第 2 臂失败会阻断依赖它的参考回放"）。
+
+## F. 退卡与清理
+
+| 项 | 结果 |
+|---|---|
+| GPU | **八卡全空**（各 4 MiB，`--query-compute-apps` = 0）|
+| worktree | `/mnt/fuse/sm90-h20-eight-wteT0PXZ/code` 已 `git worktree remove` + `prune` |
+| 现场 | `/mnt/fuse/sm90-h20-eight-wteT0PXZ/results/`（2.4 MB）保留：launch.log、arm2/runner.log、gpus.csv、conversion.jsonl、各 arm 的 exit/skipped |
+| 私有 wheel | 保留，未改动 |
+| 历史 retained_bs256 | 未触碰 |
+
+## G. 需要设计端决定（唯一阻塞）
+
+1. **DeepGEMM 版本**：本机 vLLM 0.31.0 需要带 `clean_logits` 的 sparse-indexer API。
+   请确认是否改用别的 DeepGEMM commit（并给出新 SHA/期望 wheel 摘要），
+   还是由设计端提供匹配 vLLM 0.31.0 的 wheel。
+2. **若坚持 `7292e7b`**：需要设计端授权我修改 `vllm` 的调用签名（或加兼容 shim），
+   并明确这属于"保持语义的适配"——否则我无法继续。

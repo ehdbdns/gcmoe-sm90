@@ -1,0 +1,20 @@
+=== eight-arm run 1: arm2 exit
+1
+--- first error:
+14835:(Worker_TP7_EP7 pid=420300) ERROR 11-24 01:00:43 [multiproc_executor.py:1058]     logits = fp8_fp4_paged_mqa_logits(
+14836:(Worker_TP7_EP7 pid=420300) ERROR 11-24 01:00:43 [multiproc_executor.py:1058]   File "/home/admin/workspace/aop_lab/app_source/gc_moe_rtp_ep8_20261031/env3/lib/python3.10/site-packages/vllm/utils/deep_gemm.py", lin
+--- vLLM call site (env3):
+                    logits = fp8_fp4_mqa_logits(
+                        (q_slice_cast, q_scale_slice),
+                        (k_quant_cast, k_scale_cast),
+                        weights[chunk.token_start : chunk.token_end],
+                        cu_seqlen_ks,
+                        cu_seqlen_ke,
+                        clean_logits=False,
+                    )
+                num_rows = logits.shape[0]
+                if candidate_blocks is not None:
+--- DeepGEMM 2.8.2 signature:
+fp8_fp4_mqa_logits(q, kv, weights, cu_seq_len_k_start, cu_seq_len_k_end, max_seqlen_k, logits_dtype=None, schedule_meta=None)
+--- vLLM passes clean_logits=False which does not exist in 2.8.2
+--- python-side fix I applied (deepep_compare.py) verified by reaching CUDA graph capture
