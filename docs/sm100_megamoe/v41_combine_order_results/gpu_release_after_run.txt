@@ -1,0 +1,14 @@
+acquired: 2026-11-23T21:12:01+08:00
+released: 2026-11-23T21:40:41+08:00
+verified: 2026-11-23T21:44:46+08:00
+
+nvidia-smi --query-compute-apps=gpu_uuid,pid --format=csv,noheader
+<empty>
+
+fuser /dev/nvidia0 /dev/nvidia1 /dev/nvidia2 /dev/nvidia3 /dev/nvidia4 /dev/nvidia5 /dev/nvidia6 /dev/nvidia7
+<no holders>
+
+flock -n /tmp/gcmoe-sm100-gpu-group.lock true
+LOCK_ACQUIRABLE
+
+Both formal arm processes exited 0. The CPU report exited 1 because strict_pair_pass=false.

@@ -1,0 +1,69 @@
+{
+  "executor": "SM100",
+  "task": "docs/sm100_megamoe/V41_BS512_COMBINE_ORDER.md",
+  "task_commit": "f0015c39252d8a150d450005b75cab4cb86af41f",
+  "task_sha256": "287a3e4cecf38e1462609283cc1cc6c32114ba6ec685cec5568ba4405929d9aa",
+  "execution_revision": "f0015c39252d8a150d450005b75cab4cb86af41f",
+  "semantic_code_fix_added": false,
+  "gc_upstream": "fb8b65fa829c97962eb2dbc9a4ad8b759b9cd736",
+  "combine_order_patch": {
+    "path": "compat/vllm_combine_order.patch",
+    "sha256": "a761a9380db90aef6d9e988c6661b12eb1dfce538cdee12f509f60c81bf763f4",
+    "applied_to_gc_only": true,
+    "gc_impl_sha256": "e7050c640bbd096bea332966c16d8fa088f4efde1e485bbec073db0d8ec28b47",
+    "mega_header_sha256": "bbcf27686b299bd6d966a333b3b143dc8d8acfa8c3b274079b56058ea7ed9184",
+    "mega_routed_first_combine_confirmed": true
+  },
+  "formal_pair": {
+    "requests": 512,
+    "steps_per_phase_per_arm": 1000,
+    "phases": ["stats", "measure"],
+    "mega_exit_code": 0,
+    "gc_exit_code": 0,
+    "report_exit_code": 1,
+    "strict_pair_pass": false,
+    "strict_failure_count": 64,
+    "clean_steps": 999,
+    "performance_authoritative": false
+  },
+  "controls": {
+    "graph_coverage_passed": 16,
+    "graph_coverage_total": 16,
+    "full_graph_calls_40000": true,
+    "full_graph_call_checks_passed": 32,
+    "slot_counts_identical_between_arms": true,
+    "global_token_total_3072": true,
+    "prefill_native_equal": 16,
+    "prefill_difference_zero": 16,
+    "kv_boundary_equal": 16,
+    "replay_id_hash_equal": 16,
+    "replay_weight_hash_equal": 16,
+    "batch_order_hash_equal": 16,
+    "logical_id_hash_equal": 0,
+    "gate_weight_hash_equal": 0,
+    "native_window_hash_equal": 0,
+    "gc_native_diff_stats_per_rank": 813,
+    "gc_native_diff_measure_per_rank": 1008
+  },
+  "descriptive_timing_not_authoritative": {
+    "method": "per step/layer max of eight local full-MoE durations; sum 40 layers; mean over 999 steps excluding step 2",
+    "mega_ms": 7.7220565845845845,
+    "gc_ms": 8.42969676876877,
+    "gc_minus_mega_percent": 9.163882398852596,
+    "authoritative": false
+  },
+  "raw_evidence": {
+    "root": "/data0/home/admin/workspace/megamoe/v41-combine-order-BgrMIRYR/run/bs512",
+    "manifest": "raw_evidence_manifest.json",
+    "manifest_sha256": "16cfe86125981985ce15636e7142ecf1610ddef2b08297f347f1bb585f299058",
+    "file_count": 156,
+    "total_bytes": 551838346517
+  },
+  "gpu": {
+    "acquired": "2026-11-23T21:12:01+08:00",
+    "released": "2026-11-23T21:40:41+08:00",
+    "compute_apps_after_release": 0,
+    "nvidia_device_holders_after_release": 0,
+    "group_lock_acquirable_after_release": true
+  }
+}
