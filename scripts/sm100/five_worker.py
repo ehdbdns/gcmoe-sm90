@@ -416,6 +416,12 @@ class FiveWorker:
 from v41_gc_worker import MoeAuditWorker
 
 
+FULL_DECODE = os.getenv("SM100_FULL_DECODE") == "1"
+if FULL_DECODE:
+    import full_decode_worker
+    full_decode_worker.install_before_capture()
+
+
 class MatrixWorker(MoeAuditWorker):
     def phase_profile_start(self):
         from native_phase_clock import anchor
@@ -471,15 +477,21 @@ class MatrixWorker(MoeAuditWorker):
         return self._matrix.dense_replay.select(mode)
 
     def matrix_setup(self, root, arm, bs):
+        if FULL_DECODE:
+            return full_decode_worker.setup(self, root, arm, bs)
         self._matrix = FiveWorker()
         self._matrix.model_runner = self.model_runner
         self._matrix.get_model = self.get_model
         return self._matrix.five_setup(root, arm, bs)
 
     def matrix_begin(self, phase):
+        if FULL_DECODE:
+            return full_decode_worker.begin(self._matrix, phase)
         return self._matrix.five_begin(phase)
 
     def matrix_finish(self):
+        if FULL_DECODE:
+            return full_decode_worker.finish(self._matrix)
         return self._matrix.five_finish()
 
     def matrix_eco(self, filename):

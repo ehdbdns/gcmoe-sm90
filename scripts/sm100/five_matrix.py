@@ -75,12 +75,18 @@ def main():
         torch.cuda.get_device_capability(i) == (10, 3) for i in range(8)
     )
     eplb = "_" in arm
+    full = os.getenv("SM100_FULL_DECODE") == "1"
+    if full and (direct or eplb or bs != 512):
+        raise ValueError("full decode requires the native fixed-workload BS512 pair")
     llm = LLM(
         model=os.environ["SM100_V41_MODEL"],
         tensor_parallel_size=8,
         enable_expert_parallel=True,
         enable_prefix_caching=False,
-        enforce_eager=True,
+        enforce_eager=not full,
+        **({"compilation_config": dict(mode=0, cudagraph_mode="FULL_DECODE_ONLY",
+                                       cudagraph_capture_sizes=[bs], max_cudagraph_capture_size=bs)}
+           if full else {}),
         enable_eplb=eplb,
         **(
             {
@@ -178,7 +184,7 @@ def main():
         times = []
         t = time.perf_counter()
         tracing = bool(os.getenv("SM100_PHASE_TRACE")) and phase == "measure"
-        steps = 3 if tracing else STEPS
+        steps = 3 if tracing and not full else STEPS
         quiet = tracing and os.getenv("SM100_QUIET_TRACE") == "1"
         if quiet:
             steps = 7
@@ -210,6 +216,7 @@ def main():
         elapsed = time.perf_counter() - t
         result[phase] = dict(
             wall_ms=1000 * elapsed / steps,
+            full_decode=full,
             cumulative_seconds=times,
             ranks=rpc("matrix_finish"),
         )
