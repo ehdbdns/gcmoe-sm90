@@ -1,0 +1,11 @@
+item,current,required_for_full_decode,source
+per_layer_call_index,self.current=(layer call) in Python,static per-layer expansion or device-side layer index,five_worker.py:101-106
+host_submission_timestamps,host_submit[call] at every MoE replay,one step-level replay timestamp plus optional device per-layer clock,five_worker.py:137-139
+moE_input_staging,kernel_scratch.copy_(recv[call]),40 persistent staging buffers or one contiguous layer-major input,five_worker.py:102-106
+audit_scratch_reset,audit_scratch.zero_() per layer,per-layer persistent audit address or explicit accumulated semantics,five_worker.py:110-112
+output_count_copyback,y.copy_ auction.copy_ recv.copy_ after replay,capture-safe fixed output and count addresses or one bulk exchange after replay,five_worker.py:140-148
+plan_quota_views,plan_start and quota_view generated per call,static per-layer plan/quota slots bound before capture,five_worker.py:142-146
+eco_tables,eco_meta eco_state and audit pointer updated per layer,static per-layer pointer table,five_worker.py:107-110
+dense_replay_lookup,key by layer shape stride stream and weight address,single captured expansion with persistent source buffers,native_dense_replay.py:18-39
+attention_path,attention forced during FULL dummy run,ensure full decode capture includes attention metadata and fixed KV addresses,vllm/v1/worker/gpu_model_runner.py:6874-6907
+graph_entry,enforce_eager=True disables vLLM capture,set FULL_DECODE_ONLY only in the follow-up experiment after buffers are static,vllm/config/vllm.py:1694-1696

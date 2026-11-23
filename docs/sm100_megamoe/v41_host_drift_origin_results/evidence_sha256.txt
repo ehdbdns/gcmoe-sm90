@@ -1,0 +1,53 @@
+SM100 V41 host-drift origin evidence
+source_commit=b74b2eca60bedffe41e232b1659ad78d8831d464
+raw_root=/data0/home/admin/workspace/megamoe/v41-l20-host-device-T2qg4jm8/run
+python_env=/data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/venv
+vllm_version=0.31.0
+vllm_commit=gdb9527a46
+torch_version=2.13.0+cu130
+
+--- raw Kineto profiles ---
+9f0a658290e8d6dbb2c6a486348f7f65847aa8bd4e75eca48ceed671b3add259  bs512/gc/profile-rank0.json
+776133eed9c85128ad4c8866e649ee1250be2f974908360bab7ba13b51fc73fa  bs512/gc/profile-rank1.json
+c6e067d3463cc19fbec800dca154233ef0b435ace2d2c0f88df634e4d6ca71b9  bs512/gc/profile-rank2.json
+1c18c318e52ebab528eca6d279b9acf35a7b1c3872c711e364bfec5079e825a7  bs512/gc/profile-rank3.json
+b42d1ff6a12885e83caee0a19e95a5bbff4298caf66ab91423eb9249bf65cdbc  bs512/gc/profile-rank4.json
+fce8774d9f785cbac45e5539f05e225bcc59fac1a1143fd69cbc4942437a41df  bs512/gc/profile-rank5.json
+41b1bf35aa6b0dd5bcbf9758568b8ea33b504bce4185e5955f1c02e5980cd4a0  bs512/gc/profile-rank6.json
+9e17bf738e614ec93e567d4c862fdba7c89f1e9ea835c689a4a21e104498b444  bs512/gc/profile-rank7.json
+b3ad60347ff4934055f00c71c4defd5e1bb30be2c7cb1982a696a4f8dc5c94c2  bs512/mega/profile-rank0.json
+3383eccd50f29674882d8e3edfb71baa683376e4377ad7ef43bbad4a29d857d3  bs512/mega/profile-rank1.json
+20e21e830fb1f76ef9fffc67f1543d8cfd85522b1a426844341aac4cdb5a4c9b  bs512/mega/profile-rank2.json
+0867fdd74a4bb3908e8a6e0ef5510700c55c5db514687589f4f644637531437b  bs512/mega/profile-rank3.json
+e09966089dcd57b8de19e96c7f552f29d7e6104072fbbc47abf8343316f0311d  bs512/mega/profile-rank4.json
+88c74dc96a3e984567c53cffe9a248f80c26b49d58ee9285299c50c46c2ac27b  bs512/mega/profile-rank5.json
+20b5e9118e4c521fe3cf30d5a43630011f18253650ed9bc146de9c4c2785ae35  bs512/mega/profile-rank6.json
+3f0f81da591b011c01f3b6c9dc51f924892e686c0dbd433465f4869739e00ae9  bs512/mega/profile-rank7.json
+
+--- raw measurement and sched evidence ---
+570b2c9be22a989377db9d771c3bb6a5ac8c2fd5332f8176109ba61ad76f6ac1  bs512/gc/measure-rank0.npz
+447d67a2b3e2baf200cd01f238de51c6114aff7c9db97474af361598d98dba58  bs512/mega/measure-rank0.npz
+c55cddfaa0461bf989b742ea0240f6928ae99138dddec184c319ef1f30c1adac  bs512/gc/result.json
+dd18e9b4cef6cbd5a24292e32fab86b981c15d40f03025484d18ccd2722e8eb7  bs512/mega/result.json
+86fb8dde4a8f24f741531a60c9b8a6cf4d7912306a4a45615ca3b81a685f2635  worker-sched.data
+ccfd35ea3a3ef7e66ff36087df927ae46a476c653378d1491e5ee319de76e1f2  worker-sched.txt
+5a07c33975b170d05c1d1e5cbc51c63e1bb3c8dc972c8397df00c6641aaad03d  worker-sched-fields.txt
+
+--- analysis and current SM100 source ---
+d99361e176a381640bbb84b274e4d126824a34cf90e490dc773a95d65f295551  scripts/sm100/host_layer_drift.py
+e2f612042952ad79af857e0206e3ace334c64293be53d55e446e20d0ce9b4d77  docs/sm100_megamoe/v41_l20_host_device_results/analyze_l20_host_device.py
+b8d7be8c2773f4745ab232e05159ed55860c89cf061e7efb150f3ef7fcaf6872  docs/sm100_megamoe/v41_host_drift_origin_results/summarize_host_drift.py
+dd8ce5aae08884c45fb0dc89d7d592a14d633a6cf3afc60b2f0aecc9fc14d114  docs/sm100_megamoe/v41_host_drift_origin_results/perf_host_windows.py
+11e96251fb3f859c85df670f6d0381f07acaa0a5dc66518dda2c0e7af118ac5c  scripts/sm100/five_matrix.py
+15bae5844b8a6cbddc1ae9ff3fd029893737f11f6a1fcb0c1ad5a50708ed0d1d  scripts/sm100/five_worker.py
+f8cb58ec0aace4816f044e1369a8ebbdcef1aab12f07d8638b7fef5c0d712fa4  scripts/sm100/native_dense_replay.py
+
+--- installed vLLM source ---
+43bd01925cd84f7d8a1d4a2ec30e289014a485fe4492a5343cbc893e8ed2f518  vllm/v1/worker/gpu_worker.py
+bb903dffcb5a6e5b8a477daf0854b3812e135349d61fc20c6133f91cd3c9752a  vllm/v1/worker/gpu_model_runner.py
+e09f694f4f50cda891b2db09d48993a9248f5a1318795b3798cd5478c268ca84  vllm/compilation/cuda_graph.py
+9e005aee4e8d74b23636312e9c9be796d8fc3b43ce483937cf3795fcbcaf18e5  vllm/config/compilation.py
+5d5a74e339cd110def9b5e37a56fa602a42cdece98811013fb69700a0274a224  vllm/models/deepseek_v4/nvidia/model.py
+
+--- SM90 control, hash of git blob content ---
+2dcc9aed821594ae4e5927d5deb5cbc32d7a2cd941538391d6c97fc42b50f1f2  docs/trace_executor_20261119/sm90_main24_stable_decode_bs512_results/delivery/bs512/vanilla/run.json
