@@ -75,20 +75,40 @@ tests/test_mega_moe_sm90.py:558:    deep_gemm.fp8_mega_moe(
 | GPU | 8 × NVIDIA H20，driver **580.105.08** |
 | 活跃 HCA（重启后变化）| `mlx5_4`、`mlx5_5`、`mlx5_9`、`mlx5_17`、`mlx5_21`、`mlx5_29`（**共 6 个**，与旧配置的 4 个不同）|
 
-## 3. 两条阻塞（正式八臂未启动的原因）
+## 3. 阻塞项（正式八臂未启动的原因；3.1 已由设计端解决）
 
-### 3.1 模型权重不在本机
+### 3.1 模型权重（**已解决**）
 
-任务书要求的 `DeepSeek-V4.1-Flash` 在本机**不存在**：
+重启后原路径 `/home/admin/local_models/DeepSeek-V4.1-Flash` 消失，设计端提供了新 NAS 并完成挂载：
+
+```bash
+sudo mkdir -p /mnt/dsv41
+sudo mount -t nfs -o vers=4,minorversion=0,noresvport \
+  954af48778-koo23.cn-zhangjiakou.nas.aliyuncs.com:/ /mnt/dsv41
+```
+
+**挂载后绝对路径**：`/mnt/dsv41/models/DeepSeek-V4.1-Flash`
 
 | 检查 | 结果 |
 |---|---|
-| `/home/admin/local_models/DeepSeek-V4.1-Flash` | **不存在**（重启后 `/home/admin/local_models` 整个目录也不存在）|
-| 全盘 `find` 名为 `DeepSeek-V4.1-Flash` 的目录 | **无** |
-| 全盘 `*.safetensors`（`/home/admin`、`/mnt` 下 6 层深）| **无** |
-| `/mnt/nas2/...` 数据集路径 | **不存在**（`/mnt` 下只有 `fuse`）|
+| `config.json` 存在 | ✅ |
+| `*.safetensors` 个数 | ✅ **48**（与设计端说明一致）|
+| 目录总量 | ✅ **476 G**（与设计端说明一致）|
+| **`config.json` SHA256** | **`8be45ce0476004a3f529fd896115a4a2e800a129ad2d3ec05b16050f52e21879`** |
+| **`model.safetensors.index.json` SHA256** | **`74b0686a3d2891980d5e303251b075a3bccae2c2ff650747db2620a649b98fa8`** |
 
-因此**无法计算**任务书要求的"原模型配置与权重索引 SHA256"——文件本身不在。
+### 3.1b 数据集（**已解决**）
+
+同一 NAS，无需另挂：
+
+| 文件 | 行数 | SHA256 |
+|---|---:|---|
+| `dsv4-flash_online_input_ids_26-10-08_1.jsonl` | 1,500 | `3664daca1619617b76026e6a75e4b3738316320aceb2852c76f2897873e99073` |
+| `dsv4-flash_online_input_ids_26-10-08_2.jsonl` | 1,500 | `957d06fed999f9fe517dab4581a2fe79f162debc1c21468502d3e988c83511f0` |
+
+目录：`/mnt/dsv41/nanjun.cp/MoE-Bench-Experiments/datasets/`
+
+**两份 SHA256 与重启前备份时记录的值逐位相同**，说明 NAS 上的数据未被改动。
 
 ### 3.2 八臂启动器尚未交付
 
@@ -124,11 +144,9 @@ tests/test_mega_moe_sm90.py:558:    deep_gemm.fp8_mega_moe(
 
 ## 6. 需要设计端确认（按优先级）
 
-1. **模型权重位置**：重启后 `DeepSeek-V4.1-Flash` 不在本机。请提供新路径（或恢复挂载），
-   我才能计算权重索引 SHA256 并启动任何 GPU 阶段。
-2. **数据集位置**：`/mnt/nas2/...dsv4-flash_online_input_ids_26-10-08_{1,2}.jsonl` 也随重启消失，
-   请一并提供新路径。
-3. **八臂启动器 SHA 与正式命令**：任务书说由设计端补充，但 `a9f58ca` 中尚未出现。
+1. ~~**模型权重位置**~~ → **已解决**：`/mnt/dsv41/models/DeepSeek-V4.1-Flash`（476 G / 48 shards）
+2. ~~**数据集位置**~~ → **已解决**：`/mnt/dsv41/nanjun.cp/MoE-Bench-Experiments/datasets/`
+3. **八臂启动器 SHA 与正式命令**：任务书说由设计端补充，但 `a9f58ca` 中尚未出现 ← **当前唯一硬阻塞**
 4. **`deep_gemm` 的构建方式**：是否需要我按 `nv_dev@7292e7b` 在 `env3` 中构建安装？
    （这会改动共享环境，需要授权。）
 5. **HCA 变化**：重启后 ACTIVE HCA 变为 `mlx5_4/5/9/17/21/29`（6 个），
