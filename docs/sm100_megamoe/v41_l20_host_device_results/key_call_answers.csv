@@ -1,0 +1,15 @@
+arm,question,early_rank,late_rank,gap_start_after_exit_us,gap_us,early_gap_us,delta_us,previous,following,api,api_relation,enclosing_cpu_op,host_not_entered_us,api_to_device_us,perf_covered,perf_running_us,perf_runnable_us,perf_blocked_us
+gc,first_extra_wait_after_L19,4,2,28.6845703125,19.359375,0.1279296875,19.2314453125,mhc,all_gather,cudaLaunchKernelExC,inside_gap,_C_custom_ar::mnnvl_lamport_all_gather,9.51953125,3.7548828125,True,19.36,0.0,0.0
+gc,after_last_reduce_scatter,4,2,3166.33984375,124.896484375,2.4658203125,122.4306640625,mega_gate,prepare,cuLaunchKernelEx,inside_gap,,116.451171875,3.662109375,True,124.8965,0.0,0.0
+gc,after_last_reduce_scatter,4,2,3076.8994140625,81.2490234375,0.0,81.2490234375,mhc,mega_gate,cuLaunchKernelEx,inside_gap,,73.609375,3.224609375,True,81.2495,0.0,0.0
+gc,after_last_reduce_scatter,4,2,2990.7861328125,73.857421875,0.0,73.857421875,reduce_scatter,mhc,cuLaunchKernelEx,inside_gap,,65.70703125,3.291015625,True,73.8575,0.0,0.0
+gc,after_last_reduce_scatter,4,2,3293.4443359375,27.80859375,1.50390625,26.3046875,prepare,memcpy,cudaMemcpyAsync,inside_gap,aten::copy_,14.748046875,3.107421875,True,27.809,0.0,0.0
+gc,after_last_reduce_scatter,4,2,3322.693359375,28.1279296875,2.2724609375,25.85546875,memcpy,fill,cudaLaunchKernel,inside_gap,aten::fill_,11.0419921875,2.6953125,True,28.1285,0.0,0.0
+gc,after_last_reduce_scatter,4,2,3351.78125,30.400390625,4.544921875,25.85546875,fill,gc_moe,cudaGraphLaunch,overlaps_gap,,10.0595703125,0.0,True,30.4,0.0,0.0
+mega,first_extra_wait_after_L19,7,5,44.1015625,124.6083984375,0.0,124.6083984375,all_gather,cublas_tss,cuLaunchKernelEx,inside_gap,aten::mm,112.890625,3.9765625,True,124.6085,0.0,0.0
+mega,after_last_reduce_scatter,7,5,2740.34375,107.6162109375,1.2802734375,106.3359375,mega_gate,prepare,cuLaunchKernelEx,inside_gap,,100.8212890625,3.3466796875,True,107.6165,0.0,0.0
+mega,after_last_reduce_scatter,7,5,2628.087890625,103.5517578125,0.3837890625,103.16796875,mhc,mega_gate,cuLaunchKernelEx,inside_gap,,96.6640625,3.265625,True,103.5515,0.0,0.0
+mega,after_last_reduce_scatter,7,5,2541.654296875,73.1201171875,0.0,73.1201171875,reduce_scatter,mhc,cuLaunchKernelEx,inside_gap,,66.3203125,2.9169921875,True,73.1195,0.0,0.0
+mega,after_last_reduce_scatter,7,5,2850.263671875,24.033203125,1.408203125,22.625,prepare,memcpy,cudaMemcpyAsync,inside_gap,aten::copy_,12.76953125,3.1689453125,True,24.0325,0.0,0.0
+mega,after_last_reduce_scatter,7,5,2894.8720703125,20.064453125,1.7275390625,18.3369140625,fill,mega_moe,cudaGraphLaunch,inside_gap,,5.8544921875,3.099609375,True,20.064,0.0,0.0
+mega,after_last_reduce_scatter,7,5,2875.8330078125,17.791015625,2.7197265625,15.0712890625,memcpy,fill,cudaLaunchKernel,inside_gap,aten::fill_,9.9833984375,3.1630859375,True,17.791,0.0,0.0

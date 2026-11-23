@@ -1,0 +1,42 @@
+SM100 V41 L20 host/device cause environment
+date=2026-11-23T14:54:50+08:00
+repo_sha=f2230f1fe39cb6b652e865bd9eddc40052d25e85
+perf_event_paranoid=2
+gpu_list:
+GPU 0: NVIDIA L20D (UUID: GPU-3aad6312-0e20-d01b-4249-71cb090c2127)
+GPU 1: NVIDIA L20D (UUID: GPU-b0ac7f5d-738f-cdad-423f-456f4c26947e)
+GPU 2: NVIDIA L20D (UUID: GPU-c5a93c78-be0c-2648-564a-4b4666671960)
+GPU 3: NVIDIA L20D (UUID: GPU-77463de9-85e0-a6f3-2c7e-f1147d6f7f49)
+GPU 4: NVIDIA L20D (UUID: GPU-4a493131-84b9-4c88-18ee-50fc6f213a36)
+GPU 5: NVIDIA L20D (UUID: GPU-045e62f4-d04d-2f9e-e456-1fb82810029f)
+GPU 6: NVIDIA L20D (UUID: GPU-6b44066c-6712-30f2-02d0-fa0cb91733a3)
+GPU 7: NVIDIA L20D (UUID: GPU-31a509fd-e741-5ab8-b837-443ad986c404)
+start/end/exit:
+mega start=2026-11-23T14:16:01+08:00 end=2026-11-23T14:28:49+08:00 exit=0
+gc start=2026-11-23T14:28:51+08:00 end=2026-11-23T14:36:43+08:00 exit=0
+packages:
+numpy==2.3.5
+nvidia-cuda-nvcc==13.5.37
+nvidia-cuda-runtime==13.0.96
+nvidia-cutlass-dsl==4.8.1
+nvidia-cutlass-dsl-libs-base==4.8.1
+nvidia-cutlass-dsl-libs-core==4.8.1
+nvidia-cutlass-dsl-libs-cu12==4.8.1
+nvidia-cutlass-dsl-libs-cu13==4.8.1
+torch==2.13.0
+torch_c_dlpack_ext==0.1.5
+torchaudio==2.11.0
+torchcodec==0.17.0
+torchvision==0.28.0
+vllm @ file:///data0/home/admin/workspace/megamoe/native-v41-stsFS4w7/vllm-0.31.0-cp38-abi3-manylinux_2_28_x86_64.whl#sha256=39132b433967f0962d03d8a5f633b9bee6b32708f566c7d5637b79f8d0ef3433
+ptxas:
+ptxas: NVIDIA (R) Ptx optimizing assembler
+Copyright (c) 2005-2026 NVIDIA Corporation
+Built on Mon_Oct_12_19:25:48_PDT_2026
+Cuda compilation tools, release 13.5, V13.5.37
+Build cuda_13.5.r13.5/compiler.39125733_0
+perf_probe:
+[ perf record: Woken up 2 times to write data ]
+[ perf record: Captured and wrote 0.011 MB /data0/home/admin/workspace/megamoe/v41-l20-host-device-T2qg4jm8/run/perf-probe.data ]
+notes:
+perf user-space cpu-clock sampling at 199 Hz; perf_event_paranoid=2; kernel stacks and off-CPU stacks unavailable; sched switch records retained.
