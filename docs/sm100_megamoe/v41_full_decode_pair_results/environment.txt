@@ -1,0 +1,49 @@
+captured_at=2026-11-23T17:39:34+08:00
+repo_commit=8779b2948f43892509acb669c202de40afd1eecd
+upstream_commit=fb8b65fa829c97962eb2dbc9a4ad8b759b9cd736
+python=/data0/home/admin/workspace/megamoe/v41-full-decode-4F7lKSeP/run/dsl-env/bin/python
+model=/data0/home/admin/workspace/megamoe/native-v41-KO1hTbTj/model
+model_layout=DeepSeek V4.1 Flash, TP8/EP8, fused shared, 40 expert layers, top-6, 48 local slots/rank
+backend_mega=/data0/home/admin/workspace/megamoe/v41-full-decode-4F7lKSeP/run/overlay/deep_gemm/mega/__init__.py
+backend_gc=/data0/home/admin/workspace/megamoe/v41-full-decode-4F7lKSeP/run/upstream/gc_moe/gc/__init__.py dispatch_sms=12 compute_sms=136
+
+--- nvidia-smi -L ---
+GPU 0: NVIDIA L20D (UUID: GPU-3aad6312-0e20-d01b-4249-71cb090c2127)
+GPU 1: NVIDIA L20D (UUID: GPU-b0ac7f5d-738f-cdad-423f-456f4c26947e)
+GPU 2: NVIDIA L20D (UUID: GPU-c5a93c78-be0c-2648-564a-4b4666671960)
+GPU 3: NVIDIA L20D (UUID: GPU-77463de9-85e0-a6f3-2c7e-f1147d6f7f49)
+GPU 4: NVIDIA L20D (UUID: GPU-4a493131-84b9-4c88-18ee-50fc6f213a36)
+GPU 5: NVIDIA L20D (UUID: GPU-045e62f4-d04d-2f9e-e456-1fb82810029f)
+GPU 6: NVIDIA L20D (UUID: GPU-6b44066c-6712-30f2-02d0-fa0cb91733a3)
+GPU 7: NVIDIA L20D (UUID: GPU-31a509fd-e741-5ab8-b837-443ad986c404)
+
+--- nvidia-smi query ---
+0, NVIDIA L20D, GPU-3aad6312-0e20-d01b-4249-71cb090c2127, 8.9, 275040 MiB, 580.105.08
+1, NVIDIA L20D, GPU-b0ac7f5d-738f-cdad-423f-456f4c26947e, 8.9, 275040 MiB, 580.105.08
+2, NVIDIA L20D, GPU-c5a93c78-be0c-2648-564a-4b4666671960, 8.9, 275040 MiB, 580.105.08
+3, NVIDIA L20D, GPU-77463de9-85e0-a6f3-2c7e-f1147d6f7f49, 8.9, 275040 MiB, 580.105.08
+4, NVIDIA L20D, GPU-4a493131-84b9-4c88-18ee-50fc6f213a36, 8.9, 275040 MiB, 580.105.08
+5, NVIDIA L20D, GPU-045e62f4-d04d-2f9e-e456-1fb82810029f, 8.9, 275040 MiB, 580.105.08
+6, NVIDIA L20D, GPU-6b44066c-6712-30f2-02d0-fa0cb91733a3, 8.9, 275040 MiB, 580.105.08
+7, NVIDIA L20D, GPU-31a509fd-e741-5ab8-b837-443ad986c404, 8.9, 275040 MiB, 580.105.08
+
+--- torch view ---
+torch 2.13.0+cu130 cuda 13.0 cudnn 92000 devices 8
+0 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid 3aad6312-0e20-d01b-4249-71cb090c2127
+1 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid b0ac7f5d-738f-cdad-423f-456f4c26947e
+2 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid c5a93c78-be0c-2648-564a-4b4666671960
+3 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid 77463de9-85e0-a6f3-2c7e-f1147d6f7f49
+4 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid 4a493131-84b9-4c88-18ee-50fc6f213a36
+5 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid 045e62f4-d04d-2f9e-e456-1fb82810029f
+6 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid 6b44066c-6712-30f2-02d0-fa0cb91733a3
+7 NVIDIA L20D cc 10 3 mem_gib 267.69 uuid 31a509fd-e741-5ab8-b837-443ad986c404
+
+--- installed versions ---
+numpy==2.3.5
+nvidia-cutlass-dsl==4.8.1
+nvidia-cutlass-dsl-libs-core==4.8.1
+nvidia-cutlass-dsl-libs-cu13==4.8.1
+torch==2.13.0
+triton==3.7.1
+
+NOTE: nvidia-smi reports name L20D and compute_cap 8.9, while Torch reports capability (10,3); both observations are preserved verbatim.
