@@ -466,3 +466,98 @@ arm2 的配置是 `vanilla + SM90_EIGHT_SHARED=1`（GC 内核计算 shared exper
 2. **是否允许我只跑 arm3**（`vanilla + shared=0`）来验证"shared=1 是否是唯一触发条件"？
    这能在一轮内把根因从推断变成证据（arm3 不需要 arm2 发布？—— 按启动器它需要，需你们确认）。
 3. 若你们已知道 shared=1 与 route tape 的层号记录存在冲突，请直接给出修复方向，我按 diff 执行。
+
+---
+
+# 正式八臂 第 4 轮（`c1a176d`）— **arm2 / arm3 已通过**，其余在跑
+
+## A. 相位修复生效：arm2 首次 exit=0
+
+`f78244f` 的 warmup 相位补齐（`sizes=52 padding=28 epoch=1→81`）解决了上一轮的 `layers_eq=False`。
+本轮 arm2 完整跑通，`complete` 标记与 8 份 rank NPZ 齐备。
+
+`886c5ba` 的诊断补丁只打印、不改判定，本轮无触发（说明审计全过）。
+
+## B. 已完成的两臂（同轮、同输入、严格可比）
+
+| 臂 | Routed 后端 | Shared | 放置 | 副本 | stats ms/步 | **measured ms/步** |
+|---|---|---|---|---|---|---:|
+| **2** | GC SM90 FP8×FP4 | **fused（核内）** | 原生 | 无 | 91.846 | **92.909** |
+| **3** | GC SM90 FP8×FP4 | **unfused（核外）** | 原生 | 无 | 89.088 | **89.681** |
+
+**可严格比较的证据**（`run.json` 的 `stats.audit`）：
+
+| 项 | arm2 | arm3 | 结论 |
+|---|---|---|---|
+| 逻辑路由摘要 `ids` | `ccfe108dc331daad…` | `ccfe108dc331daad…` | **完全相同** |
+| 40 层合计物理行数 | 63,087,488 | 63,087,488 | **完全相同** |
+| `first_epoch` | 6481 | 6481 | 相同 |
+| prefill 引擎步 | 117 | 117 | 相同 |
+| batch / steps | 256 / 1000 | 256 / 1000 | 相同 |
+
+即两臂在**同一份逻辑路由**上执行，唯一变量是 shared expert 由谁计算。
+
+## C. 配对结论 `2→3`（任务书要求的 shared 融合效应）
+
+**fused 比 unfused 慢 3.60%**（92.909 vs 89.681 ms/步，stats 窗口 91.846 vs 89.088，方向一致）。
+
+### C.1 两臂的实际分工（由日志直接证实）
+
+| 臂 | `[ROLE4]` 日志条数 | shared 由谁算 |
+|---|---:|---|
+| **arm2（fused）** | **1937** | GC 内核 role 4；vLLM 的 `SharedExperts._layer` 被换成 `_ZeroShared`（返回全零，但保留真权重供 GC 量化）|
+| **arm3（unfused）** | **0** | **vLLM 原生 `SharedExperts`** 照常执行，GC routed 内核只算 top-6，最后由 `MoERunner._maybe_combine` 相加 |
+
+日志原文（arm2）：`[ROLE4] vLLM shared GEMM neutralised (zero stub); gc_moe role 4 owns it`
+
+代码注释也说明了为什么必须中性化：
+> the real shared term comes from gc_moe's combine kernel, which adds `shared_y`.
+> Anything non-zero from vLLM would be added twice.
+
+### C.2 为什么融合反而慢（候选解释，尚需 profiler 证实）
+
+| # | 候选原因 | 可验证方式 |
+|---|---|---|
+| 1 | GC role 4 需要单独占一组 SM，挤占了 routed 的 72 个 compute SM | 对比两臂的 SM 分工与 routed kernel 时长 |
+| 2 | unfused 时 vLLM 的 shared MLP 可与 routed kernel **并行**（不同 stream） | profiler 看两臂 shared 与 routed 的时间重叠度 |
+| 3 | fused 把 shared 塞进同一 combine，增加**串行依赖** | 对比 combine 段时长 |
+
+**本轮不宣称已定位原因**，只报告"融合在这台机器上慢 3.60%，且两臂工作量逐位相同"。
+
+## D. 计时边界（任务书要求）
+
+主指标是**完整 FFN 设备时间**：每个 rank 从本层 FFN 入口到输出完成，包含门控、shared、routed、combine 及适用的最终加法；
+每步每层取八 rank 的**本地跨度最大值**，40 层相加，再对 1000 步平均。时间戳取同一 GPU 的 `globaltimer`。
+`install_clocks` 用 Triton 内联 `mov.u64 %globaltimer` 在每层 `ffn.forward` 前后打点。
+
+## E. 权重加载加速（本轮实测，回应此前的疑问）
+
+| 条件 | 加载耗时 | 证据 |
+|---|---|---|
+| **冷**（arm2，页缓存有效但被挤压）| **6 分 03 秒**（7.57 s/it）| `48/48 [06:03]` |
+| **热**（arm3，紧随 arm2）| **9 秒**（4.95 it/s）| `48/48 [00:09]` |
+| **热**（arm4）| **43 秒**（1.10 it/s）| `48/48 [00:43]` |
+
+`warm_page_cache.sh` 头部注释记录的就是这个现象（"page cache 已持有时 ~3 s at 15 shards/s；
+被驱逐时 10+ min，实测 631 s"）。本轮**实测确认该机制存在并生效**。
+
+已额外准备：**模型本地副本** `/mnt/fuse/models/DeepSeek-V4.1-Flash`（476 G，61/61 文件，
+`config.json` 与 `model.safetensors.index.json` 的 SHA256 与原 NAS **逐位相同**），
+供后续臂/后续轮次使用，可消除 NAS 读放大的不确定性。
+
+## F. 本轮状态（写回执时）
+
+| 臂 | 状态 |
+|---|---|
+| 2 | ✅ `exit=0` |
+| 3 | ✅ `exit=0` |
+| **4** | ⏳ 已跑完 2117 步（1000 统计 + 1000 正式），正在收尾 |
+| 6, 7, 8, 1, 5 | 排队（启动器顺序 2→3→4→6→7→8→1→5）|
+
+机器可读汇总：`formal/summary_live.csv`。
+
+## G. 尚未填主表的原因
+
+任务书要求"完整八臂（或独立臂均处理）后统一回执"。当前 6 臂未完成，
+且配对 `4→6`、`7→8`、`1→3`、`5→6`、`4→7`、`6→8` 全部依赖尚未产出的臂，
+因此**主表暂留空**，待八臂齐备后一次性给出。
