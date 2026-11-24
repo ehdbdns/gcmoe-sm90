@@ -22,7 +22,7 @@ def write_rows(path, rows):
         writer.writerows(rows)
 
 
-def report(root):
+def report(root, historical=False):
     ranks, layers, summary = [], [], []
     reference, eco_alloc = {}, {}
     for arm in ARMS:
@@ -31,6 +31,7 @@ def report(root):
             auctions = []
             for rank in range(8):
                 d = json.loads((root / f'layer{layer}' / arm / f'rank{rank}-device.json').read_text())
+                check(d.get('historical_routes', False) == historical, 'wrong replay source')
                 row = d['calls'][1]
                 counts = row['slot_counts']
                 key = layer, rank
@@ -57,7 +58,7 @@ def report(root):
                                   graph_us=(end-graph)/1000, routed_us=(last-first)/1000, price=price,
                                   output_equal=expected[1] == signature[1]))
             check(len({r['epoch'] for r in group}) == 1, 'ranks sampled different replays')
-            check(sum(r['tokens'] for r in group) == bs*6, 'incomplete logical routes')
+            check(sum(r['tokens'] for r in group) == bs*6*(8 if historical else 1), 'incomplete logical routes')
             check(all(a == auctions[0] for a in auctions), 'replicated planners disagree')
             def values(field):
                 return [r[field] for r in group]
@@ -83,6 +84,16 @@ def report(root):
                             auction_accepted_mean=mean(accepted) if accepted else None,
                             auction_accepted_total=sum(accepted) if accepted else None,
                             output_equal=all(r['output_equal'] for r in sample)))
+    if historical:
+        with (root / 'history_comparison.csv').open() as f:
+            audit = list(csv.DictReader(f))
+        for row in summary:
+            checks = [r for r in audit if r['arm'] == row['arm']]
+            keys = {(int(r['layer']), int(r['rank']), int(r['step_zero_based'])) for r in checks}
+            expected_keys = {(layer, rank, step) for layer in LAYERS for rank in range(8) for step in range(3)}
+            check(keys == expected_keys and len(checks) == len(keys), 'incomplete history comparison')
+            row['historical_allocation_equal'] = all(
+                int(r['different_slots']) == 0 and r['auction_equal'] == 'True' for r in checks)
     write_rows(root/'ranks.csv', ranks)
     write_rows(root/'layers.csv', layers)
     write_rows(root/'main_table.csv', summary)
@@ -92,8 +103,9 @@ def report(root):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('root', type=Path)
+    parser.add_argument("--historical", action="store_true")
     args = parser.parse_args()
-    rows = report(args.root)
+    rows = report(args.root, args.historical)
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -104,3 +116,5 @@ if __name__ == '__main__':
     ax.margins(y=0.14)
     fig.tight_layout()
     fig.savefig(args.root/'moe.svg')
+    if args.historical and not all(r['historical_allocation_equal'] and r['output_equal'] for r in rows):
+        raise SystemExit('Historical comparison failed; inspect history_comparison.csv and ranks.csv')

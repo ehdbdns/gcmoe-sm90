@@ -5,13 +5,19 @@ out=$(realpath -m "${1:?expected a new output directory}")
 arms=(rr eco)
 profile_options=()
 export_options=()
-if [[ $# == 3 ]]; then
+report_options=()
+if [[ $# -ge 3 && $# -le 4 ]]; then
   bs=$2
   group=$(realpath "$3")
   [[ $bs == 512 || $bs == 1024 ]] && [[ -f "$group/stats-demand.npz" ]] || exit 2
   arms=(vanilla random rr eco eco_smr)
   profile_options=(--bs "$bs" --group "$group" --layers 8 20 32)
   export_options=(--bs "$bs" --matrix)
+  if [[ $# == 4 ]]; then
+    profile_options+=(--routes "$out/routes")
+    export_options+=(--historical)
+    report_options+=(--historical)
+  fi
 elif [[ $# != 1 ]]; then
   exit 2
 fi
@@ -19,6 +25,9 @@ mkdir "$out"
 git rev-parse HEAD > "$out/execution.sha"
 source scripts/env.sh
 export PYTHONPATH="$PWD/source:$PWD/source/tests:$PWD/integration:$GC_SHIM"
+if [[ $# == 4 ]]; then
+  "$GC_ENV/bin/python" scripts/sm90/extract_se_routes.py "$group" "$4" "$out/routes" "$bs"
+fi
 export OMP_NUM_THREADS=2 GC_MOE_LAYERS=1 GC_MOE_MB_CLAIM=1 GC_MOE_BLOCK_M_FORCE=64
 export GC_MOE_SM90_PULL_TMA=1 GC_MOE_SM90_STREAM_M_BLOCKS=1 GC_MOE_SM90_DISPATCH_SMS=6 GC_MOE_SM90_PLAN_DISPATCH=1
 export GC_MOE_SM90_SM_REUSE=0 GC_MOE_ECO_PER_LAYER=1 GC_MOE_ECO_MAX_COPIES=8
@@ -45,11 +54,14 @@ for arm in "${arms[@]}"; do
     --sm90-profile --arm "$arm" --output "$out" "${profile_options[@]}" 2>&1 | tee "$out/$arm.log"
   flock -u 9
 done
-if [[ $# == 3 ]]; then
+if [[ $# -ge 3 && $# -le 4 ]]; then
+  if [[ $# == 4 ]]; then
+    "$GC_ENV/bin/python" scripts/sm90/audit_se_history.py "$group" "$out"
+  fi
   for layer in 8 20 32; do
     "$GC_ENV/bin/python" scripts/sm90/se_perfetto.py "$out/layer$layer" "${export_options[@]}"
   done
-  "$GC_ENV/bin/python" scripts/sm90/se_replay_report.py "$out"
+  "$GC_ENV/bin/python" scripts/sm90/se_replay_report.py "$out" "${report_options[@]}"
 else
   "$GC_ENV/bin/python" scripts/sm90/se_perfetto.py "$out"
 fi

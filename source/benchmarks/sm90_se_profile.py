@@ -45,8 +45,9 @@ def main(argv):
     parser.add_argument('--bs', type=int, choices=(512, 1024), default=1024)
     parser.add_argument('--group', type=Path, default=PLACEMENT)
     parser.add_argument("--layers", nargs="+", type=int, choices=range(40))
+    parser.add_argument("--routes", type=Path, help="verified three-step history directory")
     args = parser.parse_args(argv)
-    tokens = args.bs // 8
+    tokens = args.bs if args.routes else args.bs // 8
     from deep_gemm.utils import per_token_cast_to_fp8
     import gc_moe
     import gc_ptxas_override  # noqa: F401
@@ -84,12 +85,12 @@ def main(argv):
         if eco:
             install_into_buffer(buf, phys, 8, E)
         slot_pair = gather_slot_weights(logical_pair, buf, plan, dist.group.WORLD, out=slot_pair)
-        profile_layer(root, layer, tokens, args.bs, rank, device, buf, eco, plan, slots, slot_pair, shared)
+        profile_layer(root, layer, tokens, args.bs, rank, device, buf, eco, plan, slots, slot_pair, shared, args.routes)
     dist.barrier()
     dist.destroy_process_group()
 
 
-def profile_layer(root, layer, tokens, bs, rank, device, buf, eco, plan, slots, pair, shared):
+def profile_layer(root, layer, tokens, bs, rank, device, buf, eco, plan, slots, pair, shared, routes):
     import gc_moe
     from fixed_workload import route_ordinals
     from gc_moe.apis.sm90_gc_moe import validate_call
@@ -98,18 +99,34 @@ def profile_layer(root, layer, tokens, bs, rank, device, buf, eco, plan, slots, 
     from test_sm90_gc_moe import build_tokens, cast_tokens_to_fp8
 
     seed_rank = rank if layer == 20 else rank + (layer + 1) * 8
-    x, ids, weights = build_tokens(tokens, H, E, K, seed_rank, device)
+    if routes:
+        generator = torch.Generator(device=device).manual_seed(42 + seed_rank * 7919)
+        x = torch.randn((tokens, H), dtype=torch.bfloat16, device=device, generator=generator) * 0.5
+        with np.load(routes / f'layer{layer}-rank{rank}.npz') as tape:
+            ids_by_step = torch.from_numpy(tape['ids']).to(device)
+            weights_by_step = torch.from_numpy(tape['weights']).to(device)
+        if ids_by_step.shape != (SAMPLES, tokens, K) or weights_by_step.shape != ids_by_step.shape:
+            raise ValueError('historical route slice shape mismatch')
+    else:
+        x, ids, weights = build_tokens(tokens, H, E, K, seed_rank, device)
+        ids_by_step = ids[None]
+        weights_by_step = weights[None]
     digest = hashlib.sha256()
-    for tensor in (x, ids, weights):
+    for tensor in (x, ids_by_step, weights_by_step):
         digest.update(tensor.contiguous().view(torch.uint8).cpu().numpy().tobytes())
-    dst = ids
+    dst = ids_by_step
     if not eco:
         table = slots[0]
-        copy = (rank + 23333 * torch.arange(tokens, device=device)[:, None]) % (table >= 0).sum(-1)[ids]
-        dst = table[ids, copy].long()
-    buf.topk_idx[:tokens].copy_(dst)
-    buf.route_ordinal[:tokens].copy_(route_ordinals(dst[None])[0])
-    buf.topk_weights[:tokens].copy_(weights)
+        copy = (rank + 23333 * torch.arange(tokens, device=device)[:, None]) % (table >= 0).sum(-1)[dst]
+        dst = table[dst, copy].long()
+    ordinals = route_ordinals(dst)
+
+    def stage_routes(index):
+        buf.topk_idx[:tokens].copy_(dst[index])
+        buf.route_ordinal[:tokens].copy_(ordinals[index])
+        buf.topk_weights[:tokens].copy_(weights_by_step[index])
+
+    stage_routes(0)
     q, sf = cast_tokens_to_fp8(x)
     buf.x[:tokens].copy_(q)
     buf.x_sf[:tokens].copy_(sf)
@@ -138,6 +155,8 @@ def profile_layer(root, layer, tokens, bs, rank, device, buf, eco, plan, slots, 
     epoch = int(buf.header[0])
     if eco:
         buf.auction_counts.fill_(-1)
+        if routes:
+            buf.eco_state.zero_()  # Match the historical post-placement boundary.
     buf.long_clocks.zero_()
     buf.long_clocks[:, :2].fill_(-1)
     dist.barrier()
@@ -146,6 +165,11 @@ def profile_layer(root, layer, tokens, bs, rank, device, buf, eco, plan, slots, 
                                             torch.profiler.ProfilerActivity.CUDA]) as prof:
         dist.barrier()
         for sample in range(SAMPLES):
+            if routes:
+                if sample:
+                    dist.barrier()  # All remote reads from the prior sample have finished.
+                stage_routes(sample)
+                dist.barrier()
             graph.replay()
             if sample == 1:
                 replay2_output.copy_(y)
@@ -154,11 +178,12 @@ def profile_layer(root, layer, tokens, bs, rank, device, buf, eco, plan, slots, 
     if int(buf.header[0]) != epoch + SAMPLES or not torch.isfinite(replay2_output).all():
         raise ValueError('incomplete replay or nonfinite output')
     rows = []
-    logical = torch.bincount(ids.flatten(), minlength=E)
-    dist.all_reduce(logical)
     per_rank = buf.physical // 8
     local = plan[rank * per_rank:(rank + 1) * per_rank].long()
-    for tag in range(epoch, epoch + SAMPLES):
+    for sample, tag in enumerate(range(epoch, epoch + SAMPLES)):
+        ids = ids_by_step[sample if routes else 0]
+        logical = torch.bincount(ids.flatten(), minlength=E)
+        dist.all_reduce(logical)
         counts = buf.profile_slot_counts[tag % 256].long()
         observed = torch.zeros_like(logical).scatter_add_(0, local, counts)
         dist.all_reduce(observed)
@@ -171,7 +196,7 @@ def profile_layer(root, layer, tokens, bs, rank, device, buf, eco, plan, slots, 
                          slot_counts=counts.tolist(), auction=auction,
                          rank_tokens=int(counts.sum()), m_blocks=int(((counts + 63) // 64).sum())))
     (root / f'rank{rank}-device.json').write_text(json.dumps(dict(
-        roles=roles, calls=rows, bs=bs, layer=layer, input_sha256=digest.hexdigest(), placement=plan.tolist(), price=price,
+        roles=roles, calls=rows, bs=bs, source_tokens=tokens, historical_routes=bool(routes), layer=layer, input_sha256=digest.hexdigest(), placement=plan.tolist(), price=price,
         output_sha256=hashlib.sha256(replay2_output.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest())))
     dist.barrier()
     graph.reset()

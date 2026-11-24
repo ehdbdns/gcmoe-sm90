@@ -65,7 +65,8 @@ def decode(trace, device, eco, *, reuse=False, tokens=128):
                           m_blocks=row['m_blocks'], first_cta_raw_us=first, last_cta_raw_us=last)
 
 
-def export(root, bs=1024, matrix=False):
+def export(root, bs=1024, matrix=False, historical=False):
+    tokens = bs if historical else bs // 8
     inputs = {}
     layouts = {}
     arms = ('vanilla', 'random', 'rr', 'eco', 'eco_smr') if matrix else ('rr', 'eco')
@@ -75,6 +76,8 @@ def export(root, bs=1024, matrix=False):
         bases = [trace['baseTimeNanoseconds'] for trace in traces]
         for rank, trace in enumerate(traces):
             device = json.loads((root / arm / f'rank{rank}-device.json').read_text())
+            check(device.get('historical_routes', False) == historical and
+                  device.get('source_tokens', bs // 8) == tokens, 'source workload mismatch')
             signature = device['input_sha256']
             check(inputs.setdefault(rank, signature) == signature, 'two arms used different benchmark inputs')
             placement = device['placement']
@@ -86,12 +89,14 @@ def export(root, bs=1024, matrix=False):
             check(len(device['calls']) == 3, 'expected three post-warmup calls')
             events.append(dict(ph='M', name='process_name', pid=rank, tid=0, args={'name': f'rank {rank}'}))
             lanes = {}
-            for spans, meta in decode(trace, device, arm.startswith('eco'), reuse=arm == 'eco_smr', tokens=bs // 8):
+            for spans, meta in decode(trace, device, arm.startswith('eco'), reuse=arm == 'eco_smr', tokens=tokens):
                 totals[meta['sample']] += meta['rank_tokens']
                 if matrix:
                     if meta['sample'] != 1:
                         continue
                     meta.update(bs=bs, layer=device["layer"], arm=arm)
+                    if historical:
+                        meta.update(measured_step_zero_based=1, source_tokens=tokens)
                 for name, (start, end) in spans.items():
                     if matrix and name in ('dispatch', 'local count exchange', 'routed kernel',
                                            'dispatch admission', 'reuse kernel'):
@@ -103,7 +108,7 @@ def export(root, bs=1024, matrix=False):
                                            args={'name': track}))
                     events.append(dict(ph='X', name=name, cat='SM90 MoE', pid=rank, tid=lanes[track],
                                        ts=start + (bases[rank] - min(bases)) / 1000, dur=end-start, args=meta))
-        check(totals == [bs*6]*3, f'wrong global token assignments: {totals}')
+        check(totals == [tokens*8*6]*3, f'wrong global token assignments: {totals}')
         origin = min(e['ts'] for e in events if e['ph'] == 'X')
         for event in events:
             if event['ph'] == 'X':
@@ -117,5 +122,6 @@ if __name__ == '__main__':
     parser.add_argument('root', type=Path)
     parser.add_argument('--bs', type=int, choices=(512, 1024), default=1024)
     parser.add_argument('--matrix', action='store_true')
+    parser.add_argument("--historical", action="store_true")
     args = parser.parse_args()
-    export(args.root, args.bs, args.matrix)
+    export(args.root, args.bs, args.matrix, args.historical)
