@@ -1,103 +1,116 @@
-# 回执 · SM90 · BS512 / BS1024 整模四臂复测
+# 回执 · SM90 第二版 · BS512 / BS1024 整模四臂复测
 
-执行者：SM90 八卡执行者。任务书 `docs/trace_executor_20261119/SM90_BS512_BS1024_FULL_MODEL_FOUR.md`（commit `74a5395`）。
+执行者：SM90 八卡执行者。任务书 `docs/trace_executor_20261119/SM90_BS512_BS1024_FULL_MODEL_FOUR.md`（第二版）。
 
-## 结论：BS512 vanilla 第一臂即失败，无法产出任何主表行
+| 项 | 值 |
+|---|---|
+| 测量 SHA | `a1bc4476c03c55931088f8b308f9034db7c0026c` |
+| `exit-code.txt` | **0** |
+| `bs512.exit` | **0** |
+| `bs1024.exit` | **0** |
+| 模型启动次数 | **8 次**（两档各四臂，逐臂独立加载）|
+| main_table / pairs / layers / auction 行数 | **8 / 12 / 320 / 2**（与任务书要求逐项一致）|
 
-`bs512.exit = 1`。失败发生在统计窗口收尾的 `_gc_moe_long_finish('stats')`，八个 rank 同型报错：
+## 第一版的故障与第二版的修复
 
-```
-[route-diag] pos=40000 n=40000 epochs_eq=True layers_eq=False layer0=0 counts_min=0 ord_ok=True
-ValueError: incomplete 1000-step route, layer, epoch or ordinal history
-```
+第一版（`74a5395`）两档的 vanilla 臂均在统计窗口收尾失败，`route-diag` 显示 `pos/epochs/ordinals/layer0/counts` 全部通过、仅 `layers_eq=False`，即层序相对 `(epoch-1)%40` 有固定相位偏移；对齐守卫因 `run_full_model_four.sh` 清除 `SM90_EIGHT_ARM` 而未生效。第一版 BS512 与 BS1024 各失败一次，无任何测量行。
 
-## 诊断：只有 layer 序列判据失败，其余全部通过
+第二版新增四臂自身的层序对齐，八臂全部一次通过，未出现任何 `route-diag`（全臂 `diag=0`）。
 
-`integration/long_cost.py::finish_phase` 的六个判据：
+## 层序对齐证据（逐臂）
 
-| 判据 | 观测 | 结论 |
+| BS | 臂 | `[warm] sizes/padding` | `stats first_epoch` | `(f-1)%40` | `measure first_epoch` | 差 |
+|---|---|---|---|---|---|---|
+| 512 | vanilla | 3/37 | 11081 | 0 | 51081 | 40000 |
+| 512 | random | 3/37 | 11081 | 0 | 51081 | 40000 |
+| 512 | rr | 3/37 | 11081 | 0 | 51081 | 40000 |
+| 512 | eco | 3/37 | 11081 | 0 | 51081 | 40000 |
+| 1024 | vanilla | 3/37 | 26201 | 0 | 66201 | 40000 |
+| 1024 | random | 3/37 | 26201 | 0 | 66201 | 40000 |
+| 1024 | rr | 3/37 | 26201 | 0 | 66201 | 40000 |
+| 1024 | eco | 3/37 | 26201 | 0 | 66201 | 40000 |
+
+八臂 `sizes=3 padding=37` 与任务书预期一致；`(first-1)%40` 全为 0；两窗口首 epoch 差恒为 40,000（1000 步 × 40 层）。
+
+## 主表（八行，µs/层，1000 步 × 40 层等权平均）
+
+| BS | 臂 | MoE ms/步 | vs vanilla | E2E ms/步 | token IR | 总 M 块 | 峰值 rank M 块 | 活跃槽 | M 块 IR |
+|---|---|---|---|---|---|---|---|---|---|
+| 512 | vanilla | 71.356 | +0.00% | 162.71 | 1.394 | 564.2 | 89.4 | 334.7 | 1.268 |
+| 512 | random | 76.055 | +3.42% | 168.28 | 1.481 | 608.6 | 98.6 | 391.0 | 1.296 |
+| 512 | rr | 59.486 | -6.71% | 151.79 | 1.061 | 595.9 | 78.7 | 398.7 | 1.056 |
+| 512 | eco | 57.212 | -8.24% | 149.30 | 1.033 | 564.2 | 73.2 | 369.7 | 1.038 |
+| 1024 | vanilla | 136.473 | +0.00% | 316.33 | 1.396 | 944.1 | 156.0 | 359.9 | 1.322 |
+| 1024 | random | 144.252 | +2.75% | 325.01 | 1.480 | 984.0 | 168.6 | 420.1 | 1.370 |
+| 1024 | rr | 110.076 | -8.36% | 289.88 | 1.044 | 976.5 | 127.1 | 423.9 | 1.042 |
+| 1024 | eco | 106.860 | -9.93% | 284.93 | 1.019 | 944.1 | 120.9 | 404.2 | 1.024 |
+
+### ECO 相对 EPLB + RR
+
+| BS | rr MoE | eco MoE | 差值 | 百分比 |
+|---|---|---|---|---|
+| 512 | 59.486 | 57.212 | **-2.274 ms/步** | **-3.82%** |
+| 1024 | 110.076 | 106.860 | **-3.216 ms/步** | **-2.92%** |
+
+## 公平性：12 对全部通过
+
+| BS | 臂对 | native_diff | 样本 | warm_native_equal | strict_pair_comparable | MoE 变化 | E2E 变化 |
+|---|---|---|---|---|---|---|---|
+| 512 | vanilla→random | 0 | 512000 | True | True | +6.59% | +3.42% |
+| 512 | vanilla→rr | 0 | 512000 | True | True | -16.63% | -6.71% |
+| 512 | vanilla→eco | 0 | 512000 | True | True | -19.82% | -8.24% |
+| 512 | random→rr | 0 | 512000 | True | True | -21.79% | -9.80% |
+| 512 | random→eco | 0 | 512000 | True | True | -24.78% | -11.28% |
+| 512 | rr→eco | 0 | 512000 | True | True | -3.82% | -1.64% |
+| 1024 | vanilla→random | 0 | 1024000 | True | True | +5.70% | +2.75% |
+| 1024 | vanilla→rr | 0 | 1024000 | True | True | -19.34% | -8.36% |
+| 1024 | vanilla→eco | 0 | 1024000 | True | True | -21.70% | -9.93% |
+| 1024 | random→rr | 0 | 1024000 | True | True | -23.69% | -10.81% |
+| 1024 | random→eco | 0 | 1024000 | True | True | -25.92% | -12.33% |
+| 1024 | rr→eco | 0 | 1024000 | True | True | -2.92% | -1.71% |
+
+所有 12 对：`native_diff=0`、`warm_native_equal=True`、`strict_pair_comparable=True`；样本数 BS512 为 512,000、BS1024 为 1,024,000，与任务书一致。
+
+## ECO 拍卖与价格
+
+| BS | rounds | offers | accepted | 接受率 | 每层调用成交均值 | 零成交调用 | 无报价轮 |
+|---|---|---|---|---|---|---|---|
+| 512 | 40159 | 345915 | 226980 | 65.62% | 5.6745 | 0 | 37 |
+| 1024 | 40165 | 433250 | 293457 | 67.73% | 7.3364 | 0 | 33 |
+
+两档 `calls=40000`（1000 步 × 40 层），零成交调用均为 0。
+
+## 结论
+
+- 两档 EPLB+RR 与 EPLB+fine ECO 均显著快于原生：BS512 rr −16.63%、eco −19.82%（MoE）；BS1024 rr −19.34%、eco −21.70%。
+- **ECO 相对 RR 在 MoE 上再快 3.82%（BS512）与 2.92%（BS1024）**；端到端 −1.64% / −1.71%（MoE 只占整步的一部分）。
+- 随机放置+RR 反而比原生慢 6.59% / 5.70%，说明收益来自 EPLB 的逐层重排而非单纯多副本。
+- token IR 从 vanilla 1.394/1.396 降到 rr 1.061/1.044、eco 1.033/1.019，是主要机制。
+
+## 权重加载证据（本地 ext4 + 页缓存预热 + 关闭预取）
+
+| 档/臂 | 48 shard 用时 | 速率 |
 |---|---|---|
-| `position == len(epochs)` | 40000 == 40000 | ✅ 1000 步 × 40 层，调用数完全正确 |
-| `epochs == arange(first, first+n)` | True | ✅ epoch 连续，窗口边界干净 |
-| `layers[0] == 0` | 0 | ✅ 首项层号正确 |
-| `counts >= 0` | min = 0 | ✅ 物理槽计数合法 |
-| `ordinals` 一致 | True | ✅ 路由 ordinal 全对 |
-| **`layers == (epochs - 1) % 40`** | **False** | ❌ **唯一失败项** |
+| 512/vanilla | 00:04 | 10.89 it/s |
+| 512/random | 00:07 | 6.21 it/s |
+| 512/rr | 00:17 | 2.68 it/s |
+| 512/eco | 00:18 | 2.67 it/s |
+| 1024/vanilla | 00:19 | 2.51 it/s |
+| 1024/random | 00:04 | 9.83 it/s |
+| 1024/rr | 00:15 | 3.12 it/s |
+| 1024/eco | 00:09 | 4.94 it/s |
 
-也就是说：**观测到的数据量完整、epoch 连续、ordinal 正确，只是整体层序相对 `(epoch-1) % 40` 这个基准存在固定偏移。** `layer0=0` 而 `layers_eq=False` 同时成立，说明第 0 项层号为 0，但后续层序与该公式不吻合 —— 典型的**窗口起点未对齐到 40 层边界**。
+模型路径 `/mnt/fuse/models/DeepSeek-V4.1-Flash`（ext4，非网络文件系统），启动器已校验挂载类型、config、safetensors 索引、48 分片与两份数据集 SHA256（见 `input-check.log`）。
 
-## 根因：统计窗口起点没有对齐模型层周期，而对齐守卫在本任务里被关掉了
+## 归档
 
-`long_cost.py::begin()` 里本身有对齐守卫：
+- 全部产物：https://github.com/ehdbdns/gcmoe-sm90/tree/main/docs/trace_executor_20261119/sm90_bs512_bs1024_full_model_four_results
+- 含 `delivery-512/`、`delivery-1024/` 两个完整 delivery、汇总 `main_table.csv`(8)/`pairs.csv`(12)/`layers.csv`(320)/`auction.csv`(2)、两档 exit、`launcher.log`、`bs512.log`/`bs1024.log`、`measurement.sha`、`inputs.sha256`/`input-check.log`/`model-mount.txt`。
+- 每臂目录含 `runner.log`、`run.json`、`status.txt`、`execution.sha`、八 rank NPZ、`installed-layout.json`、`hardware.csv`、`rank_shares.csv`、`pairs.csv`。
+- 现场完整目录（含 KV、route bank、checkpoints）：`/mnt/fuse/sm90-four-full-v2-mvuSgtVf`。原始 KV 已按脚本默认在报告通过后清除（`GC_MAIN20_KEEP_KV` 未设）；route bank 与 `stats-demand.npz` 保留在 delivery 内。
 
-```python
-if os.getenv("SM90_EIGHT_ARM"):
-    next_epoch = int(buf.header[0].item())
-    if (next_epoch - 1) % tape.layers:
-        raise ValueError(f"{phase}: rank {rank} layer 0 would use epoch {next_epoch}")
-```
+## 退卡与清理
 
-但 `scripts/sm90/run_full_model_four.sh` 第 40 行显式清除了它：
-
-```
-unset SM90_COLLECT_SE_ROUTES SM90_EIGHT_ARM SM90_EIGHT_BACKEND SM90_PAIRED_SMALL GC_BS256_TRACE_DIR
-```
-
-于是 `begin()` 不会在窗口开始前检查 `(next_epoch - 1) % 40`，也不会主动对齐。graph 捕获与 warmup 期间的 FFN 调用会推进设备侧 epoch 计数器，等 prefill 结束、统计窗口真正开始时，起点已经偏离 40 的整数倍，整个 1000 步窗口因此相对 `(epoch-1) % 40` 系统性错位。
-
-时间线佐证（BS512 vanilla）：
-
-| 时刻 | 事件 |
-|---|---|
-| 00:42:44 | flashinfer sparse MLA warmup |
-| 00:42:47 | `Capturing CUDA graphs (FULL)` 完成 |
-| 00:42:55 | `Iteration(0)`，prefill 开始 |
-| 00:48:07 | `Iteration(267)`，首个满批 512 |
-| 00:50:46 | `Iteration(1266)`，统计窗口收尾 → `route-diag` → 失败 |
-
-从 267 到 1266 正好 999 步，decode 满批无 context 混入（统计窗口内 `context requests` 计数为 0），说明**窗口本身是干净的**，问题只在层相位。
-
-## 已启动次数与当前状态
-
-| 项 | 状态 |
-|---|---|
-| BS512 vanilla | ❌ 失败（`exit=1`，`step=3: capture`）|
-| BS512 random / rr / eco | 未启动（`run_main20.sh` 在首臂失败即 `exit`）|
-| BS1024 vanilla | ⏳ 已启动，同位置（正在 prefill / 即将进入统计窗口）|
-| BS1024 其余三臂 | 未启动 |
-| 语言模型启动 | **2 次**（BS512 vanilla、BS1024 vanilla）|
-| 主表 / pairs / layers / auction | **无法产出任何行** |
-
-BS1024 走完全相同的脚本路径与相同的 `unset`，预期会在同一判据上失败。
-
-## 按任务书要求的处置
-
-任务书规定：
-
-> 执行者只可处理保持语义的编译故障并附 diff。其他故障交付具体阶段、原始报错、已启动次数和已完成结果。
-
-本故障**不是编译故障**，而是窗口对齐判据与脚本 `unset` 组合导致的运行期失败，属语义/校验范畴，因此本执行者**未做任何代码修改**（diff 为空），只保留现场与首错。
-
-## 建议的修复方向（供设计端决定，未执行）
-
-三个候选中任一即可，但都会改变窗口起点或校验口径，需设计端裁定：
-
-1. **恢复守卫**：在 `run_full_model_four.sh` 中不再 unset `SM90_EIGHT_ARM`（或在 `four==1` 时单独设一个对齐开关），让 `begin()` 提前拒绝或对齐。
-2. **主动对齐**：在 `begin('stats')` 前把设备 epoch 推进到下一个 `40k+1`（丢弃不足一层的残余调用），代价是丢弃若干 warmup 调用，不影响 1000 步窗口本身。
-3. **放宽判据**：把 `layers == (epochs-1) % 40` 改成"层序是一个 40 周期的循环移位"，即允许固定相位偏移。这会改变校验语义，风险最高。
-
-## 现场与归档
-
-- 现场目录：`/mnt/fuse/sm90-four-full-JblIP9a`
-  - `delivery-512/bs512/vanilla/runner.log`（失败首错完整栈，5120–5150 行附近）
-  - `delivery-512/bs512/vanilla/status.txt`（`step=3: capture`、`exit_code=1`）
-  - `delivery-512/bs512/vanilla/{hardware.csv,preexisting-processes.csv,gpu.log,runtime.log,execution.sha}`
-  - `delivery-1024/`（BS1024 进行中）
-  - `launcher.log`、`inputs.sha256`、`input-check.log`、`model-mount.txt`、`measurement.sha`
-- 未产生任何 KV / route bank 成品（失败发生在 `finish_phase` 落盘之前）。
-- 权重加载证据：48/48 用时 3 秒（14.68 it/s），本地 ext4 副本 `/mnt/fuse/models/DeepSeek-V4.1-Flash`，`GC_MOE_NO_PREFETCH=1`，`warm_page_cache.sh` 已预热。**加载优化全部生效**。
-- 八卡在失败臂退出后由 launcher 自动交给 BS1024 使用；当前仍在 BS1024 上运行。
-
-## 请求
-
-请确认修复方向后重新下发任务书。若允许我按方案 1（恢复对齐守卫，属于"保持语义"的健康检查）或方案 2（对齐 epoch）修改，请明确指定其中一个，我会附 diff 执行。
+- 最后一臂（BS1024 eco）04:15:38 完成，`exit_code=0`；launcher 04:17:01 汇总完毕，`exit-code.txt=0`。
+- 八卡已释放：各 4 MiB、无 compute app；本任务 worker 全部退出；协作锁已释放。
+- 未修改任何代码（diff 为空），无编译修复。
