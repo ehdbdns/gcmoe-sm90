@@ -16,7 +16,7 @@ import gc_moe
 assert Path(gc_moe.__file__).resolve().is_relative_to(_ROOT), gc_moe.__file__
 from typing import Optional, Tuple
 
-from deep_gemm.utils import align, per_block_cast_to_fp8, per_token_cast_to_fp4
+from deep_gemm.utils import per_token_cast_to_fp4
 from deep_gemm.utils import per_token_cast_to_fp8
 from test_gc_moe import build_tokens, cast_tokens_to_fp8
 
@@ -66,6 +66,7 @@ def cast_shared_weight_to_fp8(
         quantized, scales = per_token_cast_to_fp8(weight, use_ue8m0=True, gran_k=32)
     else:
         assert weight_recipe in ((1, 32, 32), (1, 128, 128))
+        from deep_gemm.utils import per_block_cast_to_fp8
         quantized, scales = per_block_cast_to_fp8(
             weight, use_ue8m0=True, gran_k=weight_recipe[2]
         )
@@ -135,6 +136,7 @@ def make_shared_input_sf(
     tokens = source.size(0)
     if tokens == 0:
         return destination
+    from deep_gemm.utils import align
     token_idx = torch.arange(tokens, dtype=torch.long, device=source.device)
     within_block = token_idx % block_m
     transformed = (

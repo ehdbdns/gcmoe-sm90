@@ -17,6 +17,11 @@ from typing import Callable, Dict, Optional
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / 'tests'))
+if __name__ == '__main__' and sys.argv[1:2] == ['--sm90-profile']:
+    from sm90_se_profile import main as profile_sm90
+    profile_sm90(sys.argv[2:])
+    raise SystemExit(0)
+
 os.environ['DG_PRINT_CONFIGS'] = '0'
 import numpy as np
 import torch
