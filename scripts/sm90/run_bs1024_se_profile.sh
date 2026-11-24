@@ -19,6 +19,11 @@ if [[ $# -ge 3 && $# -le 4 ]]; then
     export_options+=(--four-arms)
     report_options+=(--four-arms)
   fi
+  if [[ ${SM90_BS256_ARCHIVE_REPAIR:-0} == 1 ]]; then
+    [[ $bs == 256 && $# == 4 && $4 != --fresh ]] || exit 2
+    arms=(rr eco)
+    profile_options+=(--archived-placement)
+  fi
   if [[ $# == 4 ]]; then
     route_dir="$out/routes"
     if [[ $4 == --fresh ]]; then
@@ -41,6 +46,14 @@ else
   mkdir "$out"
   git rev-parse HEAD > "$out/execution.sha"
   if (( fresh )); then cp "$group/routes/manifest.json" "$out/input-manifest.json"; fi
+fi
+if [[ ${SM90_BS256_ARCHIVE_REPAIR:-0} == 1 ]]; then
+  previous=docs/trace_executor_20261119/sm90_bs256_replay_vs_model_results/bs256/replay
+  for layer in 8 20 32; do
+    mkdir "$out/layer$layer"
+    cp -R "$previous/layer$layer/vanilla" "$previous/layer$layer/random" "$out/layer$layer/"
+  done
+  cp "$previous/execution.sha" "$out/reused-controls.sha"
 fi
 source scripts/env.sh
 export PYTHONPATH="$PWD/source:$PWD/source/tests:$PWD/integration:$GC_SHIM"

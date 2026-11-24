@@ -38,6 +38,35 @@ def placement(group, arm, layer):
     return phys, inverse
 
 
+def historical_placements(group, arm, layers, rank, device):
+    """Load installed slots; recover RR's ordered inverse using the full-model CUDA policy."""
+    from gc_moe.eco.meta_sm90 import reorder_single_copy_first
+    from gc_moe.eplb.policy import rebalance_experts_global
+
+    reference = json.loads((group / 'placement.json').read_text())
+    installed = json.loads((group / arm / 'installed-layout.json').read_text())
+    if arm == 'eco':
+        if any(reorder_single_copy_first(reference[l], 8)[0].tolist() != installed[l] for l in layers):
+            raise ValueError('archived ECO permutation differs from the installed slots')
+        return {l: (installed[l], None) for l in layers}
+
+    if arm != 'rr' or installed != reference:
+        raise ValueError('expected the archived RR placement')
+    if rank == 0:
+        with np.load(group / 'stats-demand.npz') as data:
+            history = torch.from_numpy(data['logical']).to(device)
+        if history.shape != (1000, 40, E) or history.dtype != torch.int32:
+            raise ValueError('invalid full-model placement window')
+        plan, inverse, _ = rebalance_experts_global(history, P, P // 8)
+        if any(plan[l].tolist() != installed[l] for l in layers):
+            raise ValueError('CUDA policy did not reproduce sampled archived RR slots')
+        selected = inverse[layers].contiguous()
+    else:
+        selected = torch.empty((len(layers), E, P-E+1), dtype=torch.int32, device=device)
+    dist.broadcast(selected, src=0)
+    return {l: (installed[l], selected[i:i+1]) for i, l in enumerate(layers)}
+
+
 def main(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('--arm', required=True, choices=('vanilla', 'random', 'rr', 'eco', 'eco_smr'))
@@ -46,7 +75,10 @@ def main(argv):
     parser.add_argument('--group', type=Path, default=PLACEMENT)
     parser.add_argument("--layers", nargs="+", type=int, choices=range(40))
     parser.add_argument("--routes", type=Path, help="verified three-step history directory")
+    parser.add_argument("--archived-placement", action="store_true")
     args = parser.parse_args(argv)
+    if args.archived_placement and (args.bs != 256 or not args.routes or not args.layers or args.arm not in ("rr", "eco")):
+        parser.error("archived placement requires a BS256 RR/ECO layer replay with recorded routes")
     tokens = args.bs if args.routes else args.bs // 8
     from deep_gemm.utils import per_token_cast_to_fp8
     import gc_moe
@@ -65,6 +97,7 @@ def main(argv):
     eco = args.arm.startswith('eco')
     if args.arm != os.environ['GC_MOE_MATRIX_ARM']:
         raise ValueError('inconsistent arm configuration')
+    archive = historical_placements(args.group, args.arm, args.layers, rank, device) if args.archived_placement else None
     physical = E if args.arm == 'vanilla' else P
     buf = gc_moe.get_symm_buffer_for_gc_moe_sm90(dist.group.WORLD, E, CAP, K, H, I,
                                                 num_shared_experts=1, physical=physical, eco=eco, trace=True)
@@ -80,7 +113,7 @@ def main(argv):
         root = args.output / f'layer{layer}' if args.layers else args.output
         root = root / args.arm
         root.mkdir(parents=True, exist_ok=True)
-        phys, inverse = placement(args.group, args.arm, layer)
+        phys, inverse = archive[layer] if archive is not None else placement(args.group, args.arm, layer)
         plan, slots = install_eplb_plan(buf, phys, None if eco else inverse)
         if eco:
             install_into_buffer(buf, phys, 8, E)
