@@ -139,6 +139,7 @@ class RoleBinary:
     threads: int
     grid: int
     wait_for: tuple[int, ...] = ()
+    launch_after: tuple[tuple[int, int, int, int], ...] = ()
 
 
 class _KernelArgs:
@@ -166,6 +167,10 @@ def _child_key(binaries: Sequence[RoleBinary], arguments: Sequence[_KernelArgs])
         prerequisites = getattr(binary, 'wait_for', ())
         key.update(len(prerequisites).to_bytes(4, 'little'))
         key.update(bytes(prerequisites))
+        launch_edges = getattr(binary, 'launch_after', ())
+        key.update(len(launch_edges).to_bytes(4, 'little'))
+        for edge in launch_edges:
+            key.update(bytes(edge))
         key.update(binary.smem_bytes.to_bytes(8, 'little'))
         key.update(binary.threads.to_bytes(4, 'little'))
         key.update(binary.grid.to_bytes(4, 'little'))
@@ -210,7 +215,7 @@ class _ChildGraph:
         prefix = (5, 7, 1) if owner.plan_dispatch else (1,)
         if (_r[:len(prefix)] != prefix or _r[-1] != 3
                 or len(set(_r)) != len(_r)
-                or not set(_r) <= ({1, 2, 3, 4, 5, 6, 7} if owner.plan_dispatch else {1, 2, 3, 4, 5, 6})):
+                or not set(_r) <= ({1, 2, 3, 4, 5, 6, 7, 8} if owner.plan_dispatch else {1, 2, 3, 4, 5, 6, 8})):
             raise ValueError(f'unexpected SM90 role order {_r} for plan_dispatch={owner.plan_dispatch}')
         if len(arguments) != len(binaries):
             raise ValueError('expected one argument vector per role')
@@ -252,7 +257,8 @@ class _ChildGraph:
                 # queues still acquire every required dispatch publication.
                 # Finalize/cleanup always joins every local producer.
                 prerequisites = getattr(binary, 'wait_for', ())
-                if any(role not in role_nodes for role in prerequisites):
+                launch_edges = getattr(binary, "launch_after", ())
+                if any(role not in role_nodes for role in (*prerequisites, *(edge[0] for edge in launch_edges))):
                     raise ValueError('kernel dependency must reference an earlier graph node')
                 # [SM-REUSE] Role 6 = a second copy of the routed-compute
                 # role that lives in the DISPATCH green context, so the 6 SMs
@@ -271,7 +277,17 @@ class _ChildGraph:
                 _prereq = (1,) if binary.role == 6 else prerequisites
                 dependencies = (list(nodes) if binary.role == 3 else
                                 [role_nodes[role] for role in _prereq])
-                node = _ok(cu.cuGraphAddNode(self.graph, dependencies, None,
+                edge_data = None
+                if launch_edges:
+                    edge_data = [cu.CUgraphEdgeData() for _ in dependencies]
+                    for role, from_port, to_port, dependency_type in launch_edges:
+                        edge = cu.CUgraphEdgeData()
+                        edge.from_port = from_port
+                        edge.to_port = to_port
+                        edge.type = dependency_type
+                        dependencies.append(role_nodes[role])
+                        edge_data.append(edge)
+                node = _ok(cu.cuGraphAddNode(self.graph, dependencies, edge_data,
                                              len(dependencies), params))
                 nodes.append(node)
                 role_nodes[binary.role] = node

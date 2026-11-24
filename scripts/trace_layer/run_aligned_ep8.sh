@@ -116,9 +116,9 @@ else
   GC_MOE_STEP_PROFILE=1 SMOKE_ECO_WB=26 "$GC_ENV/bin/python" scripts/smoke_compile_eco.py \
     2>&1 | tee "$out/compile-aligned.log"
   if [[ ${GC_MOE_SM90_PLAN_DISPATCH:-1} == 1 ]]; then
-    base_roles='[5, 7, 1, 2, 3]'; aligned_roles='[5, 7, 1, 4, 2, 3]'
+    base_roles='[5, 7, 1, 2, 3]'; aligned_roles='[5, 7, 1, 4, 8, 2, 3]'
   else
-    base_roles='[1, 2, 5, 3]'; aligned_roles='[1, 4, 2, 5, 3]'
+    base_roles='[1, 2, 5, 3]'; aligned_roles='[1, 4, 8, 2, 5, 3]'
   fi
   grep -Fq "compiled roles $base_roles" "$out/compile-base.log"
   grep -Fq "compiled roles $aligned_roles" "$out/compile-aligned.log"

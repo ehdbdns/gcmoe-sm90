@@ -74,6 +74,8 @@ def wait_count(ptr: cute.Pointer, target: Uint32):
 class SM90GCMoERoleKernel:
     def __init__(self, config, layout, role, schedule, has_stats, routed_n_factor=1):
         self.role = role
+        self.shared_phase_start = 1 if role == 8 else 0
+        self.shared_phase_end = 1 if role == 4 and schedule.split_shared else 2
         self.plan_dispatch = bool(getattr(config, "plan_dispatch", False))
         self.direct_route_scan = schedule.direct_route_scan
         self.ranks = config.ranks
@@ -93,7 +95,7 @@ class SM90GCMoERoleKernel:
         self.rows = config.ranks * config.capacity
         self.fast_math, self.has_stats = config.fast_math, has_stats
         self.warp_specialized = ((role == 2 and schedule.threads[1] == 384)
-                                 or role == 4)
+                                 or role in (4, 8))
         self.max_m = schedule.tile_m
         if routed_n_factor not in (1, 2) or (routed_n_factor == 2 and not (
                 role == 2 and not self.warp_specialized and self.max_m == 8
@@ -314,14 +316,14 @@ class SM90GCMoERoleKernel:
             self.grid, self.threads = schedule.grids[1], schedule.threads[1]
             self.smem = schedule.smem[1]
         else:
-            resource_role = 1 if role == 4 else role - 1
+            resource_role = 1 if role in (4, 8) else role - 1
             self.grid, self.threads = schedule.grids[resource_role], schedule.threads[resource_role]
             self.smem = schedule.smem[resource_role]
         if role == 1 and self.single_push and self.grid < 2:
             raise ValueError('source push requires a sender and an independent destination publisher')
         if self.routed_n_factor == 2 and 2 * self.stage_bytes + 128 > self.smem:
             raise ValueError('SM90 routed N512 requires two complete stages and control space')
-        if role == 4:
+        if role in (4, 8):
             shared_stride = (36864 + self.max_m * 144 + 1023) // 1024 * 1024
             assert 2 * shared_stride + 128 <= self.smem
         self.cleanup_grids = min(self.grid, (self.local + 127) // 128)
@@ -4947,8 +4949,7 @@ class SM90GCMoERoleKernel:
                         s1: cute.Pointer, w2: cute.Pointer, s2: cute.Pointer,
                         clamp: Float32):
         # Replicated local-token branch, independently queued from routed experts.
-        # L1 ticket exhaustion precedes L2 waits, so no CTA can wait on an
-        # unclaimed L1 dependency. T0 claims no shared tasks.
+        # L2 consumes a block only after all of its L1 N-tiles publish.
         tid, _, _ = cute.arch.thread_idx()
         command = cute.make_tensor(cute.recast_ptr(slab + self.smem - 96, dtype=Uint32), cute.make_layout((1,)))
         head = self._field(base, 'header', Uint32)
@@ -4956,10 +4957,10 @@ class SM90GCMoERoleKernel:
         # [PHASES] shared expert kernel span for THIS rank. It runs in its own
         # CTA of the compute kernel, so its start is independent of when the
         # routed CTAs get their first task.
-        if cutlass.const_expr(self.pull_trace):
+        if cutlass.const_expr(self.pull_trace and self.shared_phase_start == 0):
             if cute.arch.thread_idx()[0] == 0:
                 self._pull_tl_min_first(base, ld_acquire_gpu_u32(head), 16)
-        for phase in cutlass.range_constexpr(2):
+        for phase in cutlass.range_constexpr(self.shared_phase_start, self.shared_phase_end):
             tiles = self.shared_i // 128 if phase == 0 else self.hidden // 256
             running = True
             while running:
@@ -4986,7 +4987,7 @@ class SM90GCMoERoleKernel:
                         self._shared_select(base, slab, w2, s2, ntile, start, valid, clamp, False)
                 cute.arch.sync_threads()
         # [PHASES] shared expert finished (max over its CTAs)
-        if cutlass.const_expr(self.pull_trace):
+        if cutlass.const_expr(self.pull_trace and self.shared_phase_end == 2):
             if cute.arch.thread_idx()[0] == 0:
                 self._pull_tl_write(base, ld_acquire_gpu_u32(head), 17, read_globaltimer())
         fence_sys()
@@ -5171,7 +5172,7 @@ class SM90GCMoERoleKernel:
         call_epoch = Uint32(0)
         if cutlass.const_expr(self.long_cost):
             # Read this invocation's tag before combine can advance the header.
-            if cutlass.const_expr(self.role in (1, 4, 5, 3, 7)):
+            if cutlass.const_expr(self.role in (1, 4, 8, 5, 3, 7)):
                 call_epoch = ld_acquire_gpu_u32(self._field(base, 'header', Uint32))
                 if cutlass.const_expr(self.role != 3):
                     if cute.arch.thread_idx()[0] == 0:
@@ -5207,7 +5208,7 @@ class SM90GCMoERoleKernel:
                         base, ld_acquire_gpu_u32(self._field(base, 'header', Uint32)),
                         14, read_globaltimer())
             self._compute(base, peers, w1, s1, sec1, w2, s2, sec2, clamp)
-        elif cutlass.const_expr(self.role == 4):
+        elif cutlass.const_expr(self.role in (4, 8)):
             alloc = cutlass.utils.SmemAllocator()
             slab = cute.recast_ptr(alloc.allocate(self.smem, 1024), dtype=Uint8)
             self._compute_shared(base, slab, tokens, sw1, ss1, sw2, ss2, clamp)
@@ -5242,4 +5243,4 @@ class SM90GCMoERoleKernel:
             grid=((1 if self.role == 5 else self.grid), 1, 1),
             block=(self.threads, 1, 1),
             max_number_threads=(self.threads, 1, 1),
-            min_blocks_per_mp=(4 if self.role == 3 else ((8 if self.threads == 128 else 4) if self.role == 1 else ((3 if self.max_m == 8 else 2) if self.role in (2, 4) and not self.warp_specialized else (2 if self.role in (2, 4) and self.max_m <= 32 else 1)))))
+            min_blocks_per_mp=(4 if self.role == 3 else ((8 if self.threads == 128 else 4) if self.role == 1 else ((3 if self.max_m == 8 else 2) if self.role in (2, 4, 8) and not self.warp_specialized else (2 if self.role in (2, 4, 8) and self.max_m <= 32 else 1)))))

@@ -11,6 +11,10 @@ class SM90RoleConfig:
     # Dispatch allocates a dynamic shared uint32 counter; the graph must reserve it.
     smem: tuple[int, int, int] = (128, 65792, 0)
     direct_route_scan: bool = False
+    split_shared: bool = False
+    shared_grid: int = 0
+    shared_l2_grid: int = 0
+    compute_sms: int = 0
 
 
 @lru_cache(maxsize=256)
@@ -109,11 +113,22 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
         else:
             dispatch_grid = dispatch_sms * resident
 
+    split_shared = bool(config.shared_experts and tile_m in (32, 64))
+    shared_grid = 0
+    if split_shared:
+        # Upstream uses dense M32 even when routed work uses M64.
+        blocks = (combine_bound + 31) // 32
+        tasks = blocks * max(config.intermediate * config.shared_experts // 128, config.hidden // 256)
+        limit = 2 * compute_sms if tile_m == 64 else routed_grid
+        shared_grid = min(limit, max(1, tasks))
+
     return SM90RoleConfig((dispatch_grid,
                            routed_grid, combine_grid),
                           tile_m=tile_m,
                           threads=(128 if direct_scan else 256, 384 if pipelined else 256, 384),
-                          smem=(dispatch_smem, compute_smem, 0), direct_route_scan=direct_scan)
+                          smem=(dispatch_smem, compute_smem, 0), direct_route_scan=direct_scan,
+                          compute_sms=compute_sms, shared_grid=shared_grid, split_shared=split_shared,
+                          shared_l2_grid=max(1, compute_sms // 4) if split_shared and tile_m == 64 else 0)
 
 
 def get_sm90_role_config(config, context):
@@ -143,7 +158,15 @@ def get_shared_role_config(schedule):
         stage_stride = (36864 + schedule.tile_m * 144 + 1023) // 1024 * 1024
         shared_smem = (2 * stage_stride + 128 + 1023) // 1024 * 1024
         smem = (smem[0], shared_smem, smem[2])
-    return replace(schedule, threads=(schedule.threads[0], 256, schedule.threads[2]),
+    if schedule.split_shared:
+        tile_m = 32
+        stage = (17408 + tile_m * 132 + 1023) // 1024 * 1024
+        smem = (smem[0], 3 * stage + 1024 + tile_m * 1024 + 256, smem[2])
+    else:
+        tile_m = schedule.tile_m
+    return replace(schedule, tile_m=tile_m,
+                   grids=(schedule.grids[0], schedule.shared_grid or schedule.grids[1], schedule.grids[2]),
+                   threads=(schedule.threads[0], 256, schedule.threads[2]),
                    smem=smem)
 
 

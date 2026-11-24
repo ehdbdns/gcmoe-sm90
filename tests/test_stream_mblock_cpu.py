@@ -43,7 +43,24 @@ def main():
             assert geom.grids[0] * (geom.smem[0] + 1024) <= context.dispatch_sms * 228 * 1024
         assert (schedule.grids[0], schedule.smem[0]) == (20 if conf.plan_dispatch else 24, 43008)
         specs = _role_specs(conf, stream, schedule, True)
-        assert [spec[0] for _, spec in specs] == ([5, 7, 1, 4, 2, 3] if conf.plan_dispatch else [1, 4, 2, 5, 3])
+        assert [spec[0] for _, spec in specs] == ([5, 7, 1, 4, 8, 2, 3] if conf.plan_dispatch else [1, 4, 8, 2, 5, 3])
+        by_role = {spec[0]: (kernel, spec) for kernel, spec in specs}
+        l1, l2 = by_role[4][0], by_role[8][0]
+        assert (l1.max_m, l1.shared_phase_end, l2.max_m, l2.shared_phase_start) == (32, 1, 32, 1)
+        assert by_role[8][1][3:] == (18, (), ((4, 2, 0, 1),))
+        assert by_role[2][1][4] == (4,)
+        assert by_role[4][1][3] == 144
+        with patch.dict(os.environ, {'GC_MOE_BLOCK_M_FORCE': '0'}):
+            for bound, block_m in ((96, 16), (128, 32)):
+                other = replace(conf, bound=bound, eco_cost_mode=0, plan_dispatch=True)
+                geometry = get_sm90_role_config(other, context)
+                assert geometry.tile_m == block_m
+                roles = {spec[0]: (k, spec) for k, spec in _role_specs(other, stream, geometry, True)}
+                if block_m == 32:
+                    assert roles[4][0].shared_phase_end == 1
+                    assert roles[8][1][3:] == (geometry.shared_grid, (4,))
+                else:
+                    assert 8 not in roles and roles[4][0].shared_phase_end == 2
         routed = next(kernel for kernel, spec in specs if spec[0] == 2)
         assert (routed.l1_tiles, routed.l2_tiles) == (18, 20)
         assert routed.stream_blocks and not routed.block_ready

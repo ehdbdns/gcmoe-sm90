@@ -47,7 +47,7 @@ def _assemble_role_ptx(ptx, role, dump_dir, identity):
                 else r'\.u32' if ordinal < 16 else r'\.f32')
         if re.search(kind + r'\s+\S+_param_' + str(ordinal) + r',?\s*$', formal) is None:
             raise RuntimeError(f'SM90 CuTe launch formal {ordinal} changed type or order')
-    if role in (2, 4) and ('wgmma.mma_async' not in ptx or 'cp.async.bulk' not in ptx):
+    if role in (2, 4, 8) and ('wgmma.mma_async' not in ptx or 'cp.async.bulk' not in ptx):
         raise RuntimeError('SM90 CuTe compute lost its Hopper WGMMA/TMA operations')
     return assemble_ptx(ptx, dump_dir, f'sm90_role{role}', target='sm_90a',
                         ptxas_options=identity.ptxas_options)
@@ -102,6 +102,8 @@ def _role_specs(config, layout, schedule, has_stats):
     # [ECO-SM90] role 5 = the ECO plan CTA, only when the buffer reserved it.
     eco = bool(getattr(config, 'eco_logical_experts', 0))
     base_roles = (1, 4, 2, 3) if config.shared_experts else (1, 2, 3)
+    if schedule.split_shared:
+        base_roles = (1, 4, 8, 2, 3)
     roles = (base_roles[:-1] + (5,) + base_roles[-1:]) if eco else base_roles
     # [SM-REUSE] Role 6 = compute helper that shares the DISPATCH green context
     # and parks until pull is done. Must be compiled/launched BEFORE role 3
@@ -161,17 +163,29 @@ def _role_specs(config, layout, schedule, has_stats):
             # warp split), not a literal.
             specs.append((k, (5, k.eco_smem, k.threads, 1, ())))
             continue
-        index = 1 if role == 4 else role - 1
+        index = 1 if role in (4, 8) else role - 1
         # Workspace routed offsets are a strict prefix of the shared layout.
         role_config = replace(config, shared_experts=0) if role == 2 else config
-        role_schedule = shared if role == 4 else (routed.schedule if role == 2 else schedule)
+        role_schedule = shared if role in (4, 8) else (routed.schedule if role == 2 else schedule)
+        if role == 8 and schedule.shared_l2_grid:
+            role_schedule = replace(shared, grids=(shared.grids[0], schedule.shared_l2_grid, shared.grids[2]))
         kernel = SM90GCMoERoleKernel(role_config, layout, role, role_schedule, has_stats,
                                     routed_n_factor=routed.n_factor if role == 2 else 1)
         wait_for = (4,) if config.shared_experts and role == 2 and schedule.tile_m >= 32 else ()
         if role == 1 and eco and config.plan_dispatch:
             wait_for = (7,)
-        specs.append((kernel, (role, role_schedule.smem[index], role_schedule.threads[index],
-                               role_schedule.grids[index], wait_for)))
+        launch_after = ()
+        if role == 8:
+            if role_schedule.grids[1] < schedule.compute_sms:
+                # CUDA launch-order port: all shared L1 CTAs have started.
+                launch_after = ((4, 2, 0, 1),)
+            else:
+                wait_for = (4,)
+        launch = (role, role_schedule.smem[index], role_schedule.threads[index],
+                  role_schedule.grids[index], wait_for)
+        if launch_after:
+            launch += (launch_after,)
+        specs.append((kernel, launch))
     return tuple(specs)
 
 
