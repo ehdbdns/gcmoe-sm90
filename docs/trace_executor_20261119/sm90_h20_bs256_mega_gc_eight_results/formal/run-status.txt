@@ -1,0 +1,55 @@
+=== SM90_H20_BS256_MEGA_GC_EIGHT — formal run status (2026-11-24 13:00:17)
+task_book_sha_newest=886c5ba
+
+--- run A (5286ef3, full eight-arm launcher, area=/mnt/fuse/sm90-h20-eight-wteT0PXZ)
+  arm1: exit= skipped=publisher_failed
+  arm2: exit=1 skipped=
+  arm3: exit= skipped=publisher_failed
+  arm4: exit= skipped=publisher_failed
+  arm5: exit= skipped=publisher_failed
+  arm6: exit= skipped=publisher_failed
+  arm7: exit= skipped=publisher_failed
+  arm8: exit= skipped=publisher_failed
+  verification.json: {
+  "failures": {
+    "2": "[Errno 2] No such file or directory: '/mnt/fuse/sm90-h20-eight-wteT0PXZ/results/arm2/run.json'",
+    "3": "[Errno 2] No such file or directory: '/mnt/fuse/sm90-h20-eight-wteT0PXZ/results/arm3/run.json'",
+    "4": "[Errno 2] No such file or directory: '/mnt/fuse/sm90-h20-e
+  NOTE: run A predates the attention/mega import logs (5286ef3 launcher); the
+        coexist check was verified separately: see below.
+
+--- standalone import coexist check (repo HEAD 5286ef3, CPU, no GPU)
+  attention-only: vLLM attention -> env3/.../vllm/third_party/deep_gemm/__init__.py
+  mega:           same attention backend, plus SM90 Mega -> private wheel
+                  dg-sm90-build-ohe59RVP/site/deep_gemm/_C...so  (rc=0)
+
+--- run B (886c5ba, single-arm diagnostic with arm2 settings, CD=/tmp/gcmoe-aligned-hD9xz5wE)
+  status: step=3: capture exit_code=1 
+  route-diag: [route-diag] pos=40000 n=40000 epochs_eq=True layers_eq=False layer0=0 counts_min=0 ord_ok=True
+
+--- blockers resolved this round
+  1. elfutils-devel missing          -> installed (yum --disablerepo='epel*')
+  2. g++ 10.2 lacks <format>         -> conda-forge GCC 15.3 toolchain
+  3. DeepGEMM wheel shadowed vLLM    -> 5286ef3 isolated loader (coexist verified)
+  4. _allocate_all_gc_workspaces walked model.modules() for a non-nn.Module
+                                      -> be92873 uses _EXPERT_REGISTRY
+
+--- current blocker (arm2, identical in run A and run B)
+  arm2 completes all 1000 decode steps, then fails the stats route audit:
+    pos=40000 (correct, =1000*40)  epochs_eq=True  ord_ok=True
+    counts_min=0                   layers_eq=FALSE  layer0=0
+  => every layer ran exactly once and epochs are sequential, but the recorded
+     layer_id sequence is out of step with the epoch sequence.
+  => arms 1,3,4,5,6,7,8 are skipped (publisher_failed) because arm2 publishes
+     the KV/token/route reference they consume.
+
+--- gpu state at write time
+  0, 4 MiB
+  1, 4 MiB
+  2, 4 MiB
+  3, 4 MiB
+  4, 4 MiB
+  5, 4 MiB
+  6, 4 MiB
+  7, 4 MiB
+  compute_apps=0

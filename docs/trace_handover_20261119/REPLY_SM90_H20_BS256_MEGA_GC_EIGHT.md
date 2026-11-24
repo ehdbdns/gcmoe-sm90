@@ -344,3 +344,125 @@ vLLM 期望的是另一版 DeepGEMM（带 `clean_logits` / `indices` 的 sparse-
    还是由设计端提供匹配 vLLM 0.31.0 的 wheel。
 2. **若坚持 `7292e7b`**：需要设计端授权我修改 `vllm` 的调用签名（或加兼容 shim），
    并明确这属于"保持语义的适配"——否则我无法继续。
+
+---
+
+# 正式八臂 第 2/3 轮（`5286ef3` / `886c5ba`）— arm2 通过图捕获，卡在 route 层号审计
+
+## A. 本轮又清掉两个阻塞
+
+| # | 阻塞 | 处理 | 是否改语义 |
+|---|---|---|---|
+| 1 | 私有 wheel 抢占了 vLLM attention 的 `deep_gemm`（`clean_logits` 签名不兼容）| 设计端 `5286ef3` 用隔离 loader（`integration/sm90_deepgemm.py`）只给 1/5 臂加载 Mega；不再把私有 site 加进 PYTHONPATH | ❌（设计端改动）|
+| 2 | 我做的那处 workspace 修复保留 | `be92873`：改用 `_EXPERT_REGISTRY` | ❌ |
+
+**共存验证（CPU，无 GPU）**：
+
+```
+$ python integration/sm90_deepgemm.py
+vLLM attention: env3/.../vllm/third_party/deep_gemm/__init__.py
+
+$ python integration/sm90_deepgemm.py mega
+vLLM attention: env3/.../vllm/third_party/deep_gemm/__init__.py
+SM90 Mega: dg-sm90-build-ohe59RVP/site/deep_gemm/__init__.py,
+           extension: .../site/deep_gemm/_C.cpython-310-x86_64-linux-gnu.so
+rc=0
+```
+
+即**加载私有 Mega 后 vLLM 的 attention 后端未被替换**。
+
+## B. arm2 的进展（关键里程碑）
+
+| 阶段 | 上一轮 `3682a33` | 本轮 `5286ef3` |
+|---|---|---|
+| 权重加载 | ✅ | ✅ |
+| `install_clocks` / `_allocate_all_gc_workspaces` | ❌ AttributeError | ✅ |
+| **CUDA graph 捕获** | ❌ fp8_fp4 签名 | ✅ **通过** |
+| **1000 步 decode** | — | ✅ **完整跑完** |
+| stats 窗口 route 审计 | — | ❌ `layers_eq=False` |
+
+这是 arm2 第一次真正跑到 decode 结束。
+
+## C. 当前唯一失败点（已用诊断精确定位）
+
+`886c5ba` 加了一处**纯诊断**打印（无任何判定/阈值/数据路径改动）：
+
+```
+[route-diag] pos=40000 n=40000 epochs_eq=True layers_eq=False layer0=0 counts_min=0 ord_ok=True
+```
+
+逐项解读：
+
+| 项 | 值 | 含义 |
+|---|---|---|
+| `pos` / `n` | 40000 / 40000 | 调用次数**完全正确**（1000 步 × 40 层）|
+| `epochs_eq` | **True** | epoch 序列严格连续 |
+| `ord_ok` | **True** | ordinal 匹配通过 |
+| `counts_min` | 0 | 无未填充的槽 |
+| `layer0` | 0 | 首个调用层号是 0 |
+| **`layers_eq`** | **False** | **记录到的层号序列与 `(epoch-1) % 40` 不同步** |
+
+即：**每层都被调用了一次、epoch 也连续，但"这次调用属于哪一层"被记错了**。
+
+由于 `long_cost.py` 的判定是 `torch.equal(layers, (epochs - 1) % self.layers)`，
+`layers_eq=False` 是**唯一**失败项，其余五项全部正常。
+
+## D. 根因方向（供设计端判断，我未擅自改）
+
+`_LAYER_ROW` 的来源在 `integration/deepep_compare.py:737`：
+
+```python
+elif os.environ.get('GC_MOE_MATRIX_ARM') == 'vanilla':
+    match = re.search(r'layers\.(\d+)', layer.layer_name)
+    _LAYER_ROW[id(packed[0][0])] = int(match.group(1))
+```
+
+它是**用 `id(packed[0][0])`（w1 payload 张量的对象 id）作为键**来记层号的，
+而 `_launch` 里用 `_LAYER_ROW[id(packed[0][0])]` 反查。
+
+arm2 的配置是 `vanilla + SM90_EIGHT_SHARED=1`（GC 内核计算 shared expert）。
+在这个配置下：
+
+- 日志里出现大量 `[eplb-dbg] transform 0.0x s`，说明除了 vanilla 分支外还有
+  **另一条 cover 路径**在写 `_LAYER_ROW`（`deepep_compare.py:1338`
+  的 `_LAYER_ROW[id(pair[0][0])] = int(_gidx)`）；
+- 两条路径都**按张量对象 id 建键**，而注释本身已警告：
+  "data_ptr keys are not stable because the caching allocator reuses freed addresses,
+   which made several layers share one stats row"（见 `deepep_compare.py:1355` 附近）。
+
+**推断**：shared=1 时 shared MLP 与 routed payload 共享/复用同一张量地址，
+导致多个层命中同一个 `_LAYER_ROW` 键，层号被后写者覆盖 →
+序列长度为 40000 但内容错位。
+
+**这是设计端的集成逻辑问题**，不属于"保持语义的编译修复"；
+按任务书"不自行移植后端或改精度、路由、验收口径"，我**没有**改它。
+
+## E. 八臂状态（本轮如实记录）
+
+| 臂 | `5286ef3` 运行结果 |
+|---|---|
+| **2（发布者）** | ❌ `exit=1` —— 见 §C |
+| 1, 3, 4, 5, 6, 7, 8 | ⏭ `skipped=publisher_failed` |
+
+`verification.json` 中 7 个臂的 failure 均为
+`No such file or directory: .../arm<N>/run.json`（因为没有启动）。
+
+**没有任何臂产出性能数字 → 不填主表。**
+
+## F. 退卡与清理
+
+| 项 | 结果 |
+|---|---|
+| GPU | **八卡全空**（各 4 MiB，`--query-compute-apps` = 0）|
+| worktree | 两轮的 `code/` 均已 `git worktree remove` + `prune` |
+| 保留现场 | `/mnt/fuse/sm90-h20-eight-wteT0PXZ/results/`（run A 完整八臂目录）、`/mnt/fuse/sm90-diag-RjP0y2CT/`（run B 诊断）|
+| 私有 wheel | 未改动（`7c848494…`）|
+| 历史 retained_bs256 | 未触碰 |
+
+## G. 需要设计端确认
+
+1. **`_LAYER_ROW` 的键**：`id(packed[0][0])` 在 shared=1 时是否被复用/覆盖？
+   若是，需要改成稳定键（如层名或显式索引），这属集成层修改，需你们授权。
+2. **是否允许我只跑 arm3**（`vanilla + shared=0`）来验证"shared=1 是否是唯一触发条件"？
+   这能在一轮内把根因从推断变成证据（arm3 不需要 arm2 发布？—— 按启动器它需要，需你们确认）。
+3. 若你们已知道 shared=1 与 route tape 的层号记录存在冲突，请直接给出修复方向，我按 diff 执行。
