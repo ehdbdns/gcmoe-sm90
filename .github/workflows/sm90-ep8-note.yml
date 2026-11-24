@@ -1,0 +1,48 @@
+name: Publish the SM90 EP8 measurement note
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/trace_executor_20261119/sm90_bs512_bs1024_full_model_four_v2_results/**'
+      - 'docs/trace_handover_20261119/REPLY_SM90_BS512_BS1024_FULL_MODEL_FOUR_V2.md'
+      - '.github/workflows/sm90-ep8-note.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sm90-ep8-note
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /scripts/sm90/ep8_decode_summary.py
+            /docs/SM90_EP8_DECODE.md
+            /docs/trace_executor_20261119/sm90_bs256_main_five_plan_comm_results/delivery/bs256/*.csv
+            /docs/trace_executor_20261119/sm90_bs512_bs1024_full_model_four_v2_results/*.csv
+            /docs/trace_executor_20261119/sm90_bs512_bs1024_full_model_four_v2_results/delivery-*/bs*/*.csv
+            /docs/trace_handover_20261119/REPLY_SM90_BS512_BS1024_FULL_MODEL_FOUR_V2.md
+      - name: Verify comparisons and publish the note
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for attempt in 1 2 3; do
+            git fetch --depth=1 origin main
+            git switch --detach FETCH_HEAD
+            python3 scripts/sm90/ep8_decode_summary.py
+            git diff --quiet -- docs/SM90_EP8_DECODE.md && exit 0
+            git add -- docs/SM90_EP8_DECODE.md
+            git commit -m "Publish verified EP8 full-model comparisons"
+            if git push origin HEAD:main; then exit 0; fi
+          done
+          exit 1
