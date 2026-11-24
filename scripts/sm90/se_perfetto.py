@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 NAMES = {1: 'dispatch', 2: 'routed kernel', 3: 'combine', 4: 'shared expert L1',
-         8: 'shared expert L2', 5: 'ECO plan', 7: 'dispatch admission'}
+         8: 'shared expert L2', 5: 'ECO plan', 7: 'dispatch admission', 6: 'reuse kernel'}
 
 
 def check(value, message):
@@ -12,10 +12,12 @@ def check(value, message):
         raise ValueError(message)
 
 
-def decode(trace, device, eco):
+def decode(trace, device, eco, *, reuse=False, tokens=128):
     calls = device['calls']
     geometry = {tuple(v): int(k) for k, v in device['roles'].items()}
     required = {1, 2, 3, 4, 8} | ({5, 7} if eco else set())
+    if reuse:
+        required.add(6)
     check(set(geometry.values()) == required, 'missing or ambiguous role geometry')
     kernels = {role: [] for role in required}
     for event in trace['traceEvents']:
@@ -34,7 +36,7 @@ def decode(trace, device, eco):
                   if name != 'combine'), 'ambiguous graph replay boundary')
         prev_end = c1
         stamps, clocks = row['stamps'], row['clocks']
-        check(stamps[0] == clocks[4] == row['epoch'] and stamps[22:24] == [64, 128],
+        check(stamps[0] == clocks[4] == row['epoch'] and stamps[22:24] == [64, tokens],
               'mismatched device epoch, M or token count')
         check(clocks[0] > 0 and clocks[0] <= clocks[1] < clocks[2] <= clocks[3], 'invalid CTA clocks')
         d0, d1 = spans['dispatch']
@@ -49,6 +51,9 @@ def decode(trace, device, eco):
         spans['pull token'] = pull, min(pull_end, d1)
         # Use the last combine CTA as a per-call anchor between globaltimer and CUPTI.
         r0, r1 = spans['routed kernel']
+        if reuse:
+            reuse_start, reuse_end = spans['reuse kernel']
+            r0, r1 = min(r0, reuse_start), max(r1, reuse_end)
         first = c1 + (clocks[1] - clocks[3]) / 1000
         last = c1 + (clocks[2] - clocks[3]) / 1000
         check(r0 - 20 <= first < last <= r1 + 20, 'routed CTA stamps disagree with CUPTI')
@@ -60,10 +65,11 @@ def decode(trace, device, eco):
                           m_blocks=row['m_blocks'], first_cta_raw_us=first, last_cta_raw_us=last)
 
 
-def export(root):
+def export(root, bs=1024, matrix=False):
     inputs = {}
     layouts = {}
-    for arm in ('rr', 'eco'):
+    arms = ('vanilla', 'random', 'rr', 'eco', 'eco_smr') if matrix else ('rr', 'eco')
+    for arm in arms:
         events, totals = [], [0] * 3
         traces = [json.loads((root / arm / f'rank{r}.json').read_text()) for r in range(8)]
         bases = [trace['baseTimeNanoseconds'] for trace in traces]
@@ -72,29 +78,44 @@ def export(root):
             signature = device['input_sha256']
             check(inputs.setdefault(rank, signature) == signature, 'two arms used different benchmark inputs')
             placement = device['placement']
-            order = [sorted(placement[j:j+56]) for j in range(0, 448, 56)]
-            check(layouts.setdefault(rank, order) == order, 'replica ownership differs between arms')
+            physical = 384 if arm == 'vanilla' else 448
+            check(len(placement) == physical, 'wrong placement size')
+            if arm in ('rr', 'eco', 'eco_smr'):
+                order = [sorted(placement[j:j+56]) for j in range(0, 448, 56)]
+                check(layouts.setdefault(rank, order) == order, 'EPLB replica ownership differs between arms')
             check(len(device['calls']) == 3, 'expected three post-warmup calls')
             events.append(dict(ph='M', name='process_name', pid=rank, tid=0, args={'name': f'rank {rank}'}))
             lanes = {}
-            for spans, meta in decode(trace, device, arm == 'eco'):
+            for spans, meta in decode(trace, device, arm.startswith('eco'), reuse=arm == 'eco_smr', tokens=bs // 8):
                 totals[meta['sample']] += meta['rank_tokens']
+                if matrix:
+                    if meta['sample'] != 1:
+                        continue
+                    meta.update(bs=bs, layer=device["layer"], arm=arm)
                 for name, (start, end) in spans.items():
-                    if name not in lanes:
-                        lanes[name] = len(lanes) + 1
-                        events.append(dict(ph='M', name='thread_name', pid=rank, tid=lanes[name],
-                                           args={'name': name}))
-                    events.append(dict(ph='X', name=name, cat='SM90 MoE', pid=rank, tid=lanes[name],
+                    if matrix and name in ('dispatch', 'local count exchange', 'routed kernel',
+                                           'dispatch admission', 'reuse kernel'):
+                        continue
+                    track = 'count exchange + pull token' if matrix and name in ('count exchange', 'pull token') else name
+                    if track not in lanes:
+                        lanes[track] = len(lanes) + 1
+                        events.append(dict(ph='M', name='thread_name', pid=rank, tid=lanes[track],
+                                           args={'name': track}))
+                    events.append(dict(ph='X', name=name, cat='SM90 MoE', pid=rank, tid=lanes[track],
                                        ts=start + (bases[rank] - min(bases)) / 1000, dur=end-start, args=meta))
-        check(totals == [1024*6]*3, f'wrong global token assignments: {totals}')
+        check(totals == [bs*6]*3, f'wrong global token assignments: {totals}')
         origin = min(e['ts'] for e in events if e['ph'] == 'X')
         for event in events:
             if event['ph'] == 'X':
                 event['ts'] -= origin
-        (root / f'{arm}.perfetto.json').write_text(json.dumps(dict(traceEvents=events, displayTimeUnit='us')))
+        suffix = 'replay2.perfetto.json' if matrix else 'perfetto.json'
+        (root / f'{arm}.{suffix}').write_text(json.dumps(dict(traceEvents=events, displayTimeUnit='us')))
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('root', type=Path)
-    export(parser.parse_args().root)
+    parser.add_argument('--bs', type=int, choices=(512, 1024), default=1024)
+    parser.add_argument('--matrix', action='store_true')
+    args = parser.parse_args()
+    export(args.root, args.bs, args.matrix)
