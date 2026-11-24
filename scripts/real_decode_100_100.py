@@ -178,7 +178,7 @@ def _compilation_config():
         return None
     config = {'cudagraph_mode': getattr(CUDAGraphMode, mode)}
     batch = int(os.environ.get('GC_MOE_MATRIX_BS', '0'))
-    if os.environ.get('GC_MOE_MATRIX_ARM') and batch > 256:
+    if os.environ.get('GC_MOE_MATRIX_ARM') and (batch > 256 or os.getenv('SM90_PAIRED_SMALL') == '1'):
         # Pure decode has exactly this shape. Avoid retaining dozens of
         # capture pools or falling back to eager above the default graph cap.
         config.update(cudagraph_capture_sizes=[batch], max_cudagraph_capture_size=batch)

@@ -17,10 +17,10 @@ def check(condition, message):
         raise ValueError(message)
 
 
-def read_arm(root, arm):
+def read_arm(root, arm, batch=256):
     path = root / f"arm{arm}"
     run = json.loads((path / "run.json").read_text())
-    check((run["steps"], run["layers"], run["batch"], run["stream"]) == (1000, 40, 256, 1), "window")
+    check((run["steps"], run["layers"], run["batch"], run["stream"]) == (1000, 40, batch, 1), "window")
     check(run["rearranged"] == (arm >= 4), "placement treatment")
     data, widths, spans, routed = [], [], [], []
     audit = {}
@@ -34,6 +34,10 @@ def read_arm(root, arm):
             check(all(r["full_graph_replays"] == 1000 and len(r["shared_modules"]) == 40 for r in rows),
                   "graph or shared workload coverage")
         audit[phase] = [[r[k] for k in ("ids", "weights", "demand")] for r in rows]
+    audit["order"] = [r["batch_order"] for r in rows]
+    audit["shared"] = [r["shared_modules"] for r in rows]
+    audit["prefill_kv"] = [r["checkpoint"]["prefill_snapshot"]["readback_sha256"]
+                           for r in sorted(run["stats"]["initial"], key=lambda r: r["rank"])]
     initial = sorted(run["measured"]["initial"], key=lambda r: r["rank"])
     check([r["rank"] for r in initial] == list(range(8)), "checkpoint ranks")
     boundaries = [r["checkpoint"] for r in initial]
@@ -46,7 +50,7 @@ def read_arm(root, arm):
     if mega:
         log = (path / "runner.log").read_text(errors="replace")
         # Official config line includes runtime m/ep shape. Only full-decode batch is measured.
-        configs = [line for line in log.splitlines() if "num_tokens=256, num_topk=6)" in line and "MegaMoESM90Config(" in line]
+        configs = [line for line in log.splitlines() if f"num_tokens={batch}, num_topk=6)" in line and "MegaMoESM90Config(" in line]
         sizes = {int(m) for line in configs for m in re.findall(r"MegaMoESM90Config\(block_m=(\d+)", line)}
         check(len(sizes) == 1, f"ambiguous official Mega tile M {sizes}")
         block_m = sizes.pop()
@@ -69,7 +73,7 @@ def read_arm(root, arm):
                 check(np.all(clocks[active, 2] > clocks[active, 1]), "GC routed clocks")
                 routed.append(np.where(active, clocks[:, 2] - clocks[:, 1], 0))
             x = f["native"]
-            check(x.shape == (1000, 256) and np.all(x >= 0), "native output")
+            check(x.shape == (1000, batch) and np.all(x >= 0), "native output")
             if greedy is None:
                 greedy = x
             check(np.array_equal(x, greedy), "rank disagreement on native output")
@@ -80,11 +84,13 @@ def read_arm(root, arm):
                     accepted = a
                 check(np.array_equal(accepted, a), "replicated auction disagreement")
     q = np.stack(data, axis=1)
-    check(np.all(q.sum((1, 2)) == 8 * 256 * 6), "route conservation")
+    check(np.all(q.sum((1, 2)) == 8 * batch * 6), "route conservation")
     elapsed = np.stack(spans, axis=1)
     row = metrics(q, elapsed[..., None])
     blocks = np.stack(widths, axis=1)
-    row.update(total_m_blocks=blocks.sum(1).mean(), peak_rank_m_blocks=blocks.max(1).mean(),
+    step_ms = float(run["measured"]["ms_per_step"])
+    check(np.isfinite(step_ms) and step_ms > 0, "invalid full step timer")
+    row.update(batch=batch, step_ms=step_ms, total_m_blocks=blocks.sum(1).mean(), peak_rank_m_blocks=blocks.max(1).mean(),
                m_block_ir=(blocks.max(1) / blocks.mean(1)).mean(), block_m=block_m,
                accepted=int(accepted[:, 2].sum()) if accepted is not None else None)
     if routed:
@@ -100,9 +106,16 @@ def read_arm(root, arm):
 
 def report(root):
     rows, audits, natives, failures = {}, {}, {}, {}
-    for arm in (2, 3, 4, 6, 7, 8, 1, 5):
+    marker = root / "compact-mode"
+    compact = marker.exists() and marker.read_text().strip() == "1"
+    for arm in ((2, 3, 6, 1, 5) if compact else (2, 3, 4, 6, 7, 8, 1, 5)):
         try:
-            rows[arm], audits[arm], natives[arm] = read_arm(root, arm)
+            rows[arm], audits[arm], natives[arm] = read_arm(root, arm, 32 if compact else 256)
+            if compact:
+                check(2 not in failures, "reference publisher failed validation")
+                check(audits[arm]["shared"] == [["DeepseekV4MLP"] * 40] * 8, "unfused shared ownership")
+                for key in ("order", "prefill_kv"):
+                    check(audits[arm][key] == audits[2][key], f"publisher mismatch in {key}")
             for key in ("trajectory", "stats", "measured", "kv"):
                 check(audits[arm][key] == audits[2][key], f"publisher mismatch in {key}")
             for peer in rows:
@@ -119,9 +132,13 @@ def report(root):
         except (OSError, ValueError, KeyError) as exc:
             failures[arm] = str(exc)
     valid = {a: r for a, r in rows.items() if a not in failures}
+    if compact:
+        valid.pop(2, None)  # Producer runs live routing. Only consumers enter timing comparisons.
     for arm, row in valid.items():
         row["arm"] = arm
-        row["vs_2_pct"] = 100 * (row["moe_ms_per_step"] / rows[2]["moe_ms_per_step"] - 1)
+        if not compact:
+            row["vs_2_pct"] = 100 * (row["moe_ms_per_step"] / rows[2]["moe_ms_per_step"] - 1)
+
     if valid:
         with (root / "summary.csv").open("w") as f:
             writer = csv.DictWriter(f, fieldnames=list(dict.fromkeys(k for r in valid.values() for k in r)))
@@ -129,7 +146,9 @@ def report(root):
             writer.writerows(valid[a] for a in sorted(valid))
     pairs = {f"{a}_to_{b}": 100 * (valid[b]["moe_ms_per_step"] / valid[a]["moe_ms_per_step"] - 1)
              for a, b in ((2, 3), (4, 6), (7, 8), (1, 3), (5, 6), (4, 7), (6, 8)) if a in valid and b in valid}
-    (root / "verification.json").write_text(json.dumps(dict(failures=failures, audits=audits, pair_change_pct=pairs), indent=2))
+    step_pairs = {f"{a}_to_{b}": 100 * (valid[b]["step_ms"] / valid[a]["step_ms"] - 1)
+                  for a, b in ((1, 3), (5, 6)) if a in valid and b in valid}
+    (root / "verification.json").write_text(json.dumps(dict(failures=failures, audits=audits, pair_change_pct=pairs, step_change_pct=step_pairs), indent=2))
     return int(bool(failures))
 
 

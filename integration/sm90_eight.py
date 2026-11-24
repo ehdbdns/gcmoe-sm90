@@ -39,7 +39,7 @@ def install_clocks(model, buf):
     for i, layer in enumerate(layers):
         # A deferred FFN delegates the shared add to the next decoder boundary.
         # All eight arms need the locally finalized FFN contract.
-        if getattr(layer, "fuse_mhc_all_reduce", False) or layer.ffn.defers_finalize(256):
+        if getattr(layer, "fuse_mhc_all_reduce", False) or layer.ffn.defers_finalize(buf.fixed_routes.batch):
             raise ValueError("FFN finalization extends past this layer")
         shared = [m for m in layer.ffn.modules() if isinstance(m, SharedExperts)]
         if len(shared) != 1:
@@ -121,7 +121,7 @@ def count_graph_replays(buf):
     @wraps(original)
     def counted(manager, desc):
         result = original(manager, desc)
-        if desc.num_tokens == 256:
+        if desc.num_tokens == buf.fixed_routes.batch:
             buf.full_replays += 1
         return result
 
