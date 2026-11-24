@@ -1752,7 +1752,14 @@ def rearrange_now() -> bool:
         else:
             new_plan, inverse, _ = rebalance_experts_global(hist, buf.physical, per_rank)
             if fixed_dir and (not matrix or os.environ['GC_MOE_MATRIX_ARM'] == 'rr'):
-                layout_path.write_text(json.dumps(new_plan.tolist()))
+                layout = new_plan.tolist()
+                if os.getenv("SM90_EIGHT_ARM") and layout_path.exists():
+                    if layout != json.loads(layout_path.read_text()):
+                        raise ValueError("RR placement differs from the first RR arm")
+                else:
+                    tmp = layout_path.with_suffix(".tmp")
+                    tmp.write_text(json.dumps(layout))
+                    tmp.replace(layout_path)
         if new_plan.shape != (hist_layers, buf.physical):
             raise ValueError('wrong EPLB placement dimensions')
         new_plan = new_plan.contiguous()

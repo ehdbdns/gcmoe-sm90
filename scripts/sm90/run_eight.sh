@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
-# Run inside the site's eight-H20 allocation. Each invocation owns a new output tree.
+# Run inside the site's eight-H20 allocation. Resume only on the same measurement revision.
 set -eo pipefail
 cd "$(git rev-parse --show-toplevel)"
 sha=$(git rev-parse HEAD)
 test -z "$(git status --porcelain)"
-out=$(realpath -m "${1:?expected new private output directory}")
-mkdir "$out"
-echo "$sha" > "$out/measurement.sha"
+resume=0
+if [[ ${1:-} == --resume ]]; then resume=1; shift; fi
+[[ $# == 1 ]] || { echo "usage: run_eight.sh [--resume] OUTPUT" >&2; exit 2; }
+out=$(realpath -m "$1")
+if (( resume )); then
+  test "$(cat "$out/measurement.sha")" = "$sha" || { echo "resume revision mismatch" >&2; exit 1; }
+else
+  mkdir "$out"
+  echo "$sha" > "$out/measurement.sha"
+fi
+exec 8>"$out/run.lock"
+flock -n 8 || { echo "output directory already in use" >&2; exit 1; }
 persist=/home/admin/workspace/aop_lab/app_source/sm90_persist_20261123
 export SM90_DG_SITE="$persist/dg-sm90-build-ohe59RVP/site"
 wheels="$persist/dg-sm90-build-ohe59RVP/wheels"
@@ -33,8 +42,23 @@ export GC_MOE_MATRIX_PREFIX_CHECK=1 GC_MOE_SM90_PLAN_DISPATCH=1 VLLM_USE_V2_MODE
 export VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1 GC_CAPTURE_TOKENS=1
 unset GC_MOE_FIXED_REUSE GC_MOE_FIRST_STEP_AUDIT GC_MOE_AA_CONTROL GC_MOE_COST_STUDY
 export GC_MOE_FIXED_DIR="$out/replay" GC_MOE_STRICT_STATE_DIR="$out/kv"
-mkdir "$GC_MOE_FIXED_DIR" "$GC_MOE_STRICT_STATE_DIR"
-test "$(df -PB1 "$out" | awk 'END{print $4}')" -gt 405000000000
+if [[ ! -f "$out/arm2/complete" ]]; then
+  test "$(df -PB1 "$out" | awk 'END{print $4}')" -gt 405000000000
+  if (( resume )); then
+    # A failed publisher may already have written exclusive-create KV and route files.
+    prior=$(mktemp -d "$out/reference-attempt-XXXXXXXX")
+    for tree in "$GC_MOE_FIXED_DIR" "$GC_MOE_STRICT_STATE_DIR"; do
+      if [[ -d $tree ]]; then mv "$tree" "$prior/"; fi
+    done
+  fi
+  mkdir "$GC_MOE_FIXED_DIR" "$GC_MOE_STRICT_STATE_DIR"
+else
+  test -s "$GC_MOE_FIXED_DIR/tokens.json"
+  for rank in {0..7}; do
+    for phase in stats measure; do test -s "$GC_MOE_FIXED_DIR/$phase-rank$rank.pt"; done
+    for prefix in "" prefill/; do test -s "$GC_MOE_STRICT_STATE_DIR/${prefix}rank$rank.bin"; done
+  done
+fi
 # Site scheduler/booking takes precedence over the local advisory lock.
 exec 9>"$persist/h20-eight.lock"
 flock 9
@@ -50,6 +74,17 @@ if [[ -z ${CUDA_VISIBLE_DEVICES:-} ]]; then export CUDA_VISIBLE_DEVICES="$select
 # Preserve the scheduler-assigned device mask. The runtime gate verifies eight SM90 devices.
 for id in 2 3 4 6 7 8 1 5; do
   dst="$out/arm$id"
+  if [[ -f "$dst/complete" ]]; then
+    (cd "$dst" && sha256sum --quiet -c artifacts.sha256)
+    echo "Reusing completed arm $id"
+    continue
+  fi
+  if [[ -d "$dst" ]]; then
+    prior=$(mktemp -d "$out/previous-arm$id-XXXXXXXX")
+    mv "$dst" "$prior/"
+    layout="$GC_MOE_FIXED_DIR/$id-layout.json"
+    if [[ -f $layout ]]; then mv "$layout" "$prior/"; fi
+  fi
   mkdir "$dst"
   if [[ $id != 2 && ! -f "$out/arm2/complete" ]]; then echo publisher_failed > "$dst/skipped"; continue; fi
   if [[ $id == 7 || $id == 8 ]]; then
@@ -81,6 +116,7 @@ for id in 2 3 4 6 7 8 1 5; do
   if [[ $code == 0 ]]; then
     test "$(cat "$dst/execution.sha")" = "$sha"
     cp "$GC_MOE_FIXED_DIR/$id-layout.json" "$dst/installed-layout.json"
+    (cd "$dst" && sha256sum run.json rank{0..7}.npz installed-layout.json execution.sha > artifacts.sha256)
     touch "$dst/complete"
   fi
 done
