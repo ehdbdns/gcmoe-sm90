@@ -8,9 +8,9 @@ import numpy as np
 from se_replay_report import ARMS, LAYERS, write_rows
 
 
-def audit(group, out):
+def audit(group, out, fresh=False):
     rows = []
-    for arm in ARMS:
+    for arm in (('vanilla',) if fresh else ARMS):
         eco = arm.startswith('eco')
         for rank in range(8):
             with np.load(group / arm / f'rank{rank}.npz') as archive:
@@ -39,7 +39,7 @@ def audit(group, out):
                                          replay_graph_us=(row['clocks'][3]-row['clocks'][0])/1000,
                                          different_slots=len(different), first_different_slot=next(iter(different), ''),
                                          history_auction=a, replay_auction=row['auction'], auction_equal=a==row['auction']))
-    write_rows(out / 'history_comparison.csv', rows)
+    write_rows(out / ('capture_comparison.csv' if fresh else 'history_comparison.csv'), rows)
     mismatches = sum(bool(r['different_slots'] or not r['auction_equal']) for r in rows)
     print(f'Historical allocation/auction audit: {len(rows)-mismatches}/{len(rows)} matched')
     return mismatches
@@ -49,6 +49,7 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('group', type=Path)
     p.add_argument('out', type=Path)
+    p.add_argument('--fresh', action='store_true')
     args = p.parse_args()
     # Leave diagnostic graphs available even when the historical allocation differs.
-    audit(args.group, args.out)
+    audit(args.group, args.out, args.fresh)

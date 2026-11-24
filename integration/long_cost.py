@@ -85,6 +85,9 @@ class LongRouteTape(RouteTape):
 
 
 def register_long_rpc(worker_class, get_buffer, modules):
+    if os.getenv("SM90_COLLECT_SE_ROUTES") == "1":
+        from se_route_capture import register_capture
+        register_capture(worker_class, get_buffer, modules)
     from attention_order import reset_order, order_coverage
     from stream_checkpoint import prepare_worker
 

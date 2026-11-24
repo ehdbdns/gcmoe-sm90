@@ -185,6 +185,11 @@ def profile_layer(root, layer, tokens, bs, rank, device, buf, eco, plan, slots, 
         logical = torch.bincount(ids.flatten(), minlength=E)
         dist.all_reduce(logical)
         counts = buf.profile_slot_counts[tag % 256].long()
+        if routes and not eco:
+            physical = torch.bincount(dst[sample].flatten(), minlength=buf.physical)
+            dist.all_reduce(physical)
+            if not torch.equal(counts, physical[rank*per_rank:(rank+1)*per_rank]):
+                raise ValueError('fixed allocation differs from source physical destinations')
         observed = torch.zeros_like(logical).scatter_add_(0, local, counts)
         dist.all_reduce(observed)
         if not torch.equal(observed, logical):

@@ -939,6 +939,35 @@ def main():
     print(f'[prefill] {nseq} seqs, {prefill_steps} engine steps, '
           f'{prefill_s:.1f}s (not timed)', flush=True)
 
+    if os.getenv("SM90_COLLECT_SE_ROUTES") == "1":
+        if not (long_cost and matrix == "vanilla" and recording_tokens and cap_tokens):
+            raise ValueError("route collection requires the vanilla publisher")
+        for phase, steps in (("stats", 1000), ("measure", 3)):
+            starts = engine.collective_rpc('_gc_se_capture_begin', args=(phase,))
+            if len(starts) != ranks or len(set(starts)) != 1:
+                raise ValueError(f'{phase}: rank epoch mismatch')
+            for key in ('running', 'gen_tokens', 'ctx_tokens'):
+                rec[key].clear()
+            before = [len(got[rid]) for rid in ids]
+            rec['on'] = True
+            time_window(steps)
+            rec['on'] = False
+            if (rec['gen_tokens'] != [nseq]*steps or rec['ctx_tokens'] != [0]*steps or
+                    any(len(got[rid])-previous != steps for rid,previous in zip(ids,before))):
+                raise ValueError(f'{phase}: expected {steps} full pure decode steps')
+            result = engine.collective_rpc('_gc_se_capture_finish', args=(phase,))
+            if len(result) != ranks:
+                raise ValueError(f'{phase}: incomplete worker collection')
+            if phase == 'stats' and len(set(result)) != 1:
+                raise ValueError('statistics demand hash differs across ranks')
+            if phase == 'measure' and sorted(result) != list(range(ranks)):
+                raise ValueError('missing source rank in collected routes')
+        with (Path(fixed_dir)/'capture.json').open('x') as f:
+            json.dump(dict(batch=nseq, stats_steps=1000, capture_steps=3, layers=[8,20,32],
+                           prompt_sha256=prompt_hash, prefill_steps=prefill_steps, controls=fixed_controls,
+                           output_sha256=hashlib.sha256(json.dumps(got, sort_keys=True).encode()).hexdigest()), f)
+        return
+
     if os.getenv("GC_MOE_PREFIX_DIAG") == "1":
         if not long_cost or matrix not in ("vanilla", "random") or recording_tokens:
             raise ValueError("prefill diagnostic requires a matrix reference consumer")

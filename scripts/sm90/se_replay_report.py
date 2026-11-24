@@ -22,7 +22,7 @@ def write_rows(path, rows):
         writer.writerows(rows)
 
 
-def report(root, historical=False):
+def report(root, historical=False, fresh=False):
     ranks, layers, summary = [], [], []
     reference, eco_alloc = {}, {}
     for arm in ARMS:
@@ -51,7 +51,8 @@ def report(root, historical=False):
                 if eco:
                     a = row['auction']
                     check(len(a) == 7 and min(a) >= 0 and a[1] >= a[2], 'bad auction record')
-                    check(eco_alloc.setdefault(key, (counts, a)) == (counts, a), 'SM reuse changed ECO allocation')
+                    allocation = [(call['slot_counts'], call['auction']) for call in d['calls']]
+                    check(eco_alloc.setdefault(key, allocation) == allocation, 'SM reuse changed ECO allocation')
                     auctions.append(a)
                 group.append(dict(bs=bs, arm=arm, layer=layer, sample=1, epoch=epoch, rank=rank,
                                   tokens=sum(counts), m_blocks=blocks, active_slots=sum(q > 0 for q in counts),
@@ -85,14 +86,17 @@ def report(root, historical=False):
                             auction_accepted_total=sum(accepted) if accepted else None,
                             output_equal=all(r['output_equal'] for r in sample)))
     if historical:
-        with (root / 'history_comparison.csv').open() as f:
+        with (root / ('capture_comparison.csv' if fresh else 'history_comparison.csv')).open() as f:
             audit = list(csv.DictReader(f))
         for row in summary:
+            if fresh and row['arm'] != 'vanilla':
+                row['capture_allocation_equal'] = None
+                continue
             checks = [r for r in audit if r['arm'] == row['arm']]
             keys = {(int(r['layer']), int(r['rank']), int(r['step_zero_based'])) for r in checks}
             expected_keys = {(layer, rank, step) for layer in LAYERS for rank in range(8) for step in range(3)}
             check(keys == expected_keys and len(checks) == len(keys), 'incomplete history comparison')
-            row['historical_allocation_equal'] = all(
+            row['capture_allocation_equal' if fresh else 'historical_allocation_equal'] = all(
                 int(r['different_slots']) == 0 and r['auction_equal'] == 'True' for r in checks)
     write_rows(root/'ranks.csv', ranks)
     write_rows(root/'layers.csv', layers)
@@ -104,8 +108,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('root', type=Path)
     parser.add_argument("--historical", action="store_true")
+    parser.add_argument('--fresh', action='store_true')
     args = parser.parse_args()
-    rows = report(args.root, args.historical)
+    rows = report(args.root, args.historical or args.fresh, args.fresh)
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -116,5 +121,8 @@ if __name__ == '__main__':
     ax.margins(y=0.14)
     fig.tight_layout()
     fig.savefig(args.root/'moe.svg')
-    if args.historical and not all(r['historical_allocation_equal'] and r['output_equal'] for r in rows):
+    if args.fresh:
+        if not rows[0]['capture_allocation_equal'] or not all(r['output_equal'] for r in rows):
+            raise SystemExit('New collection comparison failed; inspect capture_comparison.csv and ranks.csv')
+    elif args.historical and not all(r['historical_allocation_equal'] and r['output_equal'] for r in rows):
         raise SystemExit('Historical comparison failed; inspect history_comparison.csv and ranks.csv')
