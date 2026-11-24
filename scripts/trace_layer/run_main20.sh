@@ -15,11 +15,16 @@ export GC_MOE_EXEC_ROOT="$PWD" GC_MOE_SM90_STREAM_M_BLOCKS=1 GC_MOE_STUDY_STEP=0
 export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1 GC_CAPTURE_TOKENS=1
 unset GC_MOE_FIXED_REUSE GC_MOE_FIRST_STEP_AUDIT GC_MOE_AA_CONTROL GC_MOE_COST_STUDY
 arms=(vanilla random rr)
+four=${SM90_FULL_MODEL_FOUR:-0}
 report_args=()
 case ${GC_MOE_MATRIX_SIZE:-20} in
   20) ;;
   24)
-    if [[ ${GC_MOE_MAIN_FINE_ONLY:-0} == 1 ]]; then
+    if [[ $four == 1 ]]; then
+      [[ ${GC_MAIN24_SINGLE_BS:-} =~ ^(512|1024)$ && ${GC_STEP_BOUNDARY:-0} == 0 && ${GC_COST_HOST_PROBE:-0} == 0 ]] || exit 2
+      export GC_MOE_SM90_PLAN_DISPATCH=1
+      report_args+=(--four-arms)
+    elif [[ ${GC_MOE_MAIN_FINE_ONLY:-0} == 1 ]]; then
       [[ ${GC_MAIN24_SINGLE_BS:-} == 256 && ${GC_STEP_BOUNDARY:-0} == 0 && ${GC_COST_HOST_PROBE:-0} == 0 ]] || exit 2
       export GC_MOE_SM90_PLAN_DISPATCH=1
       report_args+=(--fine-only)
@@ -28,7 +33,13 @@ case ${GC_MOE_MATRIX_SIZE:-20} in
     fi ;;
   *) exit 2 ;;
 esac
-arms+=(eco eco_smr)
+arms+=(eco)
+if [[ $four == 1 ]]; then
+  [[ ${GC_MOE_MATRIX_SIZE:-20} == 24 ]] || exit 2
+  exec 9>/home/admin/workspace/aop_lab/app_source/sm90_persist_20261123/h20-eight.lock
+else
+  arms+=(eco_smr)
+fi
 if [[ ${GC_STEP_BOUNDARY:-0} == 1 ]]; then
   test "${GC_MOE_MATRIX_SIZE:-}" = 24
   # Counterbalance the cost-arm order from BS256/512. Vanilla still publishes.
@@ -68,12 +79,23 @@ PY
     dst="$group/$arm"
     mkdir "$dst"
     log="$dst/runner.log"
-    nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name --format=csv,noheader > "$dst/preexisting-processes.csv"
+    if [[ $four == 1 ]]; then
+      while true; do
+        flock 9
+        nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name --format=csv,noheader > "$dst/preexisting-processes.csv"
+        if [[ ! -s "$dst/preexisting-processes.csv" ]]; then break; fi
+        flock -u 9
+        sleep 60
+      done
+    else
+      nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name --format=csv,noheader > "$dst/preexisting-processes.csv"
+    fi
     test ! -s "$dst/preexisting-processes.csv"
     nvidia-smi --query-gpu=index,uuid,name,pci.bus_id,driver_version,power.limit,clocks.max.sm,clocks.max.memory --format=csv,noheader > "$dst/hardware.csv"
     awk -F, '$3 !~ /NVIDIA H20/ { bad=1 } END { exit (NR != 8 || bad) }' "$dst/hardware.csv"
     echo "Starting BS=$bs arm=$arm"
     if bash scripts/trace_layer/run_aligned_ep8.sh "$sha" --study-main20 > "$log" 2>&1; then code=0; else code=$?; fi
+    if [[ $four == 1 ]]; then flock -u 9; fi
     raw=$(sed -n 's/^Capture workspace: //p' "$log")
     if [[ -d "$raw" ]]; then
       for name in execution.sha runtime.log status.txt gpu.log failed-command.txt run.json rank{0..7}.npz; do

@@ -270,7 +270,7 @@ def auction_metrics(auction):
     )
 
 
-def analyze_group(root, bs, sha, with_linear=False, fine_only=False):
+def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=False):
     arms = ARMS24 if with_linear and not fine_only else ARMS
     rows = []
     layers = []
@@ -281,6 +281,8 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False):
     eco_layout = None
     eco_allocation = None
     eco_auction = None
+    if four_arms:
+        arms = ("vanilla", "random", "rr", "eco")
     group = root / f"bs{bs}"
     with np.load(group / "stats-demand.npz") as data:
         history = data["logical"]
@@ -293,7 +295,15 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False):
         control, placement, native, warm, counts, v, auction, host = arm_data(
             group / arm, bs, arm, sha, with_linear
         )
-        if fine_only:
+        if four_arms:
+            for key in ("GC_MOE_STABLE_PREFILL_TOPK", "GC_MOE_STABLE_DECODE_TOPK", "GC_MOE_ORDER_PREFILL", "GC_MOE_MATRIX_PREFIX_CHECK", "GC_MOE_NO_PREFETCH"):
+                require(control["config"].get(key) == "1", f"disabled control: {key}")
+            require(control["config"].get("CUDAGRAPH_MODE") == "FULL_DECODE_ONLY", "wrong graph mode")
+            if bs in (512, 1024):
+                previous = (Path(__file__).resolve().parents[2] / "docs/trace_executor_20261119" /
+                            "sm90_collect_once_replay_results" / f"bs{bs}" / "collection/capture.json")
+                require(control["prompt"] == load(previous)["prompt_sha256"], "prompt batch differs from replay study")
+        if fine_only or four_arms:
             require(control["config"].get("GC_MOE_SM90_PLAN_DISPATCH") == "1", "wrong plan context control")
             if arm.startswith("eco"):
                 marker = "SM90 ECO plan context=communication communication_sms=6 compute_sms=72"
@@ -368,7 +378,7 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False):
                 strict_pair_comparable=(diff == 0 and warm == reference_warm),
             )
         )
-        if fine_only:
+        if fine_only or four_arms:
             rows[-1]["moe_change_pct_vs_vanilla"] = 100 * (rows[-1]["moe_ms_per_step"] / rows[0]["moe_ms_per_step"] - 1)
         if with_linear:
             rows[-1].update(
@@ -426,6 +436,13 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False):
                 w.writerow(["step", "layer", *AUCTION])
                 for i, values in enumerate(auction):
                     w.writerow([*divmod(i, LAYERS), *values])
+    if four_arms:
+        rr_ms = outcomes["rr"][2]["moe_ms_per_step"]
+        for row in rows:
+            row["moe_us_per_layer"] = row["moe_ms_per_step"] * 1000 / LAYERS
+            row["moe_change_pct_vs_rr"] = 100 * (row["moe_ms_per_step"] / rr_ms - 1)
+            row["auction_accepted_mean"] = auctions[0]["accepted_per_layer_call"] if row["arm"] == "eco" else None
+            row["auction_accepted_total"] = auctions[0]["accepted"] if row["arm"] == "eco" else None
     pairs = []
     for a, b in combinations(arms, 2):
         n0, w0, r0 = outcomes[a]
@@ -453,7 +470,7 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False):
     return rows, layers, auctions, pairs
 
 
-def report(root, batches, with_linear=None, fine_only=False):
+def report(root, batches, with_linear=None, fine_only=False, four_arms=False):
     if with_linear is None:
         source = load(root / f"bs{batches[0]}" / "vanilla" / "run.json")
         fine_only = fine_only or source["controls"].get("GC_MOE_MAIN_FINE_ONLY") == "1"
@@ -464,7 +481,7 @@ def report(root, batches, with_linear=None, fine_only=False):
     auctions = []
     pairs = []
     for bs in batches:
-        a, b, c, d = analyze_group(root, bs, sha, with_linear, fine_only)
+        a, b, c, d = analyze_group(root, bs, sha, with_linear, fine_only, four_arms)
         rows.extend(a)
         layers.extend(b)
         auctions.extend(c)
@@ -474,10 +491,13 @@ def report(root, batches, with_linear=None, fine_only=False):
     write_rows(out / "layers.csv", layers)
     write_rows(out / "auction.csv", auctions)
     write_rows(out / "pairs.csv", pairs)
-    if fine_only:
+    if four_arms:
+        require(len(rows) == 4 * len(batches) and len(pairs) == 6 * len(batches)
+                and all(p["strict_pair_comparable"] for p in pairs), "four-arm workload parity failed")
+    elif fine_only:
         require(len(rows) == 5 and len(pairs) == 10 and all(p["strict_pair_comparable"] for p in pairs),
                 "five-arm workload parity failed")
-    if with_linear and not fine_only:
+    if with_linear and not (fine_only or four_arms):
         write_rows(
             out / "cost_pairs.csv", [p for p in pairs if (p["arm_a"], p["arm_b"]) == ("eco_linear", "eco")]
         )
@@ -494,5 +514,6 @@ if __name__ == "__main__":
         help="require all 24 arms and audit the active prices",
     )
     p.add_argument("--fine-only", action="store_true", help="five BS256 arms with full main24 audits")
+    p.add_argument("--four-arms", action="store_true", help="full-model vanilla/random/rr/fine ECO with strict pair audits")
     args = p.parse_args()
-    report(args.root, [args.bs] if args.bs else BATCHES, args.with_linear, args.fine_only)
+    report(args.root, [args.bs] if args.bs else BATCHES, True if args.four_arms else args.with_linear, args.fine_only, args.four_arms)
