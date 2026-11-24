@@ -6,6 +6,11 @@ from pathlib import Path
 import torch
 
 
+def requires_layer_aligned_warmup():
+    """These full-model studies index the per-layer GPU state by protocol epoch."""
+    return bool(os.getenv("SM90_EIGHT_ARM")) or os.getenv("SM90_FULL_MODEL_FOUR") == "1"
+
+
 def publishes_checkpoint():
     if os.getenv("SM90_EIGHT_ARM"):
         return os.environ["SM90_EIGHT_ARM"] == "2"

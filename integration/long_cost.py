@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from fixed_workload import RouteTape, publishes_checkpoint, route_ordinals
+from fixed_workload import RouteTape, publishes_checkpoint, requires_layer_aligned_warmup, route_ordinals
 
 
 class LongRouteTape(RouteTape):
@@ -98,10 +98,12 @@ def register_long_rpc(worker_class, get_buffer, modules):
         buf = get_buffer()
         torch.cuda.synchronize()
         rank, tape = int(buf.rank_idx), buf.fixed_routes
-        if os.getenv("SM90_EIGHT_ARM"):
+        if requires_layer_aligned_warmup():
             next_epoch = int(buf.header[0].item())
             if (next_epoch - 1) % tape.layers:
                 raise ValueError(f"{phase}: rank {rank} layer 0 would use epoch {next_epoch}")
+            if rank == 0:
+                print(f"[layer-phase] {phase} first_epoch={next_epoch} layers={tape.layers}", flush=True)
         if phase == "stats":
             # All captured and prefill work is finished. Clear the actual table
             # consumed by rearrange_now (some registered methods share it).
@@ -235,15 +237,18 @@ def register_long_rpc(worker_class, get_buffer, modules):
         return audit
 
     def first_step(self):
-        tape = get_buffer().fixed_routes
+        buf = get_buffer()
+        tape = buf.fixed_routes
         n = tape.layers
         ids = tape.layer_ids[:n].cpu().tolist()
         epochs = tape.epochs[:n].cpu().tolist()
         first = self._long_first
-        if (int(tape.position.item()) != n or ids != list(range(n))
+        if ((first - 1) % n or int(tape.position.item()) != n or ids != list(range(n))
                 or epochs != list(range(first, first + n))):
             raise ValueError(f"first statistics step: position={tape.position.item()} "
                              f"first_epoch={first} layer_ids={ids} epochs={epochs}")
+        if int(buf.rank_idx) == 0:
+            print(f"[layer-phase] stats step 1 verified epochs={first}..{first+n-1}", flush=True)
         return True
 
     worker_class._gc_moe_long_first_step = first_step

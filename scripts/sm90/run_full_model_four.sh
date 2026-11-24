@@ -41,7 +41,6 @@ unset SM90_COLLECT_SE_ROUTES SM90_EIGHT_ARM SM90_EIGHT_BACKEND SM90_PAIRED_SMALL
 unset GC_STEP_BOUNDARY GC_COST_HOST_PROBE GC_MOE_VANILLA_STATS_REPLAY GC_MOE_DECODE_STATS_AA GC_MOE_PREFIX_DIAG
 unset GC_MOE_SM90_SOURCE_INBOX GC_MOE_SM90_SINGLE_PUSH GC_MOE_SM90_SPLIT_EXCHANGE GC_MOE_SM90_SOURCE_INDEX_PULL
 unset GC_MOE_MAIN_FINE_ONLY GC_MOE_PREFIX_SPARSE_AA GC_MOE_PREFIX_BLOCK_AA GC_MOE_PREFIX_LAYER_AA GC_MOE_PREFIX_HIDDEN_AA
-rc=0
 for bs in 512 1024; do
   delivery="$job/delivery-$bs"
   if [[ -f "$delivery/SHA256SUMS" && $(cat "$delivery/measurement.sha") == "$sha" ]]; then
@@ -50,8 +49,7 @@ for bs in 512 1024; do
   fi
   if [[ -e "$delivery" ]]; then
     echo "Preserving partial BS$bs run; inspect $job/bs$bs.log" >&2
-    rc=1
-    continue
+    exit 1
   fi
   export GC_MAIN24_SINGLE_BS=$bs
   unset GC_REPEAT_BS512_PROMPT_SHA256 GC_KV_OVERHEAD
@@ -62,9 +60,8 @@ for bs in 512 1024; do
   code=0
   bash scripts/trace_layer/run_main20.sh "$delivery" > "$job/bs$bs.log" 2>&1 || code=$?
   echo "$code" > "$job/bs$bs.exit"
-  if (( code )); then rc=1; fi
+  if (( code )); then exit "$code"; fi
 done
-(( rc == 0 )) || exit "$rc"
 python3 - "$job" <<'PY'
 import csv, pathlib, sys
 job = pathlib.Path(sys.argv[1])

@@ -1034,22 +1034,23 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             if extra <= buf.num_max_tokens_per_rank and extra not in sizes:
                 sizes.append(extra)
         out = torch.empty((max(sizes), hidden), dtype=torch.bfloat16, device=device)
-        eight = bool(os.getenv("SM90_EIGHT_ARM"))
-        if eight:
+        from fixed_workload import requires_layer_aligned_warmup
+        aligned = requires_layer_aligned_warmup()
+        if aligned:
             first = int(buf.header[0].item())
             layers = buf.fixed_routes.layers
             if (first - 1) % layers:
                 raise RuntimeError(f"unaligned epoch before child graph warmup: {first}")
         for tokens in sizes:
             self._launch(packed, buf, out[:tokens], tokens)
-        if eight:
+        if aligned:
             # The kernel selects its per-layer plan from (epoch - 1) % layers.
             # Complete the cycle with real calls so all peer epoch fences advance.
             padding = -len(sizes) % layers
             for _ in range(padding):
                 self._launch(packed, buf, out[:1], 1)
         torch.cuda.synchronize(device)
-        if eight:
+        if aligned:
             end = int(buf.header[0].item())
             if end != first + len(sizes) + padding:
                 raise RuntimeError(f"unexpected warmup epoch advance {first} -> {end}")
@@ -2802,8 +2803,9 @@ def _warm_gc_child_graph(model) -> None:
         module.warmup(sizes)
         print('[warm] done', flush=True)
         module._warmed = True
-    except Exception as exc:  # noqa: BLE001 - never block engine bring-up
-        if os.getenv("SM90_EIGHT_ARM"):
+    except Exception as exc:  # noqa: BLE001
+        from fixed_workload import requires_layer_aligned_warmup
+        if requires_layer_aligned_warmup():
             raise
         logger.warning('GC MoE warmup failed (%s); graphs will be disabled', exc)
 

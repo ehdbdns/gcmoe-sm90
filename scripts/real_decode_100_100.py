@@ -777,7 +777,7 @@ def main():
                           if (k.startswith(('GC_MOE_', 'GC_MEASURE_')) or k in runtime_keys)
                           and k != 'GC_MOE_SM90_STREAM_M_BLOCKS'}
         from pathlib import Path
-        from fixed_workload import publishes_checkpoint
+        from fixed_workload import publishes_checkpoint, requires_layer_aligned_warmup
         recording_tokens = long_cost and publishes_checkpoint() and os.getenv("GC_MOE_PREFIX_DIAG") != "1"
         if not recording_tokens:
             fixed = json.loads((Path(fixed_dir) / 'tokens.json').read_text())
@@ -869,7 +869,8 @@ def main():
                 _collect(outs)
                 host.append([t, returned, time.perf_counter_ns()])
             if check_first and i == 1:
-                engine.collective_rpc('_gc_moe_long_first_step')
+                if engine.collective_rpc('_gc_moe_long_first_step') != [True] * ranks:
+                    raise ValueError('missing worker confirmation for the first statistics step')
             if blocks is not None and i < n and i % 10 == 0:
                 now = time.perf_counter()
                 blocks.append((now - last) * 100)
@@ -1021,7 +1022,7 @@ def main():
                 elapsed = time_window(1000, blocks, host)
         else:
             elapsed = time_window(1000, blocks, capture=phase == "measure" and os.getenv("GC_BS256_TRACE_DIR"),
-                                  check_first=phase == "stats" and bool(os.getenv("SM90_EIGHT_ARM")))
+                                  check_first=phase == "stats" and requires_layer_aligned_warmup())
         rec['on'] = False
         if (rec['gen_tokens'] != [nseq]*1000 or rec['ctx_tokens'] != [0]*1000
                 or any(len(got[rid]) != n+1000 for rid,n in zip(ids,before))):
