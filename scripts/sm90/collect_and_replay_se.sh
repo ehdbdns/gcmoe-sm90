@@ -12,6 +12,9 @@ if [[ -e "$root/execution.sha" ]]; then
 else
   echo "$sha" > "$root/execution.sha"
 fi
+# The restarted H20 host uses the six active adapters from the main-table runs.
+export NCCL_IB_HCA=mlx5_4:1,mlx5_5:1,mlx5_9:1,mlx5_17:1,mlx5_21:1,mlx5_29:1
+export NVSHMEM_HCA_LIST="$NCCL_IB_HCA"
 group="$root/collection"
 if [[ ! -f "$group/capture.json" ]]; then
   # Do not overwrite a partial collector. Preserve its first error for diagnosis.
@@ -37,10 +40,12 @@ if [[ ! -f "$group/capture.json" ]]; then
     unset GC_MOE_VANILLA_STATS_REPLAY GC_MOE_FIXED_REUSE GC_MOE_PREFIX_DIAG GC_MOE_DECODE_STATS_AA
     unset SM90_EIGHT_ARM SM90_EIGHT_BACKEND SM90_PAIRED_SMALL GC_BS256_TRACE_DIR GC_STEP_BOUNDARY GC_KV_OVERHEAD
     unset GC_MOE_SM90_SOURCE_INBOX GC_MOE_SM90_SINGLE_PUSH GC_MOE_SM90_SPLIT_EXCHANGE GC_MOE_SM90_SOURCE_INDEX_PULL
-    dataset_dir=/mnt/nas2/nanjun.cp/MoE-Bench-Experiments/datasets
+    export MODEL=/mnt/dsv41/models/DeepSeek-V4.1-Flash
+    dataset_dir=/mnt/dsv41/nanjun.cp/MoE-Bench-Experiments/datasets
     first="$dataset_dir/dsv4-flash_online_input_ids_26-10-08_1.jsonl"
     second="$dataset_dir/dsv4-flash_online_input_ids_26-10-08_2.jsonl"
     export DATASET="$first,$second"
+    sha256sum -c docs/trace_executor_20261119/sm90_h20_bs256_mega_gc_eight_results/model_and_dataset.sha256 > "$group/input-check.log"
     sha256sum "$first" "$second" > "$group/dataset.sha256"
     export GC_KV_BUDGET=2300000
     unset GC_REPEAT_BS512_PROMPT_SHA256
