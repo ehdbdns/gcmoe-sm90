@@ -66,6 +66,6 @@ if __name__ == '__main__':
     p.add_argument('group', type=Path)
     p.add_argument('bank', type=Path)
     p.add_argument('out', type=Path)
-    p.add_argument('bs', type=int, choices=(512, 1024))
+    p.add_argument('bs', type=int, choices=(256, 512, 1024))
     args = p.parse_args()
     extract(args.group, args.bank, args.out, args.bs)

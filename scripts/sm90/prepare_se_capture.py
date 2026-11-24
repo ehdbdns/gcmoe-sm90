@@ -63,6 +63,6 @@ def prepare(group, bs):
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('group', type=Path)
-    p.add_argument('bs', type=int, choices=(512,1024))
+    p.add_argument('bs', type=int, choices=(256,512,1024))
     a = p.parse_args()
     prepare(a.group, a.bs)

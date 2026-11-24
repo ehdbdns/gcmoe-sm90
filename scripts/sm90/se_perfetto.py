@@ -65,11 +65,14 @@ def decode(trace, device, eco, *, reuse=False, tokens=128):
                           m_blocks=row['m_blocks'], first_cta_raw_us=first, last_cta_raw_us=last)
 
 
-def export(root, bs=1024, matrix=False, historical=False):
+def export(root, bs=1024, matrix=False, historical=False, four_arms=False):
     tokens = bs if historical else bs // 8
     inputs = {}
     layouts = {}
     arms = ('vanilla', 'random', 'rr', 'eco', 'eco_smr') if matrix else ('rr', 'eco')
+    if four_arms:
+        check(matrix, 'four-arm export requires matrix mode')
+        arms = ('vanilla', 'random', 'rr', 'eco')
     for arm in arms:
         events, totals = [], [0] * 3
         traces = [json.loads((root / arm / f'rank{r}.json').read_text()) for r in range(8)]
@@ -120,8 +123,9 @@ def export(root, bs=1024, matrix=False, historical=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('root', type=Path)
-    parser.add_argument('--bs', type=int, choices=(512, 1024), default=1024)
+    parser.add_argument('--bs', type=int, choices=(256, 512, 1024), default=1024)
     parser.add_argument('--matrix', action='store_true')
     parser.add_argument("--historical", action="store_true")
+    parser.add_argument("--four-arms", action="store_true")
     args = parser.parse_args()
-    export(args.root, args.bs, args.matrix, args.historical)
+    export(args.root, args.bs, args.matrix, args.historical, args.four_arms)

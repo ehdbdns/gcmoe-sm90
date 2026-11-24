@@ -9,10 +9,16 @@ report_options=()
 if [[ $# -ge 3 && $# -le 4 ]]; then
   bs=$2
   group=$(realpath "$3")
-  [[ $bs == 512 || $bs == 1024 ]] && [[ -f "$group/stats-demand.npz" ]] || exit 2
+  [[ $bs == 256 || $bs == 512 || $bs == 1024 ]] && [[ -f "$group/stats-demand.npz" ]] || exit 2
   arms=(vanilla random rr eco eco_smr)
   profile_options=(--bs "$bs" --group "$group" --layers 8 20 32)
   export_options=(--bs "$bs" --matrix)
+  if [[ $bs == 256 ]]; then
+    [[ $# == 4 ]] || exit 2
+    arms=(vanilla random rr eco)
+    export_options+=(--four-arms)
+    report_options+=(--four-arms)
+  fi
   if [[ $# == 4 ]]; then
     route_dir="$out/routes"
     if [[ $4 == --fresh ]]; then
@@ -72,6 +78,7 @@ done
 if [[ $# -ge 3 && $# -le 4 ]]; then
   if [[ $# == 4 ]]; then
     audit_options=()
+    if [[ $bs == 256 ]]; then audit_options+=(--four-arms); fi
     if [[ $4 == --fresh ]]; then audit_options+=(--fresh); fi
     "$GC_ENV/bin/python" scripts/sm90/audit_se_history.py "$group" "$out" "${audit_options[@]}"
   fi

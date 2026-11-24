@@ -42,7 +42,7 @@ def main(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('--arm', required=True, choices=('vanilla', 'random', 'rr', 'eco', 'eco_smr'))
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--bs', type=int, choices=(512, 1024), default=1024)
+    parser.add_argument('--bs', type=int, choices=(256, 512, 1024), default=1024)
     parser.add_argument('--group', type=Path, default=PLACEMENT)
     parser.add_argument("--layers", nargs="+", type=int, choices=range(40))
     parser.add_argument("--routes", type=Path, help="verified three-step history directory")

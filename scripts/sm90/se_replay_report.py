@@ -22,10 +22,10 @@ def write_rows(path, rows):
         writer.writerows(rows)
 
 
-def report(root, historical=False, fresh=False):
+def report(root, historical=False, fresh=False, arms=ARMS):
     ranks, layers, summary = [], [], []
     reference, eco_alloc = {}, {}
-    for arm in ARMS:
+    for arm in arms:
         for layer in LAYERS:
             group = []
             auctions = []
@@ -38,7 +38,7 @@ def report(root, historical=False, fresh=False):
                 check(len(counts) == (48 if arm == 'vanilla' else 56) and min(counts) >= 0, 'bad slots')
                 check(sum(counts) == row['rank_tokens'] and d['layer'] == layer, 'wrong sample')
                 bs = d['bs']
-                check(bs in (512, 1024) and (not ranks or ranks[0]['bs'] == bs), 'mixed batch sizes')
+                check(bs in (256, 512, 1024) and (not ranks or ranks[0]['bs'] == bs), 'mixed batch sizes')
                 signature = d['input_sha256'], d['output_sha256']
                 expected = reference.setdefault(key, signature)
                 check(expected[0] == signature[0], 'replay input mismatch')
@@ -109,13 +109,14 @@ if __name__ == '__main__':
     parser.add_argument('root', type=Path)
     parser.add_argument("--historical", action="store_true")
     parser.add_argument('--fresh', action='store_true')
+    parser.add_argument("--four-arms", action="store_true")
     args = parser.parse_args()
-    rows = report(args.root, args.historical or args.fresh, args.fresh)
+    rows = report(args.root, args.historical or args.fresh, args.fresh, ARMS[:4] if args.four_arms else ARMS)
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(7, 4))
-    bars = ax.bar(ARMS, [r['moe_us'] for r in rows], color='#276787')
+    bars = ax.bar([r['arm'] for r in rows], [r['moe_us'] for r in rows], color='#276787')
     ax.bar_label(bars, labels=[f"{r['moe_us']:.1f}" for r in rows], padding=3)
     ax.set(ylabel='MoE time (µs/layer)', title=f"SM90 EP8 · BS{rows[0]['bs']} · replay 2 · mean of L8, L20, L32")
     ax.margins(y=0.14)

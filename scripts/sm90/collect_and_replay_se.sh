@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run from the clean execution worktree. Keep all outputs on a persistent job volume.
 set -eo pipefail
-[[ $# == 2 && ( $2 == 512 || $2 == 1024 ) ]] || exit 2
+[[ $# == 2 && ( $2 == 256 || $2 == 512 || $2 == 1024 ) ]] || exit 2
 cd "$(git rev-parse --show-toplevel)"
 root=$(realpath -m "$1")
 bs=$2
@@ -46,9 +46,17 @@ if [[ ! -f "$group/capture.json" ]]; then
     second="$dataset_dir/dsv4-flash_online_input_ids_26-10-08_2.jsonl"
     export DATASET="$first,$second"
     sha256sum -c docs/trace_executor_20261119/sm90_h20_bs256_mega_gc_eight_results/model_and_dataset.sha256 > "$group/input-check.log"
-    sha256sum "$first" "$second" > "$group/dataset.sha256"
+
     export GC_KV_BUDGET=2300000
     unset GC_REPEAT_BS512_PROMPT_SHA256
+    if [[ $bs == 256 ]]; then
+      # Match the single-file corpus and prompt selection of the BS256 full-model table.
+      export DATASET="$first"
+      unset GC_KV_BUDGET
+      sha256sum "$first" > "$group/dataset.sha256"
+    else
+      sha256sum "$first" "$second" > "$group/dataset.sha256"
+    fi
     if [[ $bs == 1024 ]]; then
       export GC_KV_BUDGET=5000000 GC_REPEAT_BS512_PROMPT_SHA256=e7c4aee9db91a34c018bd54464e67355681b74112d515401844f473c053cfcef
     fi

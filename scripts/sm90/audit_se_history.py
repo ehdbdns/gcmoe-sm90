@@ -8,9 +8,9 @@ import numpy as np
 from se_replay_report import ARMS, LAYERS, write_rows
 
 
-def audit(group, out, fresh=False):
+def audit(group, out, fresh=False, arms=ARMS):
     rows = []
-    for arm in (('vanilla',) if fresh else ARMS):
+    for arm in (('vanilla',) if fresh else arms):
         eco = arm.startswith('eco')
         for rank in range(8):
             with np.load(group / arm / f'rank{rank}.npz') as archive:
@@ -50,6 +50,7 @@ if __name__ == '__main__':
     p.add_argument('group', type=Path)
     p.add_argument('out', type=Path)
     p.add_argument('--fresh', action='store_true')
+    p.add_argument("--four-arms", action="store_true")
     args = p.parse_args()
     # Leave diagnostic graphs available even when the historical allocation differs.
-    audit(args.group, args.out, args.fresh)
+    audit(args.group, args.out, args.fresh, ARMS[:4] if args.four_arms else ARMS)
