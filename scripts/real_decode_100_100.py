@@ -852,7 +852,7 @@ def main():
             if o.outputs and o.outputs[0].token_ids:
                 got.setdefault(o.request_id, []).extend(o.outputs[0].token_ids)
 
-    def time_window(n, blocks=None, host=None, capture=False):
+    def time_window(n, blocks=None, host=None, capture=False, check_first=False):
         _sync()                       # drain batches queued before the window
         t0 = time.perf_counter()
         last = t0
@@ -868,6 +868,8 @@ def main():
                 returned = time.perf_counter_ns()
                 _collect(outs)
                 host.append([t, returned, time.perf_counter_ns()])
+            if check_first and i == 1:
+                engine.collective_rpc('_gc_moe_long_first_step')
             if blocks is not None and i < n and i % 10 == 0:
                 now = time.perf_counter()
                 blocks.append((now - last) * 100)
@@ -989,7 +991,8 @@ def main():
                     calls["exclusive_host"] = install(stack, engine, host)
                 elapsed = time_window(1000, blocks, host)
         else:
-            elapsed = time_window(1000, blocks, capture=phase == "measure" and os.getenv("GC_BS256_TRACE_DIR"))
+            elapsed = time_window(1000, blocks, capture=phase == "measure" and os.getenv("GC_BS256_TRACE_DIR"),
+                                  check_first=phase == "stats" and bool(os.getenv("SM90_EIGHT_ARM")))
         rec['on'] = False
         if (rec['gen_tokens'] != [nseq]*1000 or rec['ctx_tokens'] != [0]*1000
                 or any(len(got[rid]) != n+1000 for rid,n in zip(ids,before))):
