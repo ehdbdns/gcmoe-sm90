@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 # Run inside the site's eight-H20 allocation. Resume only on the same measurement revision.
 set -eo pipefail
+launcher_dir=$(cd "$(dirname "$0")" && pwd)
 cd "$(git rev-parse --show-toplevel)"
 sha=$(git rev-parse HEAD)
 test -z "$(git status --porcelain)"
 resume=0
+mega_only=0
+arms=(2 3 4 6 7 8 1 5)
+if [[ ${1:-} == --resume-mega ]]; then
+  resume=1; mega_only=1; arms=(1 5); shift
+  reference=c1a176dbf45f1fd8d433189c1f24533aa44a7212
+  test "$(git diff --name-only "$reference" "$sha")" = integration/sm90_mega_weights.py
+  cmp integration/sm90_mega_weights.py "$launcher_dir/../../integration/sm90_mega_weights.py"
+fi
 if [[ ${1:-} == --resume ]]; then resume=1; shift; fi
-[[ $# == 1 ]] || { echo "usage: run_eight.sh [--resume] OUTPUT" >&2; exit 2; }
+[[ $# == 1 ]] || { echo "usage: run_eight.sh [--resume|--resume-mega] OUTPUT" >&2; exit 2; }
 out=$(realpath -m "$1")
 if (( resume )); then
-  test "$(cat "$out/measurement.sha")" = "$sha" || { echo "resume revision mismatch" >&2; exit 1; }
+  test "$(cat "$out/measurement.sha")" = "${reference:-$sha}" || { echo "resume revision mismatch" >&2; exit 1; }
 else
   mkdir "$out"
   echo "$sha" > "$out/measurement.sha"
@@ -25,11 +34,28 @@ source scripts/env.sh
 py="$GC_ENV/bin/python"
 sha256sum -c docs/trace_executor_20261119/sm90_h20_bs256_mega_gc_eight_results/model_and_dataset.sha256 > "$out/input.sha256.log"
 echo "7c848494dbd01daa77ea80765888073cb63b85d7f74054fbcead404598ddf61e  $wheels/deep_gemm-2.8.2+7292e7b-cp310-cp310-linux_x86_64.whl" | sha256sum -c -
-CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=4 "$py" scripts/sm90/check_mega_weights.py "$MODEL" > "$out/conversion.jsonl"
+if (( mega_only )); then
+  conversion=$(mktemp "$out/mega-conversion-XXXXXXXX.jsonl")
+  CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=4 "$py" scripts/sm90/check_mega_weights.py "$MODEL" > "$conversion"
+  test "$(wc -l < "$conversion")" -eq 3
+  cmp "$out/conversion.jsonl" "$conversion"
+else
+  CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=4 "$py" scripts/sm90/check_mega_weights.py "$MODEL" > "$out/conversion.jsonl"
+fi
 # A private-extension import failure only blocks the two routed Mega arms.
 CUDA_VISIBLE_DEVICES='' "$py" integration/sm90_deepgemm.py > "$out/attention-import.log" 2>&1
 mega_import=0
 CUDA_VISIBLE_DEVICES='' "$py" integration/sm90_deepgemm.py mega > "$out/mega-import.log" 2>&1 || mega_import=$?
+if (( mega_only )); then
+  # The six controls and publisher state belong to the original measurement checkout.
+  for id in 2 3 4 6 7 8; do
+    test -f "$out/arm$id/complete"
+    (cd "$out/arm$id" && sha256sum --quiet -c artifacts.sha256)
+  done
+  test -s "$out/replay/placement.json"
+  test "$mega_import" = 0
+  source "$launcher_dir/select_mega_compiler.sh"
+fi
 for nic in mlx5_{4,5,9,17,21,29}; do
   grep -qw ACTIVE "/sys/class/infiniband/$nic/ports/1/state"
 done
@@ -72,7 +98,7 @@ while ! idle; do flock -u 9; sleep 60; flock 9; done
 selection=$(cut -d, -f1 "$out/gpus.csv" | paste -sd, -)
 if [[ -z ${CUDA_VISIBLE_DEVICES:-} ]]; then export CUDA_VISIBLE_DEVICES="$selection"; fi
 # Preserve the scheduler-assigned device mask. The runtime gate verifies eight SM90 devices.
-for id in 2 3 4 6 7 8 1 5; do
+for id in "${arms[@]}"; do
   dst="$out/arm$id"
   if [[ -f "$dst/complete" ]]; then
     (cd "$dst" && sha256sum --quiet -c artifacts.sha256)
@@ -104,7 +130,9 @@ for id in 2 3 4 6 7 8 1 5; do
   export SM90_EIGHT_ARM=$id DG_PRINT_CONFIGS=1
   while ! idle; do flock -u 9; sleep 60; flock 9; done
   code=0
+  arm_started=$SECONDS
   bash scripts/trace_layer/run_aligned_ep8.sh "$sha" --study-main20 > "$dst/runner.log" 2>&1 || code=$?
+  echo "$((SECONDS - arm_started))" > "$dst/wall-seconds"
   echo "$code" > "$dst/exit"
   raw=$(sed -n 's/^Capture workspace: //p' "$dst/runner.log" | head -1)
   if [[ -n $raw && -d $raw ]]; then
