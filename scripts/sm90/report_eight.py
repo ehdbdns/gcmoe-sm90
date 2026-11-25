@@ -34,6 +34,7 @@ def read_arm(root, arm, batch=256):
             check(all(r["full_graph_replays"] == 1000 and len(r["shared_modules"]) == 40 for r in rows),
                   "graph or shared workload coverage")
         audit[phase] = [[r[k] for k in ("ids", "weights", "demand")] for r in rows]
+    audit["warm_native"] = [r.get("warm_native") for r in rows]
     audit["order"] = [r["batch_order"] for r in rows]
     audit["shared"] = [r["shared_modules"] for r in rows]
     audit["prefill_kv"] = [r["checkpoint"]["prefill_snapshot"]["readback_sha256"]
@@ -43,6 +44,7 @@ def read_arm(root, arm, batch=256):
     boundaries = [r["checkpoint"] for r in initial]
     audit["kv"] = [b["snapshot"]["readback_sha256"] for b in boundaries]
     audit["weights"] = [b["logical_weights"] for b in boundaries]
+    audit["installed_layout"] = [b.get("installed_layout") for b in boundaries]
     audit["placement"] = [b["placement"] for b in boundaries]
     audit["trajectory"] = [run["prompt_hash"], run["output_hash"]]
     mega = arm in (1, 5)
@@ -104,7 +106,63 @@ def read_arm(root, arm, batch=256):
     return row, audit, greedy
 
 
+def report_six(root):
+    """All six measured arms consume arm 0's banks. Compare the actual native tokens separately."""
+    from itertools import combinations
+
+    valid, audits, native, failures = {}, {}, {}, {}
+    sha = (root / "measurement.sha").read_text().strip()
+    for arm in range(7):
+        try:
+            folder = root / f"arm{arm}"
+            check((folder / "execution.sha").read_text().strip() == sha, "measurement revision")
+            check((folder / "complete").is_file(), "incomplete arm")
+            row, audit, tokens = read_arm(root, arm)
+            owner = "_ZeroShared" if arm in (0, 2, 4) else "DeepseekV4MLP"
+            check(audit["shared"] == [[owner] * 40] * 8, "shared ownership")
+            check(all(audit["warm_native"]), "missing warm native-output hash")
+            if arm not in (1, 5):
+                roles = "(1, 4, 8, 2, 3)" if arm in (0, 2, 4) else "(1, 2, 3)"
+                check(f"[six] GC M=64 roles={roles}" in (folder / "runner.log").read_text(), "GC role geometry")
+            if arm:
+                check(0 in audits, "reference validation failed")
+                for k in ("trajectory", "order", "prefill_kv", "stats", "measured", "kv"):
+                    check(audit[k] == audits[0][k], f"reference mismatch in {k}")
+            for peer, prior in audits.items():
+                if (peer in (1, 5)) == (arm in (1, 5)):
+                    check(audit["weights"] == prior["weights"], "logical weights differ within backend")
+                if (peer >= 4) == (arm >= 4):
+                    for k in ("counts", "placement", "installed_layout"):
+                        check(audit[k] == prior[k], f"policy mismatch in {k}")
+            audits[arm], native[arm] = audit, tokens
+            if arm:
+                valid[arm] = dict(arm=arm, step_ms=row["step_ms"], ffn_ms_per_step=row["moe_ms_per_step"],
+                                  ffn_us_per_layer=25 * row["moe_ms_per_step"],
+                                  **{k: row[k] for k in ("block_m", "token_ir", "total_m_blocks",
+                                     "peak_rank_m_blocks", "m_block_ir", "active_physical_slots")})
+        except (OSError, KeyError, ValueError) as exc:
+            failures[arm] = str(exc)
+    pairs = []
+    for a, b in combinations(valid, 2):
+        diff = int(np.count_nonzero(native[a] != native[b]))
+        warm_equal = audits[a]["warm_native"] == audits[b]["warm_native"]
+        pairs.append(dict(arm_a=a, arm_b=b, native_diff=diff, samples=native[a].size,
+                          warm_native_equal=warm_equal, strict_pair_comparable=warm_equal and diff == 0,
+                          step_change_pct=100 * (valid[b]["step_ms"] / valid[a]["step_ms"] - 1),
+                          ffn_change_pct=100 * (valid[b]["ffn_ms_per_step"] / valid[a]["ffn_ms_per_step"] - 1)))
+    for name, records in (("summary", list(valid.values())), ("pairs", pairs)):
+        with (root / (name + ".csv")).open("w") as f:
+            if records:
+                writer = csv.DictWriter(f, fieldnames=records[0])
+                writer.writeheader()
+                writer.writerows(records)
+    (root / "verification.json").write_text(json.dumps(dict(failures=failures, audits=audits), indent=2))
+    return int(bool(failures) or len(pairs) != 15 or not all(p["strict_pair_comparable"] for p in pairs))
+
+
 def report(root):
+    if (root / "six-mode").is_file() and (root / "six-mode").read_text().strip() == "1":
+        return report_six(root)
     rows, audits, natives, failures = {}, {}, {}, {}
     marker = root / "compact-mode"
     compact = marker.exists() and marker.read_text().strip() == "1"

@@ -37,6 +37,8 @@ class SM90GCBufferLayout:
     # RR uses the same table and the two can be compared column by column.
     trace: bool = False
 
+    # A Mega consumer uses its own L1/L2 workspaces. Keep GC's routing audit views.
+    audit_only: bool = False
     source_inbox: bool = field(init=False)
     single_push: bool = field(init=False)
     source_index_pull: bool = field(init=False)
@@ -402,10 +404,11 @@ class SM90GCBufferLayout:
         reserve('l1_block_ready', (local,), 'int32', 4)
         reserve('route_meta', (local, rows, 3), 'int32', 4)
         reserve('route_weight', (local, rows), 'float32', 4)
-        reserve('l1_acts', (local, rows, hidden), 'float8_e4m3fn', 1)
-        reserve('l1_acts_sf', (local, hidden // 128, rows), 'float32', 4)
-        reserve('l2_acts', (local, rows, intermediate), 'float8_e4m3fn', 1)
-        reserve('l2_acts_sf', (local, intermediate // 128, rows), 'float32', 4)
+        if not self.audit_only:
+            reserve('l1_acts', (local, rows, hidden), 'float8_e4m3fn', 1)
+            reserve('l1_acts_sf', (local, hidden // 128, rows), 'float32', 4)
+            reserve('l2_acts', (local, rows, intermediate), 'float8_e4m3fn', 1)
+            reserve('l2_acts_sf', (local, intermediate // 128, rows), 'float32', 4)
         reserve('combine', (capacity, topk, hidden), 'bfloat16', 2)
         if shared_experts:
             reserve('shared_l1_acts', (capacity, hidden), 'float8_e4m3fn', 1)

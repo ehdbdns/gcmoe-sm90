@@ -137,6 +137,8 @@ def validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,
 def sm90_fp8_fp4_gc_moe(y, w1, w2, buffer, stats, recipe, activation, clamp,
                         fast_math, num_tokens_bound, shared_l1_weights=None,
                         shared_l2_weights=None, shared_recipe=None):
+    if buffer.layout.audit_only:
+        raise ValueError("Mega audit buffers cannot launch a GC compute kernel")
     config = validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,
                            fast_math, num_tokens_bound, shared_l1_weights,
                            shared_l2_weights, shared_recipe)

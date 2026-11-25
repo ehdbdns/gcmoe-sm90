@@ -12,6 +12,8 @@ def requires_layer_aligned_warmup():
 
 
 def publishes_checkpoint():
+    if os.getenv("SM90_SIX_ARM") == "1":
+        return os.environ["SM90_EIGHT_ARM"] == "0"
     if os.getenv("SM90_EIGHT_ARM"):
         return os.environ["SM90_EIGHT_ARM"] == "2"
     if os.getenv("GC_MOE_VANILLA_STATS_REPLAY") == "1":

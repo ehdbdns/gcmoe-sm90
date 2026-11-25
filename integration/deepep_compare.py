@@ -1462,7 +1462,8 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                 eco=_eplb_enabled() and _eco_enabled(),
                 # [ECO-TRACE] timeline for EVERY arm (see layout `trace`).
                 trace=os.environ.get('GC_MOE_ECO_TRACE') == '1'
-                      or os.environ.get('GC_MOE_PULL_TRACE') == '1')
+                      or os.environ.get('GC_MOE_PULL_TRACE') == '1',
+                audit_only=(os.getenv('SM90_SIX_ARM') == '1' and os.getenv('SM90_EIGHT_BACKEND') == 'mega'))
             self._buffer_key = key
             if os.getenv('SM90_EIGHT_BACKEND') == 'mega':
                 from sm90_eight import init_mega
@@ -2974,6 +2975,11 @@ def register() -> None:
             _orig(model, model_config, target_device)
             _run_eplb_replication(model)
             _allocate_all_gc_workspaces(model)
+            if os.getenv("SM90_SIX_ARM") == "1":
+                free, total = torch.cuda.mem_get_info()
+                print(f"[six-memory] post-warmup free={free} total={total} "
+                      f"allocated={torch.cuda.memory_allocated()} reserved={torch.cuda.memory_reserved()}",
+                      flush=True)
             if os.getenv("SM90_EIGHT_ARM"):
                 from sm90_eight import install_clocks
                 install_clocks(model, _SHARED_BUFFER["buf"])

@@ -112,6 +112,8 @@ def _role_specs(config, layout, schedule, has_stats):
         roles = roles[:-1] + (6,) + roles[-1:]
     if eco and config.plan_dispatch:
         roles = (5, 7) + tuple(role for role in roles if role != 5)
+    if os.getenv("SM90_SIX_ARM") == "1":
+        print(f"[six] GC M={schedule.tile_m} roles={roles}", flush=True)
     specs = []
     for role in roles:
         if role == 6:

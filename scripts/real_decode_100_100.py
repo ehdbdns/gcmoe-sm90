@@ -154,6 +154,12 @@ def load_prompts(n, lo, hi):
 
 
 def select_decode_prompts(n, lo, hi):
+    if os.getenv('SM90_SIX_ARM') == '1':
+        if n != 256 or lo != 256:
+            raise ValueError('six-arm run requires BS256 and real 256-token prefixes')
+        # Choose the historical cohort before the length-budget selector runs.
+        # All six consumers read the same first 256 token IDs of these prompts.
+        return [p[:256] for p in load_prompts(n, lo, hi)]
     reference = os.environ.get('GC_REPEAT_BS512_PROMPT_SHA256')
     if not reference:
         return load_prompts(n, lo, hi)
@@ -178,7 +184,7 @@ def _compilation_config():
         return None
     config = {'cudagraph_mode': getattr(CUDAGraphMode, mode)}
     batch = int(os.environ.get('GC_MOE_MATRIX_BS', '0'))
-    if os.environ.get('GC_MOE_MATRIX_ARM') and (batch > 256 or os.getenv('SM90_PAIRED_SMALL') == '1'):
+    if os.environ.get('GC_MOE_MATRIX_ARM') and (batch > 256 or os.getenv('SM90_PAIRED_SMALL') == '1' or os.getenv('SM90_SIX_ARM') == '1'):
         # Pure decode has exactly this shape. Avoid retaining dozens of
         # capture pools or falling back to eager above the default graph cap.
         config.update(cudagraph_capture_sizes=[batch], max_cudagraph_capture_size=batch)
