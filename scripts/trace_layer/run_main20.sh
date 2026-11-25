@@ -75,12 +75,38 @@ for bs in "${batches[@]}"; do
   echo "$state" > "$group/state-path.txt"
   export GC_MOE_FIXED_DIR="$state/replay" GC_MOE_STRICT_STATE_DIR="$state/kv"
   mkdir "$GC_MOE_FIXED_DIR" "$GC_MOE_STRICT_STATE_DIR"
-  "$py" - "$state" "$bs" <<'PY'
+  retained=0
+  if [[ ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then
+    [[ $four == 1 && ${GC_MOE_EP8_LINEAR:-0} == 1 && $bs =~ ^(256|512|1024)$ ]] || exit 2
+    ref="$PWD/docs/trace_executor_20261119/sm90_ep8_linear_four_6bs_results/delivery-$bs/bs$bs"
+    previous=$(cat "$ref/state-path.txt")
+    replay_files=(stats-rank{0..7}.pt measure-rank{0..7}.pt stats-demand.npz tokens.json placement.json)
+    retained=1
+    for file in "${replay_files[@]}"; do [[ -s $previous/replay/$file ]] || retained=0; done
+    for file in {prefill/,}rank{0..7}.{bin,json}; do [[ -s $previous/kv/$file ]] || retained=0; done
+    if (( retained )); then
+      for file in "${replay_files[@]}"; do ln -s "$previous/replay/$file" "$GC_MOE_FIXED_DIR/$file"; done
+      (cd "$GC_MOE_FIXED_DIR" && awk '$2 !~ /-layout.json$/' "$ref/workload.sha256" | sha256sum -c -) || exit 1
+      for file in {prefill/,}rank{0..7}.json; do cmp "$previous/kv/$file" "$ref/checkpoint/$file"; done
+      export GC_MOE_STRICT_STATE_DIR="$previous/kv"
+      cp -r "$ref/checkpoint" "$group/"
+      cp "$ref/stats-demand.npz" "$group/"
+      arms=(eco)
+    else
+      cp "$ref/placement.json" "$GC_MOE_FIXED_DIR/placement.json"
+      arms=(vanilla eco)
+    fi
+    cp "$ref/placement.json" "$group/"
+    if [[ $bs == 256 ]]; then arms+=(eco-profile); fi
+  fi
+  if (( ! retained )); then
+    "$py" - "$state" "$bs" <<'PY'
 import os, shutil, sys
 required = 2*8*int(os.environ["GC_MOE_KV_BYTES"]) + 2*8*40000*int(sys.argv[2])*6*12 + 4*1024**3
 if shutil.disk_usage(sys.argv[1]).free < required:
     raise SystemExit(f"Need {required / 1024**3:.1f} free GiB on the checkpoint filesystem")
 PY
+  fi
   if [[ ${GC_COST_HOST_PROBE:-0} == 1 ]]; then
     ref=docs/trace_executor_20261119/sm90_main24_stable_decode_bs1024_results/delivery/bs1024
     cp "$ref/placement.json" "$GC_MOE_FIXED_DIR/placement.json"
@@ -88,6 +114,12 @@ PY
   if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then [[ $four == 1 && ${GC_MOE_EP8_LINEAR:-0} == 1 ]] || exit 2; arms=(vanilla rr); fi
   for arm in "${arms[@]}"; do
     export GC_MOE_MATRIX_ARM="$arm"
+    if [[ $arm == eco-profile ]]; then
+      export GC_MOE_MATRIX_ARM=eco SM90_WA1_PROFILE_DIR="$group/profile-raw"
+      mkdir "$state/profile-replay"
+      for file in "${replay_files[@]}"; do ln -s "$GC_MOE_FIXED_DIR/$file" "$state/profile-replay/$file"; done
+      export GC_MOE_FIXED_DIR="$state/profile-replay"
+    fi
     dst="$group/$arm"
     mkdir "$dst"
     log="$dst/runner.log"
@@ -117,7 +149,11 @@ PY
     test "$code" = 0 || exit "$code"
     grep -Fxq exit_code=0 "$dst/status.txt"
     test "$(cat "$dst/execution.sha")" = "$sha"
-    cp "$GC_MOE_FIXED_DIR/$arm-layout.json" "$dst/installed-layout.json"
+    cp "$GC_MOE_FIXED_DIR/$GC_MOE_MATRIX_ARM-layout.json" "$dst/installed-layout.json"
+    if [[ $arm == eco-profile ]]; then
+      unset SM90_WA1_PROFILE_DIR
+      export GC_MOE_FIXED_DIR="$state/replay"
+    fi
     if [[ $arm == vanilla ]]; then
       mkdir "$group/checkpoint"
       mkdir "$group/checkpoint/prefill"
@@ -128,7 +164,13 @@ PY
     if [[ $arm == rr || ( $wa_pair == 1 && $arm == eco_linear ) ]]; then cp "$GC_MOE_FIXED_DIR/placement.json" "$group/"; fi
   done
   (cd "$GC_MOE_FIXED_DIR" && sha256sum stats-rank*.pt measure-rank*.pt stats-demand.npz tokens.json placement.json *-layout.json) > "$group/workload.sha256"
-  if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then
+  if [[ ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then
+    if [[ $bs == 256 ]]; then
+      "$py" scripts/sm90/shared_first_perfetto.py "$group" --profile
+      gzip -n -- "$group"/profile-raw/rank{0..7}.json
+    fi
+    "$py" scripts/sm90/shared_first_wa1_report.py "$group" "$ref" "$bs"
+  elif [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then
     test -s "$group/rr/installed-layout.json"
   elif [[ $wa_pair == 1 ]]; then
     "$py" scripts/trace_layer/linear_wa_report.py "$out"
@@ -142,7 +184,7 @@ PY
   fi
   # The group report has verified every arm's readback against its publisher.
   # Only release this job's private disposable payloads; preserve evidence on failure.
-  if [[ ${GC_MAIN20_KEEP_KV:-0} != 1 ]]; then
+  if [[ $retained == 0 && ${GC_MAIN20_KEEP_KV:-0} != 1 ]]; then
     rm -- "$GC_MOE_STRICT_STATE_DIR"/{prefill/,}rank{0..7}.bin
   fi
 done

@@ -42,3 +42,28 @@ def capture_step(engine, arm):
         (raw/f'fine-epoch-{epoch}.json').write_text(json.dumps(dict(id=tag, epochs=[epoch], ranks=rows)))
     (raw/'fine.json').write_text(json.dumps(dict(id=tag, epochs=epochs, per_epoch_files=True)))
     return outputs
+
+
+def capture_split_step(engine):
+    """Bracket one real decode step; the split roles and their CTA clocks are joined offline."""
+    raw = Path(os.environ["SM90_WA1_PROFILE_DIR"])
+    raw.mkdir()
+    rpc = engine.collective_rpc
+    before = rpc("_gc_moe_profile_snapshot")
+    starts = {row["next_epoch"] for row in before}
+    if len(starts) != 1 or sorted(row["rank"] for row in before) != list(range(8)):
+        raise ValueError("ranks disagree before the profiled step")
+    start = starts.pop()
+    tag = uuid4().hex
+    rpc("_gc_moe_prof_start", args=(str(raw), tag, False))
+    try:
+        outputs = engine.step()
+    finally:
+        status = rpc("_gc_moe_prof_stop")
+    if len(status) != 8 or not all(row["ok"] for row in status):
+        raise ValueError(f"worker profiler failed: {status}")
+    ranks = rpc("_gc_moe_profile_snapshot", args=(start,))
+    if any(row["next_epoch"] != start + 40 or len(row.get("calls", [])) != 40 for row in ranks):
+        raise ValueError("expected exactly one 40-layer decode graph")
+    (raw / "capture.json").write_text(json.dumps(dict(id=tag, step=2, first_epoch=start, ranks=ranks)))
+    return outputs

@@ -233,6 +233,19 @@ def _get_or_compile_binaries(key, identity, specs):
 
 
 
+def prepared_split_geometry(layout, tokens):
+    """Read the actual child-node geometry used by the measured split ECO graph."""
+    with COMPILE_LOCK:
+        variants = {
+            tuple((b.role, b.grid, b.threads) for b in prepared.binaries)
+            for (config, cached_layout, *_), prepared in _CACHE.items()
+            if config.tokens == tokens and cached_layout == layout and prepared.plan_slack is not None
+        }
+    if len(variants) != 1:
+        raise ValueError(f'ambiguous prepared split role geometry for {tokens} tokens: {variants}')
+    return {role: (grid, threads) for role, grid, threads in variants.pop()}
+
+
 def prepared_matrix_price(layout, tokens):
     """Report the mode and actual role-5 constexpr prepared for this measured batch."""
     with COMPILE_LOCK:

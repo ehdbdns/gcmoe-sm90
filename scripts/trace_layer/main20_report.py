@@ -55,10 +55,10 @@ def metrics(counts, spans, *, steps=None):
     )
 
 
-def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False):
+def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_wa=2):
     run = load(directory / "run.json")
     eco = arm.startswith("eco")
-    wa = 2 if linear_ep8 else int(arm == "eco_linear_wa1")
+    wa = ep8_wa if linear_ep8 else int(arm == "eco_linear_wa1")
     mode = 0 if linear_ep8 or arm in ("eco_linear", "eco_linear_wa1") else 2
     expected_price = dict(mode=mode, slack=90 + wa if mode == 0 else 11469) if eco else None
     require(

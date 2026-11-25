@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Full-model four-arm groups on the shared H20 node.
 set -eo pipefail
-unset GC_MOE_EP8_LINEAR SM90_LINEAR_WA_PAIR SM90_SIX_ARM SM90_IR_REFERENCE
+unset GC_MOE_EP8_LINEAR SM90_LINEAR_WA_PAIR SM90_SIX_ARM SM90_IR_REFERENCE SM90_SHARED_FIRST_WA1 SM90_WA1_PROFILE_DIR
 if [[ ${1:-} == --fine-bs512-1024 ]]; then
   shift
   batches=(512 1024)
@@ -9,12 +9,14 @@ else
   if [[ ${1:-} == --linear-ep8 ]]; then shift; fi
   export GC_MOE_EP8_LINEAR=1 GC_PREFILL_MARGIN=256
   batches=(32 64 128 256 512 1024)
-  if [[ ${1:-} == --ir-reference ]]; then
+  if [[ ${1:-} == --shared-first-wa1 ]]; then
+    batches=(256 512 1024); export SM90_SHARED_FIRST_WA1=1; shift
+  elif [[ ${1:-} == --ir-reference ]]; then
     [[ ${2:-} =~ ^(32|64|128|256|512|1024)$ ]] || exit 2
     batches=("$2"); export SM90_IR_REFERENCE=1; shift 2
   fi
 fi
-[[ $# == 1 ]] || { echo "usage: run_full_model_four.sh [--linear-ep8|--fine-bs512-1024] JOB_DIRECTORY" >&2; exit 2; }
+[[ $# == 1 ]] || { echo "usage: run_full_model_four.sh [--linear-ep8|--fine-bs512-1024|--shared-first-wa1] JOB_DIRECTORY" >&2; exit 2; }
 cd "$(git rev-parse --show-toplevel)"
 job=$(realpath -m "$1")
 mkdir -p "$job"
@@ -23,6 +25,13 @@ if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then
   touch "$job/ir-reference"
 else
   test ! -e "$job/ir-reference"
+fi
+if [[ -f "$job/measurement.sha" ]]; then
+  mode=0
+  if [[ -e $job/shared-first-wa1 ]]; then mode=1; fi
+  [[ $mode == ${SM90_SHARED_FIRST_WA1:-0} ]] || exit 2
+elif [[ ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then
+  touch "$job/shared-first-wa1"
 fi
 exec 8>"$job/launcher.lock"
 flock -n 8 || { echo "job already active" >&2; exit 2; }
@@ -96,7 +105,7 @@ for bs in "${batches[@]}"; do
   fi
 done
 if (( failed )); then exit "$failed"; fi
-if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then exit 0; fi
+if [[ ${SM90_IR_REFERENCE:-0} == 1 || ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then exit 0; fi
 python3 - "$job" "${batches[@]}" <<'PY'
 import csv, pathlib, sys
 job = pathlib.Path(sys.argv[1])

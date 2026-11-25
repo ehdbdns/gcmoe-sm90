@@ -2462,6 +2462,9 @@ def _install_worker_rpc() -> None:
                 return dict(out, error=f'epoch advance {advanced} outside the trace ring capacity')
             stamps = buf.pull_tl.view(256, -1).cpu().tolist()
             counts = buf.profile_slot_counts.cpu().tolist()
+            if os.getenv("SM90_WA1_PROFILE_DIR"):
+                from gc_moe.jit_kernels.impls.sm90_fp8_fp4_gc_moe import prepared_split_geometry
+                out["roles"] = prepared_split_geometry(buf.layout, int(os.environ["GC_MOE_MATRIX_BS"]))
             out['calls'] = []
             for epoch in range(first_epoch, next_epoch):
                 slot = epoch % 256

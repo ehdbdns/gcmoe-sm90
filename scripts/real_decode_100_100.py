@@ -668,7 +668,8 @@ def main():
                         ap.error(f'{matrix}: incorrect active-slot weight')
                 expected_mode = '0' if matrix in ('eco_linear', 'eco_linear_wa1') else '2'
                 if os.getenv('GC_MOE_EP8_LINEAR') == '1':
-                    if matrix not in ('vanilla', 'random', 'rr', 'eco') or os.getenv('GC_MOE_ECO_WA') != '2':
+                    expected_wa = '1' if os.getenv('SM90_SHARED_FIRST_WA1') == '1' else '2'
+                    if matrix not in ('vanilla', 'random', 'rr', 'eco') or os.getenv('GC_MOE_ECO_WA') != expected_wa:
                         ap.error('invalid linear EP8 arm or active-slot weight')
                     expected_mode = '0'
                 if os.getenv('GC_MOE_ECO_COSTFN') != expected_mode:
@@ -904,7 +905,10 @@ def main():
         t0 = time.perf_counter()
         last = t0
         for i in range(1, n + 1):
-            if capture and i == 3:
+            if capture and i == 3 and os.getenv("SM90_WA1_PROFILE_DIR"):
+                from trace_layer.bs256_capture import capture_split_step
+                _collect(capture_split_step(engine))
+            elif capture and i == 3:
                 from trace_layer.bs256_capture import capture_step
                 _collect(capture_step(engine, matrix))
             elif host is None:
@@ -1069,7 +1073,7 @@ def main():
                     calls["exclusive_host"] = install(stack, engine, host)
                 elapsed = time_window(steps, blocks, host)
         else:
-            elapsed = time_window(steps, blocks, capture=phase == "measure" and os.getenv("GC_BS256_TRACE_DIR"),
+            elapsed = time_window(steps, blocks, capture=phase == "measure" and (os.getenv("GC_BS256_TRACE_DIR") or os.getenv("SM90_WA1_PROFILE_DIR")),
                                   check_first=phase == "stats" and requires_layer_aligned_warmup())
         rec['on'] = False
         if (rec['gen_tokens'] != [nseq]*steps or rec['ctx_tokens'] != [0]*steps
