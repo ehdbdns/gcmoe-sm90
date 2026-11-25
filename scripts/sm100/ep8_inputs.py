@@ -21,6 +21,43 @@ def compact(value):
     return json.dumps(value, separators=(",", ":")).encode()
 
 
+def stride_sample(pool, count):
+    if count >= len(pool):
+        return list(pool)
+    step = len(pool) / count
+    return [pool[min(len(pool) - 1, int(i * step))] for i in range(count)]
+
+
+def select_prompts(pools, count):
+    take = max(1, count // len(pools))
+    queues = [stride_sample(pool, min(take, len(pool))) for pool in pools]
+    got = sum(map(len, queues))
+    if got < count:
+        for index, pool in enumerate(pools):
+            extra = min(count - got, len(pool))
+            if extra > 0:
+                queues[index].extend(stride_sample(pool, extra))
+                got += extra
+            if got >= count:
+                break
+    picked = []
+    cursor = [0] * len(queues)
+    while len(picked) < count:
+        before = len(picked)
+        for index, queue in enumerate(queues):
+            if len(picked) >= count:
+                break
+            if cursor[index] >= len(queue):
+                continue
+            picked.append(queue[cursor[index]])
+            cursor[index] += 1
+        if len(picked) == before:
+            break
+    if len(picked) != count:
+        raise ValueError(f"only {len(picked)} prompts selected, need {count}")
+    return picked
+
+
 def make_prompts(source, root):
     pools = []
     for index, expected in enumerate(FILES, 1):
@@ -31,11 +68,13 @@ def make_prompts(source, root):
         with path.open() as f:
             rows = [(json.loads(line).get("input_ids") or []) for line in f if line.strip()]
         pool = sorted((x for x in rows if 256 <= len(x) <= 2048), key=len)
-        if len(pool) < 256:
-            raise ValueError(f"too few eligible prompts: {path}")
-        pools.append([pool[int(i * (len(pool) / 256))] for i in range(256)])
-    interleaved = [x for pair in zip(*pools, strict=True) for x in pair]
-    for bs, prompts in zip(BATCHES, (pools[0], interleaved, interleaved * 2), strict=True):
+        if not pool:
+            raise ValueError(f"no eligible prompts: {path}")
+        pools.append(pool)
+    # The SM90 six-arm selector evenly strides each file, then fills a short
+    # pool by striding it again rather than rejecting a valid 256-2048 cohort.
+    interleaved = select_prompts(pools, 512)
+    for bs, prompts in zip(BATCHES, (select_prompts(pools[:1], 256), interleaved, interleaved * 2), strict=True):
         payload = compact(prompts)
         if len(prompts) != bs or hashlib.sha256(payload).hexdigest() != PROMPT_HASH[bs]:
             raise ValueError(f"BS{bs} prompt selection differs from SM90")
