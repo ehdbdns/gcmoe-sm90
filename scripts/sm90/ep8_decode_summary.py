@@ -57,9 +57,9 @@ def load(bs, folder):
         fields = [str(bs), label, f"{times[arm]:.2f}", change(pct(times[arm], times["vanilla"])),
                   change(pct(times[arm], times["rr"]))]
         for field, digits in (("token_ir", 3), ("total_m_blocks", 2), ("peak_rank_m_blocks", 2),
-                              ("active_physical_slots", 2), ("m_block_ir", 3),
-                              ("routed_mae_pp", 4), ("graph_mae_pp", 4)):
+                              ("active_physical_slots", 2), ("m_block_ir", 3)):
             fields.append(f"{number(r, field):.{digits}f}")
+        fields.append(f"{number(r, 'routed_mae_pp'):.4f}" if arm == "eco" else "—")
         fields.append(f"{number(auction, 'accepted_per_layer_call'):.2f}" if arm == "eco" else "—")
         table.append("| " + " | ".join(fields) + " |")
     delta = times["eco"] - times["rr"]
@@ -95,9 +95,9 @@ def render():
             notes.append(note)
             rows.extend(table)
     return "\n".join([*notes, "", "## 整模主表", "",
-        "| BS | 臂 | MoE（µs/层） | 相对原生 | 相对 RR | token IR | 总 M 块 | 峰值 rank M 块 | 活跃物理槽 | M 块 IR | routed MAE（百分点） | graph MAE（百分点） | 成交/层调用 |",
-        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|", *rows, "",
-        "每次层调用先取八个 rank 从 graph 起点至 combine 结束的最大跨度，再对 1000 步 × 40 层等权平均。变化为本臂耗时除以同档参考臂耗时再减一，负值表示更快。总 M 块与活跃槽按八卡求和，峰值 M 块按 rank 取最大；IR 为每次层调用的八卡最大值除以均值。MAE 比较各 rank 的预测与实测耗时份额。表中每档四臂的六对对照均满足预热输出一致、正式 top‑1 零差异。"])
+        "| BS | 臂 | MoE（µs/层） | 相对原生 | 相对 RR | token IR | 总 M 块 | 峰值 rank M 块 | 活跃物理槽 | M 块 IR | routed MAE（百分点） | 成交/层调用 |",
+        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|", *rows, "",
+        "每次层调用先取八个 rank 从 graph 起点至 combine 结束的最大跨度，再对 1000 步 × 40 层等权平均。变化为本臂耗时除以同档参考臂耗时再减一，负值表示更快。总 M 块与活跃槽按八卡求和，峰值 M 块按 rank 取最大；IR 为每次层调用的八卡最大值除以均值。routed MAE 仅列 ECO 臂，衡量 plan 预测的各 rank 负载占比与实测 routed 耗时占比之间的平均绝对误差。表中每档四臂的六对对照均满足预热输出一致、正式 top‑1 零差异。"])
 
 
 if __name__ == "__main__":
