@@ -3,8 +3,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'docs/trace_executor_20261119/sm90_bs512_bs1024_full_model_four_v2_results/**'
-      - 'docs/trace_handover_20261119/REPLY_SM90_BS512_BS1024_FULL_MODEL_FOUR_V2.md'
+      - 'docs/trace_executor_20261119/sm90_bs512_bs1024_full_model_four_results/**'
+      - 'docs/trace_handover_20261119/REPLY_SM90_BS512_BS1024_FULL_MODEL_FOUR.md'
       - '.github/workflows/sm90-ep8-note.yml'
   workflow_dispatch:
 
@@ -28,9 +28,9 @@ jobs:
             /scripts/sm90/ep8_decode_summary.py
             /docs/SM90_EP8_DECODE.md
             /docs/trace_executor_20261119/sm90_bs256_main_five_plan_comm_results/delivery/bs256/*.csv
-            /docs/trace_executor_20261119/sm90_bs512_bs1024_full_model_four_v2_results/*.csv
-            /docs/trace_executor_20261119/sm90_bs512_bs1024_full_model_four_v2_results/delivery-*/bs*/*.csv
-            /docs/trace_handover_20261119/REPLY_SM90_BS512_BS1024_FULL_MODEL_FOUR_V2.md
+            /docs/trace_executor_20261119/sm90_bs512_bs1024_full_model_four_results/*.csv
+            /docs/trace_executor_20261119/sm90_bs512_bs1024_full_model_four_results/delivery-*/bs*/*.csv
+            /docs/trace_handover_20261119/REPLY_SM90_BS512_BS1024_FULL_MODEL_FOUR.md
       - name: Verify comparisons and publish the note
         run: |
           set -euo pipefail

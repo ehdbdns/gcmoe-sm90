@@ -7,8 +7,8 @@ from pathlib import Path
 DOCS = Path(__file__).resolve().parents[2] / "docs"
 RESULTS = DOCS / "trace_executor_20261119"
 BS256 = RESULTS / "sm90_bs256_main_five_plan_comm_results/delivery/bs256"
-V2 = RESULTS / "sm90_bs512_bs1024_full_model_four_v2_results"
-REPLY = DOCS / "trace_handover_20261119/REPLY_SM90_BS512_BS1024_FULL_MODEL_FOUR_V2.md"
+V2 = RESULTS / "sm90_bs512_bs1024_full_model_four_results"
+REPLY = DOCS / "trace_handover_20261119/REPLY_SM90_BS512_BS1024_FULL_MODEL_FOUR.md"
 ARMS = {"vanilla": "原生", "random": "随机 + RR", "rr": "EPLB + RR", "eco": "EPLB + ECO"}
 
 
