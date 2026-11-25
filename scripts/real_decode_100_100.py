@@ -65,7 +65,7 @@ def _stride_sample(pool, n):
     return [pool[min(len(pool) - 1, int(i * step))] for i in range(n)]
 
 
-def load_prompts(n, lo, hi):
+def load_prompts(n, lo, hi, *, prefix_tokens=None):
     """Pick `n` prompts with an even length spread, from one or more files.
 
     [DATA-MIX] Two requirements now that warm+measure is 1000+1000 steps:
@@ -128,6 +128,8 @@ def load_prompts(n, lo, hi):
             if cursor[qi] >= len(q):
                 continue
             cand = q[cursor[qi]]
+            if prefix_tokens is not None:
+                cand = cand[:prefix_tokens]
             if budget > 0:
                 need = sum(len(p) + per_step for p in picked) + len(cand) + per_step
                 if need > budget:
@@ -157,9 +159,8 @@ def select_decode_prompts(n, lo, hi):
     if os.getenv('SM90_SIX_ARM') == '1':
         if n != 256 or lo != 256:
             raise ValueError('six-arm run requires BS256 and real 256-token prefixes')
-        # Choose the historical cohort before the length-budget selector runs.
-        # All six consumers read the same first 256 token IDs of these prompts.
-        return [p[:256] for p in load_prompts(n, lo, hi)]
+        # The sampler sorts by original length; charge only the submitted prefix.
+        return load_prompts(n, lo, hi, prefix_tokens=256)
     reference = os.environ.get('GC_REPEAT_BS512_PROMPT_SHA256')
     if not reference:
         return load_prompts(n, lo, hi)
@@ -716,13 +717,26 @@ def main():
     flush = int(os.environ.get('GC_MEASURE_FLUSH', '5'))
     tail_warmup = 2 if a.timing_tail_steps else 0
     extra_steps = flush + tail_warmup + a.timing_tail_steps if a.timing_tail_steps else 0
+    margin = int(os.environ.get('GC_PREFILL_MARGIN', '512'))
+    six_arm = os.getenv('SM90_SIX_ARM') == '1'
+    # Keep historical selection for other small batches; six-arm capacity uses
+    # the same context margin as the engine's max_model_len below.
+    selection_margin = margin if six_arm or (matrix and nseq > 256) else 512
     for _ in range(3):
         tot = sum(len(p) for p in prompts)
         slack = 2 * (-(-tot // chunk)) + 64
         budget = 1 + a.warm_steps + a.measure_steps + slack + extra_steps
-        overhead = budget + int(os.environ.get('GC_PREFILL_MARGIN', '512')) + 64 if matrix and nseq > 256 else budget + 512 + 64
+        overhead = budget + selection_margin + 64
         os.environ['GC_KV_OVERHEAD'] = str(overhead)
-        if sum(len(p) + overhead for p in prompts) <= kv_pool:
+        required_tokens = tot + nseq * overhead
+        if six_arm:
+            if len(prompts) != nseq or any(len(p) != 256 for p in prompts):
+                raise ValueError("six-arm selection requires 256 real 256-token prefixes")
+            print(f'[six-budget] prefixes={nseq} tokens={tot} per_stream_overhead={overhead} '
+                  f'required={required_tokens} limit={kv_pool}', flush=True)
+            if required_tokens > kv_pool:
+                raise ValueError(f'fixed six-arm cohort requires {required_tokens} KV tokens, budget={kv_pool}')
+        if required_tokens <= kv_pool:
             break
         prompts = select_decode_prompts(nseq, a.prefill_lo, a.prefill_hi)
     max_len = max(len(p) for p in prompts)
@@ -735,7 +749,6 @@ def main():
     # 256 -> 188 inside the timed window, so the numbers described a shrinking
     # batch, not a steady 32 streams/rank). The margin keeps every stream alive
     # past the last measured step; it only costs KV space, never GPU time.
-    margin = int(os.environ.get('GC_PREFILL_MARGIN', '512'))
     # [TOKEN-BUDGET] One number drives BOTH the KV reservation
     # (`max_model_len`) and the per-request decode budget (`max_tokens`);
     # they must agree or vLLM truncates one of them.

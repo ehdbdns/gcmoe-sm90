@@ -15,6 +15,16 @@ GC 使用本任务提交的 SM90 kernel，stream 和 M64。fused 臂由 GC 的�
 
 本轮六臂统一采用每 rank 10 GiB KV、512-token prefill chunk 与通信容量、单一 BS256 decode 图。每档使用原数据文件选出的 256 条请求，各取真实前 256 个 token。前后两个千步窗口和 routed 专家数保持完整。缩短提示与缓存配置改变了绝对时延的比较条件，应在本轮内横向比较。Mega 继续用官方的对称工作区；GC 适配器只保留它在 Mega 路径上实际使用的计数、映射和审计视图，跳过四个 GC 专属 L1/L2 激活区。每 rank 实际可用显存以本机运行记录为准。
 
+## 第二次执行的起点
+
+上一份回执 `d80a616` 中，arm0 在模型构造前结束，六个正式臂均未启动。本次用下面命令建立新工作树和新目录。选样现在按实际提交的 256-token 前缀计费，六臂入口和引擎统一使用 64-token margin。arm0 与各消费者应在模型加载前打印：
+
+~~~text
+[six-budget] prefixes=256 tokens=65536 per_stream_overhead=2449 required=692480 limit=740000
+~~~
+
+其中 2449 = 2321（decode 预算）+ 64（margin）+ 64（额外预留）。此处通过后，另从现场日志记录 vLLM 实际 KV 容量和六臂是否进入正式窗口。保留首轮失败回执和目录，使用文末第二次交付路径。
+
 ## 执行一次
 
 1. 取得站点预约，只用同组八张空闲 H20；任何一张被占用就等待，保留调度器的设备掩码。准备本地已验证的模型副本、原数据集、已归档的私有 DeepGEMM wheel 与工具链，以及至少 250 GB 可用的结果盘。默认模型路径为 `/mnt/fuse/models/DeepSeek-V4.1-Flash`，可用 `SM90_LOCAL_MODEL` 指向节点上同版本的本地副本。每臂启动前预热本地权重页缓存。
@@ -43,4 +53,4 @@ exit "$rc"
 - 主表六行列出臂号、后端、shared 执行方、放置、实测 block M、完整 step 的 ms/步、完整 FFN 的 ms/步和 µs/层，以及 token IR、总 M 块、峰值 rank M 块、活跃槽与 M 块 IR。整步为后 1000 次真实 engine.step 的同步墙钟均值。FFN 为模型层的 FFN 入口到返回（shared 已汇合）的设备时钟，每次层调用取最慢 rank，覆盖 40 层 × 1000 步。
 - 每一对报告 256,000 个正式原生 top‑1 的差异数、预热原生输出哈希是否一致、strict 标志及两种耗时变化。百分比是 `100 × (B/A − 1)`，负值表示 B 更快。特别打印原生三对 1→2、1→3、2→3 和 EPLB 三对 5→4、5→6、4→6，统一按标题方向用原始耗时计算。加上 1→5、2→4、3→6 三个 EPLB 收益。原生输出不一致时仅报告固定反馈轨迹下的观测，不计为严格等输出的性能胜负。失败或缺失行写明原因，禁止填 0 替代。
 - 汇总需要覆盖八 rank 的两次 KV 读回、完整路由需求、相同 prompt/反馈/顺序、同策略逐槽 counts、同后端逻辑权重、每 worker 1000 次 FULL replay 和 40 层 shared owner；fused 附 `[six] GC M=64 roles=(1, 4, 8, 2, 3)` 证据。附八卡硬件和空闲记录，以及每臂预热、权重加载、运行秒数和退出码。
-- 结果推至 `docs/trace_executor_20261119/sm90_h20_bs256_mega_gc_six_results/`，回执推至 `docs/trace_handover_20261119/REPLY_SM90_H20_BS256_MEGA_GC_SIX.md`。交付 summary.csv、pairs.csv、verification.json、测量 SHA、JIT 与六臂日志摘要、原始八 rank NPZ 与 run.json 的归档地址及校验和。保留失败日志、原始退出码、实际路径。GPU 阶段完成立即释放预约并确认本任务进程退出，CPU 汇总可在退卡后进行。核验远端交付后清理自己的工作树、可重建缓存与大块临时 KV；共享 wheel、模型和其他用户文件保持原状。
+- 结果推至 `docs/trace_executor_20261119/sm90_h20_bs256_mega_gc_six_v2_results/`，回执推至 `docs/trace_handover_20261119/REPLY_SM90_H20_BS256_MEGA_GC_SIX_V2.md`。交付 summary.csv、pairs.csv、verification.json、测量 SHA、JIT 与六臂日志摘要、原始八 rank NPZ 与 run.json 的归档地址及校验和。保留失败日志、原始退出码、实际路径。GPU 阶段完成立即释放预约并确认本任务进程退出，CPU 汇总可在退卡后进行。核验远端交付后清理自己的工作树、可重建缓存与大块临时 KV；共享 wheel、模型和其他用户文件保持原状。
