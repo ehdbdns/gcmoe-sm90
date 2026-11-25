@@ -136,8 +136,9 @@ def report_six(root):
             check(audit["shared"] == [[owner] * 40] * 8, "shared ownership")
             check(all(audit["warm_native"]), "missing warm native-output hash")
             if arm not in (1, 5):
-                roles = "(1, 4, 8, 2, 3)" if arm in (0, 2, 4) else "(1, 2, 3)"
-                check(f"[six] GC M=64 roles={roles}" in (folder / "runner.log").read_text(), "GC role geometry")
+                roles = ("(4, 1, 8, 2, 3)", "(1, 4, 8, 2, 3)") if arm in (0, 2, 4) else ("(1, 2, 3)",)
+                log = (folder / "runner.log").read_text()
+                check(any(f"[six] GC M=64 roles={order}" in log for order in roles), "GC role geometry")
             if arm:
                 check(0 in audits, "reference validation failed")
                 for k in ("trajectory", "order", "prefill_kv", "stats", "measured", "kv"):

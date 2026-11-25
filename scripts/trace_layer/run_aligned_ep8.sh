@@ -87,6 +87,10 @@ export GC_MOE_PULL_TRACE=1 GC_MOE_ECO_TRACE=1 GC_MOE_FINE_TRACE=0
 export GC_MOE_IR_STEP=0 GC_MEASURE_IR_STEP=0 GC_MEASURE_IR=0 GC_MEASURE_LOAD=0
 if [[ $variant == --study-main20 ]]; then
   export GC_MOE_ECO_COSTFN=2 GC_MOE_EPLB_WINDOW="$window" GC_MOE_STEP_PROFILE=1
+  if [[ ${GC_MOE_EP8_LINEAR:-0} == 1 ]]; then
+    [[ ${SM90_FULL_MODEL_FOUR:-0} == 1 && $GC_MOE_MATRIX_ARM =~ ^(vanilla|random|rr|eco)$ ]] || exit 2
+    export GC_MOE_ECO_COSTFN=0 GC_MOE_ECO_WA=2
+  fi
   export GC_MOE_EPLB_RANDOM_SEED=0
   case "$GC_MOE_MATRIX_ARM" in
     vanilla) export GC_MOE_EPLB=0 GC_MOE_ECO=0 GC_MOE_EPLB_NO_REARRANGE=1 ;;
@@ -130,9 +134,9 @@ else
   GC_MOE_STEP_PROFILE=1 SMOKE_ECO_WB=26 "$GC_ENV/bin/python" scripts/smoke_compile_eco.py \
     2>&1 | tee "$out/compile-aligned.log"
   if [[ ${GC_MOE_SM90_PLAN_DISPATCH:-1} == 1 ]]; then
-    base_roles='[5, 7, 1, 2, 3]'; aligned_roles='[5, 7, 1, 4, 8, 2, 3]'
+    base_roles='[5, 7, 1, 2, 3]'; aligned_roles='[4, 5, 7, 1, 8, 2, 3]'
   else
-    base_roles='[1, 2, 5, 3]'; aligned_roles='[1, 4, 8, 2, 5, 3]'
+    base_roles='[1, 2, 5, 3]'; aligned_roles='[4, 1, 8, 2, 5, 3]'
   fi
   grep -Fq "compiled roles $base_roles" "$out/compile-base.log"
   grep -Fq "compiled roles $aligned_roles" "$out/compile-aligned.log"

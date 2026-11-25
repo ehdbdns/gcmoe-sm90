@@ -39,12 +39,12 @@ for arm in "${arms[@]}"; do
   GC_MOE_ECO_COSTFN="$mode" GC_MOE_LONG_COST=1 GC_MOE_FIXED_DIR="$out" GC_MOE_MATRIX_ARM="$arm" GC_MOE_EPLB_WINDOW=1000 \
   GC_MOE_STEP_PROFILE=1 GC_MOE_ECO_TRACE=1 GC_MOE_PULL_TRACE=1 SMOKE_ECO="$eco" GC_MOE_SM90_SM_REUSE="$reuse" \
     "$py" scripts/smoke_compile_eco.py 2>&1 | tee "$out/compile-$arm.log"
-  roles='[1, 4, 8, 2, 3]'
-  if [[ $eco == 1 ]]; then roles='[1, 4, 8, 2, 5, 3]'; fi
-  if [[ $arm == eco_smr ]]; then roles='[1, 4, 8, 2, 5, 6, 3]'; fi
+  roles='[4, 1, 8, 2, 3]'
+  if [[ $eco == 1 ]]; then roles='[4, 1, 8, 2, 5, 3]'; fi
+  if [[ $arm == eco_smr ]]; then roles='[4, 1, 8, 2, 5, 6, 3]'; fi
   if [[ $eco == 1 && ${GC_MOE_SM90_PLAN_DISPATCH:-1} == 1 ]]; then
-    roles='[5, 7, 1, 4, 8, 2, 3]'
-    if [[ $reuse == 1 ]]; then roles='[5, 7, 1, 4, 8, 2, 6, 3]'; fi
+    roles='[4, 5, 7, 1, 8, 2, 3]'
+    if [[ $reuse == 1 ]]; then roles='[4, 5, 7, 1, 8, 2, 6, 3]'; fi
   fi
   grep -Fq "compiled roles $roles" "$out/compile-$arm.log"
 done

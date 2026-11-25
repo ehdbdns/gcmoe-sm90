@@ -141,9 +141,9 @@ def register_long_rpc(worker_class, get_buffer, modules):
         if hasattr(buf, "ffn_counter"):
             buf.ffn_counter.zero_()
             buf.ffn_stamps.zero_()
-            if phase == "measure":
-                from sm90_eight import count_graph_replays
-                self._finish_replay_count = count_graph_replays(buf)
+        if phase == "measure" and (hasattr(buf, "ffn_counter") or os.getenv("GC_MOE_EP8_LINEAR") == "1"):
+            from sm90_eight import count_graph_replays
+            self._finish_replay_count = count_graph_replays(buf)
         tape.start_phase(phase, rank)
         if phase == "measure":
             reset_order(tape, self.model_runner.model.modules(), DeepseekV4FlashMLAAttention)
@@ -210,12 +210,14 @@ def register_long_rpc(worker_class, get_buffer, modules):
             audit["batch_order"] = ref.batch_hash.hexdigest()
             path = Path(directory) / f"rank{rank}.npz"
             extra = {}
-            if hasattr(buf, "ffn_counter"):
+            if hasattr(self, "_finish_replay_count"):
                 self._finish_replay_count()
+                del self._finish_replay_count
                 audit["full_graph_replays"] = buf.full_replays
-                audit["shared_modules"] = buf.shared_paths
                 if buf.full_replays != tape.steps:
-                    raise ValueError(f"expected {tape.steps} BS256 full graph replays, got {buf.full_replays}")
+                    raise ValueError(f"expected {tape.steps} BS{tape.batch} full graph replays, got {buf.full_replays}")
+            if hasattr(buf, "ffn_counter"):
+                audit["shared_modules"] = buf.shared_paths
                 if buf.ffn_counter.tolist() != [tape.steps] * tape.layers:
                     raise ValueError("model FFN timer missed or duplicated calls")
                 stamps = buf.ffn_stamps.cpu().numpy()

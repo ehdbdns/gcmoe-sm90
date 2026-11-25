@@ -55,11 +55,11 @@ def metrics(counts, spans, *, steps=None):
     )
 
 
-def arm_data(directory, bs, arm, sha, with_linear=False):
+def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False):
     run = load(directory / "run.json")
     eco = arm.startswith("eco")
-    wa = int(arm == "eco_linear_wa1")
-    mode = 0 if arm in ("eco_linear", "eco_linear_wa1") else 2
+    wa = 2 if linear_ep8 else int(arm == "eco_linear_wa1")
+    mode = 0 if linear_ep8 or arm in ("eco_linear", "eco_linear_wa1") else 2
     expected_price = dict(mode=mode, slack=90 + wa if mode == 0 else 11469) if eco else None
     require(
         run["batch"] == bs
@@ -99,6 +99,12 @@ def arm_data(directory, bs, arm, sha, with_linear=False):
         GC_MEASURE_FLUSH="0",
         GC_MOE_SHARED_IN_GC="1",
     )
+    if linear_ep8:
+        fixed.update(GC_MOE_EP8_LINEAR="1", GC_MOE_KV_BYTES=str(20 * 1024**3), GC_MOE_NO_PREFETCH="1",
+                     GC_MOE_EPLB_EXTRA_PER_RANK="8", GC_MOE_EPLB_RANDOM_SEED="0")
+        roles = (4, 5, 7, 1, 8, 2, 3) if eco else (4, 1, 8, 2, 3)
+        marker = f"[ep8] M=64 roles={roles} shared_launch=((4, 2, 0, 1),)"
+        require(marker in (directory / "runner.log").read_text(), f"{arm}: missing shared launch configuration")
     if with_linear:
         fixed.update(
             GC_MOE_MATRIX_SIZE="24",
@@ -146,6 +152,10 @@ def arm_data(directory, bs, arm, sha, with_linear=False):
                             "invalid prefill boundary")
                     control[phase][-1]["prefill_snapshot"] = snap
             if phase == "measured":
+                if linear_ep8:
+                    require(row["full_graph_replays"] == STEPS, "incomplete measured CUDA Graph replay coverage")
+                    require(isinstance(row["warm_native"], str) and len(row["warm_native"]) == 64,
+                            "missing warm native output digest")
                 require(2 in row["compressed_layers"], "incomplete attention audit")
                 boundary = start["checkpoint"]
                 require(
@@ -211,18 +221,16 @@ def arm_data(directory, bs, arm, sha, with_linear=False):
                 and np.all((t[~active] == -1) & (u[~active] == 0)),
                 "bad timing boundary",
             )
-            lookup = np.array([slot_cost(i) for i in range(int(q.max()) + 1)])
-            fine_price = lookup[q].sum(1)
             linear_price = q.sum(1) + 26 * ((q + 63) // 64).sum(1)
             if wa:
                 linear_price += wa * np.count_nonzero(q, axis=1)
-            price = linear_price if mode == 0 else fine_price
-            require(np.all(clocks[:, 5] == (price if eco else 0)), "incorrect role-5 score")
-            observers.append(
-                np.stack(
-                    [(c - g) / 1000, np.where(active, u - t, 0) / 1000, fine_price, linear_price], axis=-1
-                )
-            )
+            prices = [linear_price]
+            if not linear_ep8:
+                lookup = np.array([slot_cost(i) for i in range(int(q.max()) + 1)])
+                prices.insert(0, lookup[q].sum(1))
+            primary = linear_price if mode == 0 else prices[0]
+            require(np.all(clocks[:, 5] == (primary if eco else 0)), "incorrect role-5 score")
+            observers.append(np.stack([(c - g) / 1000, np.where(active, u - t, 0) / 1000, *prices], axis=-1))
             occupancies.append(q)
             require(greedy.shape == (STEPS, bs) and (greedy >= 0).all(), "incomplete native top-1")
             if native is None:
@@ -273,7 +281,7 @@ def auction_metrics(auction):
     )
 
 
-def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=False):
+def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=False, linear_ep8=False):
     arms = ARMS24 if with_linear and not fine_only else ARMS
     rows = []
     layers = []
@@ -296,7 +304,7 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
     )
     for arm in arms:
         control, placement, native, warm, counts, v, auction, host = arm_data(
-            group / arm, bs, arm, sha, with_linear
+            group / arm, bs, arm, sha, with_linear, linear_ep8
         )
         if four_arms:
             for key in ("GC_MOE_STABLE_PREFILL_TOPK", "GC_MOE_STABLE_DECODE_TOPK", "GC_MOE_ORDER_PREFILL", "GC_MOE_MATRIX_PREFIX_CHECK", "GC_MOE_NO_PREFETCH"):
@@ -357,7 +365,7 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
         spans = v[:, :, :2]
         require(np.all(spans.sum(1) > 0), "empty layer spans")
         actual = spans / spans.sum(1, keepdims=True)
-        prices = v[:, :, 2:4]  # fine and linear prices on this same allocation
+        prices = v[:, :, 2:]
         shares = prices / prices.sum(1, keepdims=True)
         score_index = int(arm == "eco_linear")
         predicted = shares[:, :, score_index]
@@ -381,9 +389,21 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
                 strict_pair_comparable=(diff == 0 and warm == reference_warm),
             )
         )
+        if linear_ep8:
+            active = np.count_nonzero(counts, axis=2)
+            mblocks = ((counts + 63) // 64).sum(2)
+            rows[-1]["peak_rank_active_slots"] = float(active.max(1).mean())
+            # Ties count once per call if any slowest rank satisfies the same condition.
+            mb = mblocks == mblocks.max(1, keepdims=True)
+            slots = active == active.max(1, keepdims=True)
+            for index, bound in enumerate(("graph", "routed")):
+                time = spans[:, :, index]
+                slow = time == time.max(1, keepdims=True)
+                for label, mask in (("m", mb), ("active", slots), ("both", mb & slots)):
+                    rows[-1][f"{bound}_slow_at_{label}_peak_calls"] = int((slow & mask).any(1).sum())
         if fine_only or four_arms:
             rows[-1]["moe_change_pct_vs_vanilla"] = 100 * (rows[-1]["moe_ms_per_step"] / rows[0]["moe_ms_per_step"] - 1)
-        if with_linear:
+        if with_linear and not linear_ep8:
             rows[-1].update(
                 primary_price=("linear" if score_index else "fine"),
                 auction_slack=(90 if score_index else 11469) if auction is not None else None,
@@ -408,6 +428,11 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
                     graph_mae_pp=float(err[:, rank, 0].mean()),
                 )
             )
+        if linear_ep8:
+            for row in rank_errors:
+                del row["graph_mae_pp"]
+                if not arm.startswith("eco"):
+                    row["predicted_pct"] = row["routed_mae_pp"] = None
         write_rows(group / arm / "rank_shares.csv", rank_errors)
         outcomes[arm] = (native, warm, rows[-1])
         peaks = spans[:, :, 0].max(1).reshape(STEPS, LAYERS)
@@ -464,16 +489,33 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
                 e2e_change_pct=100 * (r1["e2e_ms_per_step"] / r0["e2e_ms_per_step"] - 1),
             )
         )
-        if with_linear:
+        if linear_ep8:
+            pairs[-1]["moe_delta_us_per_layer"] = (r1["moe_ms_per_step"] - r0["moe_ms_per_step"]) * 1000 / LAYERS
+            del pairs[-1]["e2e_change_pct"]
+        elif with_linear:
             pairs[-1].update(
                 moe_delta_ms=r1["moe_ms_per_step"] - r0["moe_ms_per_step"],
                 e2e_delta_ms=r1["e2e_ms_per_step"] - r0["e2e_ms_per_step"],
                 routed_mae_delta_pp=r1["routed_mae_pp"] - r0["routed_mae_pp"],
             )
+    if linear_ep8:
+        # The main table follows the EP8 Word report. Keep raw host and device clocks in run.json / NPZ.
+        columns = ("bs", "arm", "moe_us_per_layer", "moe_change_pct_vs_vanilla", "moe_change_pct_vs_rr",
+                   "token_ir", "total_m_blocks", "peak_rank_m_blocks", "active_physical_slots", "m_block_ir",
+                   "routed_mae_pp", "auction_accepted_mean", "peak_rank_active_slots")
+        peak_columns = [k for k in rows[0] if "_slow_at_" in k]
+        for row in rows:
+            if row["arm"] != "eco":
+                row["routed_mae_pp"] = None
+        rows = [{k: row[k] for k in (*columns, *peak_columns)} for row in rows]
+        for row in layers:
+            del row["graph_mae_pp"]
+            if row["arm"] != "eco":
+                row["routed_mae_pp"] = None
     return rows, layers, auctions, pairs
 
 
-def report(root, batches, with_linear=None, fine_only=False, four_arms=False):
+def report(root, batches, with_linear=None, fine_only=False, four_arms=False, linear_ep8=False):
     if with_linear is None:
         source = load(root / f"bs{batches[0]}" / "vanilla" / "run.json")
         fine_only = fine_only or source["controls"].get("GC_MOE_MAIN_FINE_ONLY") == "1"
@@ -484,7 +526,7 @@ def report(root, batches, with_linear=None, fine_only=False, four_arms=False):
     auctions = []
     pairs = []
     for bs in batches:
-        a, b, c, d = analyze_group(root, bs, sha, with_linear, fine_only, four_arms)
+        a, b, c, d = analyze_group(root, bs, sha, with_linear, fine_only, four_arms, linear_ep8)
         rows.extend(a)
         layers.extend(b)
         auctions.extend(c)
@@ -518,5 +560,8 @@ if __name__ == "__main__":
     )
     p.add_argument("--fine-only", action="store_true", help="five BS256 arms with full main24 audits")
     p.add_argument("--four-arms", action="store_true", help="full-model vanilla/random/rr/fine ECO with strict pair audits")
+    p.add_argument("--linear-ep8", action="store_true", help="audit the shared-first four-arm linear EP8 study")
     args = p.parse_args()
-    report(args.root, [args.bs] if args.bs else BATCHES, True if args.four_arms else args.with_linear, args.fine_only, args.four_arms)
+    four = args.four_arms or args.linear_ep8
+    report(args.root, [args.bs] if args.bs else BATCHES, True if four else args.with_linear,
+           args.fine_only, four, args.linear_ep8)

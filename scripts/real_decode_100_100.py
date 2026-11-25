@@ -667,6 +667,10 @@ def main():
                     if os.getenv('GC_MOE_ECO_WA') != str(int(matrix == 'eco_linear_wa1')):
                         ap.error(f'{matrix}: incorrect active-slot weight')
                 expected_mode = '0' if matrix in ('eco_linear', 'eco_linear_wa1') else '2'
+                if os.getenv('GC_MOE_EP8_LINEAR') == '1':
+                    if matrix not in ('vanilla', 'random', 'rr', 'eco') or os.getenv('GC_MOE_ECO_WA') != '2':
+                        ap.error('invalid linear EP8 arm or active-slot weight')
+                    expected_mode = '0'
                 if os.getenv('GC_MOE_ECO_COSTFN') != expected_mode:
                     ap.error(f'{matrix} requires GC_MOE_ECO_COSTFN={expected_mode}')
             if matrix not in arms or int(os.environ['GC_MOE_MATRIX_BS']) != 8*a.seqs_per_rank:
@@ -806,6 +810,16 @@ def main():
         if not recording_tokens:
             fixed = json.loads((Path(fixed_dir) / 'tokens.json').read_text())
         prompt_hash = hashlib.sha256(json.dumps(prompts, separators=(',', ':')).encode()).hexdigest()
+        if os.getenv("GC_MOE_EP8_LINEAR") == "1":
+            if nseq < 256:
+                group = f"main24_cost_results/bs{nseq}"
+            elif nseq == 256:
+                group = "sm90_bs256_main_five_plan_comm_results/delivery/bs256"
+            else:
+                group = f"sm90_bs512_bs1024_full_model_four_results/delivery-{nseq}/bs{nseq}"
+            archive = Path(__file__).resolve().parents[1] / "docs/trace_executor_20261119" / group
+            if prompt_hash != json.loads((archive / "vanilla/run.json").read_text())["prompt_hash"]:
+                raise ValueError(f"BS{nseq}: prompt selection differs from the archived cohort")
         if ((not recording_tokens and (prompt_hash != fixed['prompt_hash']
                                        or set(fixed['tokens']) != {f'req{i}' for i in range(nseq)}))
                 or (not long_cost and (nseq, a.warm_steps, flush, a.measure_steps, tail_warmup, a.timing_tail_steps)

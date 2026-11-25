@@ -25,7 +25,13 @@ case ${GC_MOE_MATRIX_SIZE:-20} in
       [[ $four == 0 && ${GC_MAIN24_SINGLE_BS:-} == 256 && ${GC_STEP_BOUNDARY:-0} == 0 && ${GC_COST_HOST_PROBE:-0} == 0 ]] || exit 2
       export GC_MOE_SM90_PLAN_DISPATCH=1
     elif [[ $four == 1 ]]; then
-      [[ ${GC_MAIN24_SINGLE_BS:-} =~ ^(512|1024)$ && ${GC_STEP_BOUNDARY:-0} == 0 && ${GC_COST_HOST_PROBE:-0} == 0 ]] || exit 2
+      if [[ ${GC_MOE_EP8_LINEAR:-0} == 1 ]]; then
+        [[ ${GC_MAIN24_SINGLE_BS:-} =~ ^(32|64|128|256|512|1024)$ ]] || exit 2
+        report_args+=(--linear-ep8)
+      else
+        [[ ${GC_MAIN24_SINGLE_BS:-} =~ ^(512|1024)$ ]] || exit 2
+      fi
+      [[ ${GC_STEP_BOUNDARY:-0} == 0 && ${GC_COST_HOST_PROBE:-0} == 0 ]] || exit 2
       export GC_MOE_SM90_PLAN_DISPATCH=1
       report_args+=(--four-arms)
     elif [[ ${GC_MOE_MAIN_FINE_ONLY:-0} == 1 ]]; then
@@ -53,7 +59,7 @@ fi
 batches=(32 64 128 256)
 if [[ -n ${GC_MAIN24_SINGLE_BS:-} ]]; then
   test "${GC_MOE_MATRIX_SIZE:-20}" = 24
-  case "$GC_MAIN24_SINGLE_BS" in 256|512|1024|2048) ;; *) exit 2 ;; esac
+  case "$GC_MAIN24_SINGLE_BS" in 32|64|128) test "${GC_MOE_EP8_LINEAR:-0}" = 1 ;; 256|512|1024|2048) ;; *) exit 2 ;; esac
   batches=("$GC_MAIN24_SINGLE_BS")
 fi
 if [[ ${GC_COST_HOST_PROBE:-0} == 1 ]]; then

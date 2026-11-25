@@ -209,10 +209,11 @@ class _ChildGraph:
         # [ECO-SM90] role 5 = ECO plan (one CTA, runs beside dispatch/compute).
         # [SM-REUSE] Enumerating the legal role tuples did not scale: adding
         # role 6 (a compute helper that shares the dispatch context) doubles the
-        # set again. Check the INVARIANTS instead -- dispatch first, finalize
-        # last, everything else unique and known.
+        # set again. Validate the communication prefix, optional shared L1 root and final join.
         _r = tuple(x.role for x in binaries)
         prefix = (5, 7, 1) if owner.plan_dispatch else (1,)
+        if 8 in _r:
+            prefix = (4, *prefix)
         if (_r[:len(prefix)] != prefix or _r[-1] != 3
                 or len(set(_r)) != len(_r)
                 or not set(_r) <= ({1, 2, 3, 4, 5, 6, 7, 8} if owner.plan_dispatch else {1, 2, 3, 4, 5, 6, 8})):

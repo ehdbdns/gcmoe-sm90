@@ -32,8 +32,8 @@ class ValidatedCall:
     eco_plan: bool = False
     eco_logical_experts: int = 0
     eco_max_copies: int = 4
-    eco_wb: int = 0
-    eco_wa: int = 0
+    eco_wb: int = 26
+    eco_wa: int = 2
     eco_rounds: int = 1
     eco_cold_rounds: int = 6
     # [ECO-MEAS] Cost-decomposition gates. Both are COMPILE-TIME constants, so
@@ -124,8 +124,8 @@ def validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,
                           # silently dropped copies (their tokens were pulled by
                           # nobody). EcoMeta holds 32 int16 per expert.
                           buffer.layout.eco_max_copies,
-                          int(os.environ.get('GC_MOE_ECO_WB', '0')),
-                          int(os.environ.get('GC_MOE_ECO_WA', '0')),
+                          int(os.environ.get('GC_MOE_ECO_WB', '26')),
+                          int(os.environ.get('GC_MOE_ECO_WA', '2')),
                           int(os.environ.get('GC_MOE_ECO_ROUNDS', '1')),
                           int(os.environ.get('GC_MOE_ECO_COLD_ROUNDS', '6')),
                           os.environ.get('GC_MOE_ECO_NULL_PLAN') == '1',
