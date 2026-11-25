@@ -1,0 +1,20 @@
+stop_requested_at=2026-11-25T18:07:37+08:00
+--- process_before
+2153811 2153807 admin          57:23 S+   bash /tmp/sm100_run_ep8_onebs.sh /data0/home/admin/workspace/megamoe/ep8-linear-four-XEoItRsN/run
+3342768 sleep 60
+--- gpu_before
+3351983, GPU-4a493131-84b9-4c88-18ee-50fc6f213a36, 261962 MiB
+3351987, GPU-045e62f4-d04d-2f9e-e456-1fb82810029f, 261956 MiB
+3351989, GPU-6b44066c-6712-30f2-02d0-fa0cb91733a3, 261956 MiB
+3351991, GPU-31a509fd-e741-5ab8-b837-443ad986c404, 261956 MiB
+stopped_at=2026-11-25T18:07:42+08:00
+launcher_present=no
+wrapper_processes=3
+--- process_after
+3402854 /bin/bash -c job=/data0/home/admin/workspace/megamoe/ep8-linear-four-XEoItRsN {   echo "stop_requested_at=$(date -Is)"   echo '--- process_before'   ps -o pid=,ppid=,user=,etime=,stat=,args= -p 2153811 2>/dev/null || true   pgrep -P 2153811 -a 2>/dev/null || true   echo '--- gpu_before'   nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader } > "$job/queue-stop.log" tmux send-keys -t sm100-onebs C-c 2>/dev/null || true sleep 3 if kill -0 2153811 2>/dev/null; then kill -TERM 2153811; sleep 3; fi if kill -0 2153811 2>/dev/null; then kill -KILL 2153811; fi tmux kill-session -t sm100-onebs 2>/dev/null || true {   echo "stopped_at=$(date -Is)"   echo "launcher_present=$(kill -0 2153811 2>/dev/null && echo yes || echo no)"   echo "wrapper_processes=$(pgrep -fc 'sm100_run_ep8_onebs.sh /data0/home/admin/workspace/megamoe/ep8-linear-four-XEoItRsN/run' || true)"   echo '--- process_after'   pgrep -af 'sm100_run_ep8_onebs|ep8_matrix.py|ep8_worker' || true   echo '--- gpu_after'   nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader } | tee -a "$job/queue-stop.log"
+3410493 /bin/bash -c job=/data0/home/admin/workspace/megamoe/ep8-linear-four-XEoItRsN {   echo "stop_requested_at=$(date -Is)"   echo '--- process_before'   ps -o pid=,ppid=,user=,etime=,stat=,args= -p 2153811 2>/dev/null || true   pgrep -P 2153811 -a 2>/dev/null || true   echo '--- gpu_before'   nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader } > "$job/queue-stop.log" tmux send-keys -t sm100-onebs C-c 2>/dev/null || true sleep 3 if kill -0 2153811 2>/dev/null; then kill -TERM 2153811; sleep 3; fi if kill -0 2153811 2>/dev/null; then kill -KILL 2153811; fi tmux kill-session -t sm100-onebs 2>/dev/null || true {   echo "stopped_at=$(date -Is)"   echo "launcher_present=$(kill -0 2153811 2>/dev/null && echo yes || echo no)"   echo "wrapper_processes=$(pgrep -fc 'sm100_run_ep8_onebs.sh /data0/home/admin/workspace/megamoe/ep8-linear-four-XEoItRsN/run' || true)"   echo '--- process_after'   pgrep -af 'sm100_run_ep8_onebs|ep8_matrix.py|ep8_worker' || true   echo '--- gpu_after'   nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader } | tee -a "$job/queue-stop.log"
+--- gpu_after
+3351983, GPU-4a493131-84b9-4c88-18ee-50fc6f213a36, 261962 MiB
+3351987, GPU-045e62f4-d04d-2f9e-e456-1fb82810029f, 261956 MiB
+3351989, GPU-6b44066c-6712-30f2-02d0-fa0cb91733a3, 261956 MiB
+3351991, GPU-31a509fd-e741-5ab8-b837-443ad986c404, 261956 MiB
