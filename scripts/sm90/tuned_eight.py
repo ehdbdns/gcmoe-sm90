@@ -1,4 +1,4 @@
-"""Pick the lowest BS256 token IR under the replica budget and verify legacy Mega provenance."""
+"""Manage the BS256 eight-arm fallback and verify legacy Mega provenance."""
 import csv
 import json
 import math
@@ -25,6 +25,36 @@ def select(path):
           "expected exact H20 placement and ordinal RR counters")
     eligible = [(float(r["token_ir"]), int(r["k"])) for r in rows if 1 <= int(r["k"]) < 8]
     return min(eligible)[1]
+
+
+def reduce(root):
+    """Archive four-slot placements after a capacity failure; keep the publisher and native arms."""
+    check((root/"tuned-extra").read_text().strip() == "4", "expected a four-slot attempt")
+    archive = root/"failed-k4"
+    archive.mkdir(exist_ok=True)
+    saved = archive/"capacity-failed-arm"
+    marker = root/"capacity-failed-arm"
+    arm = int((saved if saved.is_file() else marker).read_text())
+    check(4 <= arm <= 8, "replication fallback requires a placement arm failure")
+    status = Path(f"arm{arm}")/"exit"
+    evidence = archive/status if (archive/status).is_file() else root/status
+    check(int(evidence.read_text()) != 0, "failed arm has a successful exit")
+    if not saved.exists():
+        marker.rename(saved)
+
+    (archive/"replay").mkdir(exist_ok=True)
+    files = [Path("replay/placement.json"), Path("replay/placement.tmp"),
+             Path("summary.csv"), Path("pairs.csv"), Path("verification.json")]
+    for arm in range(4, 9):
+        files.extend((Path(f"arm{arm}"), Path(f"replay/{arm}-layout.json")))
+    for rel in files:
+        if (root/rel).exists():
+            check(not (archive/rel).exists(), f"fallback archive already contains {rel}")
+            (root/rel).rename(archive/rel)
+    (archive/"tuned-extra").write_text("4\n")
+    next_budget = root/"tuned-extra.tmp"
+    next_budget.write_text("1\n")
+    next_budget.replace(root/"tuned-extra")
 
 
 def reuse(root):
@@ -62,6 +92,8 @@ if __name__ == "__main__":
     action, path = sys.argv[1:]
     if action == "select":
         print(select(Path(path)))
+    elif action == "reduce":
+        reduce(Path(path))
     elif action == "reuse":
         reuse(Path(path))
     else:

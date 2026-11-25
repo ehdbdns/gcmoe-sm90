@@ -11,7 +11,7 @@ compact=0
 six=0
 unset SM90_PAIRED_SMALL SM90_SIX_ARM SM90_TUNED_EIGHT
 if [[ ${1:-} == --tuned-eight ]]; then
-  [[ ${SM90_TUNED_EXTRA:-} =~ ^[1-7]$ && ${SM90_TUNED_KV:-} =~ ^(10|7|5)$ ]] || exit 2
+  [[ ${SM90_TUNED_EXTRA:-} =~ ^(1|4)$ && ${SM90_TUNED_KV:-} =~ ^(10|7|5)$ ]] || exit 2
   export SM90_SIX_ARM=1 SM90_TUNED_EIGHT=1
   six=1; shift
 fi
@@ -213,6 +213,7 @@ for id in "${arms[@]}"; do
     echo "$id" > "$out/capacity-failed-arm"
     exit 75
   fi
+  if (( code != 0 )) && [[ ${SM90_TUNED_EIGHT:-0} == 1 ]]; then exit "$code"; fi
   if (( (compact || six) && id == publisher && code != 0 )); then exit "$code"; fi
   if [[ $code == 0 ]]; then
     test "$(cat "$dst/execution.sha")" = "$sha"

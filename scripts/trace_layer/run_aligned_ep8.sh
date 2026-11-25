@@ -82,7 +82,7 @@ if [[ ${SM90_SIX_ARM:-0} == 1 ]]; then
     *) exit 2 ;;
   esac
   if [[ ${SM90_TUNED_EIGHT:-0} == 1 && $GC_MOE_MATRIX_ARM != vanilla ]]; then
-    [[ ${SM90_TUNED_EXTRA:-} =~ ^[1-7]$ ]] || exit 2
+    [[ ${SM90_TUNED_EXTRA:-} =~ ^(1|4)$ ]] || exit 2
     export GC_MOE_EPLB_EXTRA_PER_RANK=$SM90_TUNED_EXTRA
   fi
   export GC_MOE_CAPACITY=512 GC_MOE_BOUND=512 MAX_BATCHED=512
