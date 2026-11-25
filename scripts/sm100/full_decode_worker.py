@@ -174,10 +174,12 @@ def setup(worker, root, arm, bs):
     return True
 
 
-def begin(m, phase):
+def begin(m, phase, state=None):
     from stream_checkpoint import checkpoint, named_caches, runner_boundary
     from five_worker import tensor_digest
-    m.phase, m.steps, m.local_slots, m.nclocks = phase, STEPS, SLOTS, CLOCKS
+    state = STATE if state is None else state
+    m.phase, m.steps = phase, STEPS
+    m.local_slots, m.nclocks = getattr(state, "slots", SLOTS), getattr(state, "clocks", CLOCKS)
     if not OBSERVE:
         m.phase_start = m.tokens.positions.clone()
         folder = m.root / f"kv-{phase}"
@@ -188,8 +190,8 @@ def begin(m, phase):
             valid = torch.arange(m.tokens.native.shape[1], device="cuda")[None, :] < m.phase_start[:, None]
             m.prefill_native = tensor_digest(m.tokens.native.masked_fill(~valid, -1))
             m.prefill_diff = {} if m.publisher else {"count": int((valid & (m.tokens.native != m.tokens.table)).sum())}
-        m.raw_ids, m.raw_weights = STATE.ids, STATE.weights
-        m.bank_ids, m.bank_weights = STATE.bank_i, STATE.bank_w
+        m.raw_ids, m.raw_weights = state.ids, state.weights
+        m.bank_ids, m.bank_weights = state.bank_i, state.bank_w
         if not m.publisher:
             ids, weights = torch.load(m.root / f"{phase}-routes-{m.rank}.pt", map_location="cpu", weights_only=True)
             for target, source in ((m.bank_ids, ids), (m.bank_weights, weights)):
@@ -199,10 +201,10 @@ def begin(m, phase):
     if FAIR:
         import fair_boundary
         fair_boundary.boundary(m)
-    m.recv = STATE.recv
-    STATE.cursor.zero_()
-    STATE.tags.fill_(-1)
-    STATE.active.fill_(1)
+    m.recv = state.recv
+    state.cursor.zero_()
+    state.tags.fill_(-1)
+    state.active.fill_(1)
     torch.cuda.synchronize()
     return True
 

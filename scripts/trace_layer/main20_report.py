@@ -396,10 +396,13 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
             # Ties count once per call if any slowest rank satisfies the same condition.
             mb = mblocks == mblocks.max(1, keepdims=True)
             slots = active == active.max(1, keepdims=True)
+            linear_score = counts.sum(2) + 26 * mblocks + 2 * active
+            price_peak = linear_score == linear_score.max(1, keepdims=True)
+            rows[-1]["price_peak_tied_calls"] = int((price_peak.sum(1) > 1).sum())
             for index, bound in enumerate(("graph", "routed")):
                 time = spans[:, :, index]
                 slow = time == time.max(1, keepdims=True)
-                for label, mask in (("m", mb), ("active", slots), ("both", mb & slots)):
+                for label, mask in (("m", mb), ("active", slots), ("both", mb & slots), ("price", price_peak)):
                     rows[-1][f"{bound}_slow_at_{label}_peak_calls"] = int((slow & mask).any(1).sum())
         if fine_only or four_arms:
             rows[-1]["moe_change_pct_vs_vanilla"] = 100 * (rows[-1]["moe_ms_per_step"] / rows[0]["moe_ms_per_step"] - 1)
@@ -503,7 +506,7 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
         columns = ("bs", "arm", "moe_us_per_layer", "moe_change_pct_vs_vanilla", "moe_change_pct_vs_rr",
                    "token_ir", "total_m_blocks", "peak_rank_m_blocks", "active_physical_slots", "m_block_ir",
                    "routed_mae_pp", "auction_accepted_mean", "peak_rank_active_slots")
-        peak_columns = [k for k in rows[0] if "_slow_at_" in k]
+        peak_columns = [k for k in rows[0] if "_slow_at_" in k or k == "price_peak_tied_calls"]
         for row in rows:
             if row["arm"] != "eco":
                 row["routed_mae_pp"] = None

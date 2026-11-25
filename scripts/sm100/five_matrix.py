@@ -16,12 +16,12 @@ FAIR = os.getenv("SM100_FAIR_BOUNDARY") == "1"
 STEPS = 3 if FAIR else (1 if FIRST_DIFF else 1000)
 
 
-def make_plan(root, bs, device="cpu"):
+def make_plan(root, bs, device="cpu", publisher="mega"):
     from gc_moe.eco.meta_sm90 import reorder_single_copy_first
     from gc_moe.eplb.policy import rebalance_experts_global
 
     hist = np.concatenate(
-        [np.load(root / "mega" / f"stats-rank{r}.npz")["counts"] for r in range(8)],
+        [np.load(root / publisher / f"stats-rank{r}.npz")["counts"] for r in range(8)],
         axis=2,
     )
     assert hist.shape == (1000, 40, 384)

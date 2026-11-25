@@ -1,0 +1,113 @@
+diff --git a/gc_moe/eco/eco_unit_auction.cuh b/gc_moe/eco/eco_unit_auction.cuh
+index de23c4e..e52f114 100644
+--- a/gc_moe/eco/eco_unit_auction.cuh
++++ b/gc_moe/eco/eco_unit_auction.cuh
+@@ -277,6 +277,7 @@
+             milestone(74 + k);
+         // (F1) offers grouped by receiver (segments in key-free order; ckey / csh space: keys / adds)
+         const int noff = s_noff;
++        if (ECO_MATRIX_AUDIT && stats != nullptr && tid == 0) stats[1] += noff;
+         uint64_t* const gkey = ckey;
+         int* const gadd = csh;
+         int rb_lo = 0, rb_hi = 0;   // exclusive prefix of the receiver counts, ranks lane and lane + 32
+@@ -504,6 +505,7 @@
+             milestone(27);
+         // (F1) offers grouped by receiver (ckey / csh space: keys / adds); the next round's candidates reset after
+         const int noff = s_noff;
++        if (ECO_MATRIX_AUDIT && stats != nullptr && tid == 0) stats[1] += noff;
+         uint64_t* const gkey = kc;
+         int* const gadd = csh;
+         int rb_lo = 0, rb_hi = 0;
+diff --git a/gc_moe/eco/eco_unit_kernel.cu b/gc_moe/eco/eco_unit_kernel.cu
+index 8ea81d4..9cc21a2 100644
+--- a/gc_moe/eco/eco_unit_kernel.cu
++++ b/gc_moe/eco/eco_unit_kernel.cu
+@@ -884,6 +884,7 @@ eco_plan_kernel(const int* meta, uint8_t* buffer, uint16_t* state, int* stats, c
+         reinterpret_cast<uint32_t*>(buffer + OFF_ECO_TRACE_RING)[entry * 8 + 3] = static_cast<uint32_t>(since);
+ #endif
+     }
++    if (ECO_MATRIX_AUDIT && stats != nullptr && tid == rank) stats[4] = T[tid];
+     // ---- next call's warm state (after the release, off the critical path): this plan's quotas of the replicated
+     // slots, then the counts
+     if (state != nullptr) {
+diff --git a/gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py b/gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py
+index 427a5c7..9b5a246 100644
+--- a/gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py
++++ b/gc_moe/jit_kernels/impls/sm100_fp8_fp4_gc_moe.py
+@@ -556,11 +556,10 @@ def prepare_role_binaries(config, y: torch.Tensor,
+             raise ValueError('ECO state must be int16 [physical + logical experts]')
+     if context is None:
+         context = get_context()
+-    # ECO: the plan CTA takes one cluster (two SMs) of the compute partition and dispatch keeps its whole partition
+-    # (one dispatch SM costs far more than one compute cluster, measured on B300 and L20)
+-    _eco_helper = eco and os.environ.get('GC_MOE_ECO_HELPER') == '1'
+-    dispatch_sms = context.dispatch_sms
+-    compute_sms = context.compute_sms - 2 if eco else context.compute_sms
++    # Keep the full two-CTA compute clusters and one communication SM for plan.
++    _eco_helper = False
++    dispatch_sms = context.dispatch_sms - int(eco)
++    compute_sms = context.compute_sms
+     device = sym_buffer.buffer.device
+     weight_pairs = (l1_weights, l2_weights)
+     if shared_l1_weights is not None:
+diff --git a/gc_moe/runtime/gc_moe.py b/gc_moe/runtime/gc_moe.py
+index f2814d6..5d60bc7 100644
+--- a/gc_moe/runtime/gc_moe.py
++++ b/gc_moe/runtime/gc_moe.py
+@@ -204,18 +204,16 @@ class _ChildGraph:
+         self.executable = None
+         self.kernels = []
+         self.arguments = tuple(arguments)
+-        # Role contexts: dispatch on the communication partition, compute and finalize on the compute partition.
+-        # The ECO plan (one CTA) shares the compute partition: with ECO, compute launches one cluster fewer than
+-        # the partition's SMs, which leaves the plan its own SM. The plan is launched first: dispatch and compute
+-        # wait for its counts and quotas.
+-        # Finalize depends on every other role; the others run concurrently.
+-        role_context = {1: 0, 2: 1, 3: 1, 4: 1, 5: 1}
+-        roles_order = (4, 1, 2, 5, 3) if 5 in roles else (4, 1, 2, 3)
++        # EP8: compute starts the native fused shared schedule. A launch-order
++        # edge permits communication to overlap it; a completion edge would deadlock.
++        if 5 in roles:
++            raise ValueError("the EP8 four-arm configuration disables the helper")
++        role_context = {1: 0, 2: 1, 3: 1, 4: 0}
++        roles_order = (2, 4, 1, 3)
+         order = [index for role in roles_order for index, x in enumerate(binaries) if x.role == role]
+         try:
+             self.graph = _ok(cu.cuGraphCreate(0))
+             nodes = []
+-            plan_node = None
+             for index in order:
+                 binary = binaries[index]
+                 loaded = owner._get_loaded_kernel(binary)
+@@ -234,20 +232,24 @@ class _ChildGraph:
+                 params.kernel.blockDimY = params.kernel.blockDimZ = 1
+                 params.kernel.sharedMemBytes = binary.smem_bytes
+                 params.kernel.kernelParams = arguments[index].pointer
+-                # The tail helper (role 5) launches when the plan CTA exits and its SMs free up;
+-                # finalize still depends on every other role.
+-                dependencies = list(nodes) if binary.role == 3 else \
+-                    ([plan_node] if binary.role == 5 and plan_node is not None else [])
+-                node = _ok(cu.cuGraphAddNode(self.graph, dependencies, None,
++                dependencies = list(nodes) if binary.role == 3 else []
++                edges = None
++                if binary.role in (4, 1):
++                    edge = cu.CUgraphEdgeData()
++                    edge.from_port, edge.to_port, edge.type = 2, 0, 1
++                    dependencies, edges = [nodes[0]], [edge]
++                node = _ok(cu.cuGraphAddNode(self.graph, dependencies, edges,
+                                              len(dependencies), params))
+-                if binary.role == 4:
+-                    plan_node = node
+                 if binary.role in (2, 5):
+                     attr = cu.CUkernelNodeAttrValue()
+                     attr.clusterDim.x, attr.clusterDim.y, attr.clusterDim.z = 2, 1, 1
+                     _ok(cu.cuGraphKernelNodeSetAttribute(
+                         node, cu.CUkernelNodeAttrID.CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION, attr))
+                 nodes.append(node)
++            # Persist actual grids/contexts for the executor report; independent
++            # of layer addresses and used only outside timed replay.
++            owner.ep8_roles = [(binaries[i].role, role_context[binaries[i].role], binaries[i].grid)
++                               for i in order]
+             if not torch.cuda.is_current_stream_capturing():
+                 self.instantiate()
+         except Exception:

@@ -12,7 +12,9 @@ import torch
 
 DIRECT = os.getenv("SM100_DIRECT_512") == "1"
 
-if os.getenv("SM100_FORMAL_512") and not DIRECT and (os.getenv("SM100_NATIVE_GREEDY") != "1" or os.getenv("SM100_FAIR_BOUNDARY") == "1"):
+CHECKPOINT_AUDIT = bool(os.getenv("SM100_FORMAL_512")) or os.getenv("SM100_EP8_LINEAR_FOUR") == "1"
+
+if CHECKPOINT_AUDIT and not DIRECT and (os.getenv("SM100_NATIVE_GREEDY") != "1" or os.getenv("SM100_FAIR_BOUNDARY") == "1"):
     from stream_checkpoint import install_cache_names
     install_cache_names()
 
@@ -356,7 +358,7 @@ class FiveWorker:
                 batch_order=self.tokens.batch_hash.hexdigest(),
                 block_m=int(self.bm),
             )
-            if os.getenv("SM100_FORMAL_512"):
+            if CHECKPOINT_AUDIT:
                 offsets = self.phase_start[:, None] + torch.arange(STEPS, device="cuda")
                 window = self.tokens.native.gather(1, offsets)
                 assert window.shape == (self.bs, STEPS) and (window >= 0).all()
