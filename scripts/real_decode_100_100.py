@@ -671,7 +671,7 @@ def main():
                     expected_wa = '1' if os.getenv('SM90_SHARED_FIRST_WA1') == '1' else '2'
                     if matrix not in ('vanilla', 'random', 'rr', 'eco') or os.getenv('GC_MOE_ECO_WA') != expected_wa:
                         ap.error('invalid linear EP8 arm or active-slot weight')
-                    expected_mode = '0'
+                    expected_mode = '2' if os.getenv('SM90_FINE_WA1_REFERENCE') and matrix == 'eco' else '0'
                 if os.getenv('GC_MOE_ECO_COSTFN') != expected_mode:
                     ap.error(f'{matrix} requires GC_MOE_ECO_COSTFN={expected_mode}')
             if matrix not in arms or int(os.environ['GC_MOE_MATRIX_BS']) != 8*a.seqs_per_rank:

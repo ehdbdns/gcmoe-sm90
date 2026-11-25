@@ -72,11 +72,11 @@ def linear_peak_metrics(counts, spans, linear_score):
     return peaks
 
 
-def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_wa=2):
+def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_wa=2, ep8_mode=0):
     run = load(directory / "run.json")
     eco = arm.startswith("eco")
     wa = ep8_wa if linear_ep8 else int(arm == "eco_linear_wa1")
-    mode = 0 if linear_ep8 or arm in ("eco_linear", "eco_linear_wa1") else 2
+    mode = ep8_mode if linear_ep8 else (0 if arm in ("eco_linear", "eco_linear_wa1") else 2)
     expected_price = dict(mode=mode, slack=90 + wa if mode == 0 else 11469) if eco else None
     require(
         run["batch"] == bs
@@ -242,9 +242,10 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
             if wa:
                 linear_price += wa * np.count_nonzero(q, axis=1)
             prices = [linear_price]
-            if not linear_ep8:
+            if not linear_ep8 or mode == 2:
                 lookup = np.array([slot_cost(i) for i in range(int(q.max()) + 1)])
-                prices.insert(0, lookup[q].sum(1))
+                fine_price = lookup[q].sum(1)
+                prices = [fine_price] if linear_ep8 else [fine_price, linear_price]
             primary = linear_price if mode == 0 else prices[0]
             require(np.all(clocks[:, 5] == (primary if eco else 0)), "incorrect role-5 score")
             observers.append(np.stack([(c - g) / 1000, np.where(active, u - t, 0) / 1000, *prices], axis=-1))

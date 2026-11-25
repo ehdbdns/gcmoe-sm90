@@ -79,14 +79,21 @@ for bs in "${batches[@]}"; do
   if [[ ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then
     [[ $four == 1 && ${GC_MOE_EP8_LINEAR:-0} == 1 && $bs =~ ^(32|64|128|256|512|1024)$ ]] || exit 2
     ref="$PWD/docs/trace_executor_20261119/sm90_ep8_linear_four_6bs_results/delivery-$bs/bs$bs"
-    previous=$(cat "$ref/state-path.txt")
+    sources=("$ref")
+    if [[ -n ${SM90_FINE_WA1_REFERENCE:-} && -f $SM90_FINE_WA1_REFERENCE/delivery-$bs/SHA256SUMS ]]; then
+      sources=("$SM90_FINE_WA1_REFERENCE/delivery-$bs/bs$bs" "$ref")
+    fi
     replay_files=(stats-rank{0..7}.pt measure-rank{0..7}.pt stats-demand.npz tokens.json placement.json)
-    retained=1
-    for file in "${replay_files[@]}"; do [[ -s $previous/replay/$file ]] || retained=0; done
-    for file in {prefill/,}rank{0..7}.{bin,json}; do [[ -s $previous/kv/$file ]] || retained=0; done
+    for source_group in "${sources[@]}"; do
+      previous=$(cat "$source_group/state-path.txt")
+      retained=1
+      for file in "${replay_files[@]}"; do [[ -s $previous/replay/$file ]] || retained=0; done
+      for file in {prefill/,}rank{0..7}.{bin,json}; do [[ -s $previous/kv/$file ]] || retained=0; done
+      if (( retained )); then break; fi
+    done
     if (( retained )); then
       for file in "${replay_files[@]}"; do ln -s "$previous/replay/$file" "$GC_MOE_FIXED_DIR/$file"; done
-      (cd "$GC_MOE_FIXED_DIR" && awk '$2 !~ /-layout.json$/' "$ref/workload.sha256" | sha256sum -c -) || exit 1
+      (cd "$GC_MOE_FIXED_DIR" && awk '$2 !~ /-layout.json$/' "$source_group/workload.sha256" | sha256sum -c -) || exit 1
       for file in {prefill/,}rank{0..7}.json; do cmp "$previous/kv/$file" "$ref/checkpoint/$file"; done
       export GC_MOE_STRICT_STATE_DIR="$previous/kv"
       cp -r "$ref/checkpoint" "$group/"
@@ -97,7 +104,7 @@ for bs in "${batches[@]}"; do
       arms=(vanilla eco)
     fi
     cp "$ref/placement.json" "$group/"
-    if [[ $bs == 256 ]]; then arms+=(eco-profile); fi
+    if [[ $bs == 256 && -z ${SM90_FINE_WA1_REFERENCE:-} ]]; then arms+=(eco-profile); fi
   fi
   if (( ! retained )); then
     "$py" - "$state" "$bs" <<'PY'
@@ -164,7 +171,9 @@ PY
     if [[ $arm == rr || ( $wa_pair == 1 && $arm == eco_linear ) ]]; then cp "$GC_MOE_FIXED_DIR/placement.json" "$group/"; fi
   done
   (cd "$GC_MOE_FIXED_DIR" && sha256sum stats-rank*.pt measure-rank*.pt stats-demand.npz tokens.json placement.json *-layout.json) > "$group/workload.sha256"
-  if [[ ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then
+  if [[ -n ${SM90_FINE_WA1_REFERENCE:-} ]]; then
+    "$py" scripts/sm90/shared_first_fine_report.py --measured "$group" "$ref" "$bs"
+  elif [[ ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then
     if [[ $bs == 256 ]]; then
       "$py" scripts/sm90/shared_first_perfetto.py "$group" --profile --require-replay2
       gzip -n -- "$group"/profile-raw/rank{0..7}.json

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Full-model four-arm groups on the shared H20 node.
 set -eo pipefail
-unset GC_MOE_EP8_LINEAR SM90_LINEAR_WA_PAIR SM90_SIX_ARM SM90_IR_REFERENCE SM90_SHARED_FIRST_WA1 SM90_WA1_PROFILE_DIR
+unset GC_MOE_EP8_LINEAR SM90_LINEAR_WA_PAIR SM90_SIX_ARM SM90_IR_REFERENCE SM90_SHARED_FIRST_WA1 SM90_WA1_PROFILE_DIR SM90_FINE_WA1_REFERENCE
 if [[ ${1:-} == --fine-bs512-1024 ]]; then
   shift
   batches=(512 1024)
@@ -11,15 +11,29 @@ else
   batches=(32 64 128 256 512 1024)
   if [[ ${1:-} == --shared-first-wa1 ]]; then
     export SM90_SHARED_FIRST_WA1=1; shift
+  elif [[ ${1:-} == --shared-first-fine ]]; then
+    [[ $# == 3 ]] || { echo 'expected --shared-first-fine WA1_RESULTS NEW_JOB' >&2; exit 2; }
+    SM90_FINE_WA1_REFERENCE=$(realpath -m "$2")
+    export SM90_FINE_WA1_REFERENCE SM90_SHARED_FIRST_WA1=1
+    shift 2
   elif [[ ${1:-} == --ir-reference ]]; then
     [[ ${2:-} =~ ^(32|64|128|256|512|1024)$ ]] || exit 2
     batches=("$2"); export SM90_IR_REFERENCE=1; shift 2
   fi
 fi
-[[ $# == 1 ]] || { echo "usage: run_full_model_four.sh [--linear-ep8|--fine-bs512-1024|--shared-first-wa1] JOB_DIRECTORY" >&2; exit 2; }
+[[ $# == 1 ]] || { echo "usage: run_full_model_four.sh [--linear-ep8|--fine-bs512-1024|--shared-first-wa1|--shared-first-fine WA1_RESULTS] JOB_DIRECTORY" >&2; exit 2; }
 cd "$(git rev-parse --show-toplevel)"
 job=$(realpath -m "$1")
 mkdir -p "$job"
+exec 8>"$job/launcher.lock"
+flock -n 8 || { echo "job already active" >&2; exit 2; }
+if [[ -n ${SM90_FINE_WA1_REFERENCE:-} ]]; then
+  [[ $job != "$SM90_FINE_WA1_REFERENCE" ]] || exit 2
+  if [[ -e $job/measurement.sha ]]; then test -f "$job/fine-reference"; fi
+  echo "$SM90_FINE_WA1_REFERENCE" > "$job/fine-reference"
+else
+  test ! -e "$job/fine-reference"
+fi
 if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then
   if [[ -e $job/measurement.sha ]]; then test -e "$job/ir-reference"; fi
   touch "$job/ir-reference"
@@ -33,8 +47,6 @@ if [[ -f "$job/measurement.sha" ]]; then
 elif [[ ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then
   touch "$job/shared-first-wa1"
 fi
-exec 8>"$job/launcher.lock"
-flock -n 8 || { echo "job already active" >&2; exit 2; }
 sha=$(git rev-parse HEAD)
 if [[ -f "$job/measurement.sha" ]]; then
   [[ $(cat "$job/measurement.sha") == "$sha" ]] || exit 2
@@ -108,6 +120,9 @@ if (( failed )); then exit "$failed"; fi
 if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then exit 0; fi
 if [[ ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then
   source scripts/env.sh
+  if [[ -n ${SM90_FINE_WA1_REFERENCE:-} ]]; then
+    exec "$GC_ENV/bin/python" scripts/sm90/shared_first_fine_report.py --finish "$job" "$SM90_FINE_WA1_REFERENCE"
+  fi
   exec "$GC_ENV/bin/python" scripts/sm90/shared_first_wa1_report.py --merge "$job"
 fi
 python3 - "$job" "${batches[@]}" <<'PY'

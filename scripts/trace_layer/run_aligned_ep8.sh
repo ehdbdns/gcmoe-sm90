@@ -99,6 +99,9 @@ if [[ $variant == --study-main20 ]]; then
     [[ ${SM90_FULL_MODEL_FOUR:-0} == 1 && $GC_MOE_MATRIX_ARM =~ ^(vanilla|random|rr|eco)$ ]] || exit 2
     export GC_MOE_ECO_COSTFN=0 GC_MOE_ECO_WA=2
     if [[ ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then export GC_MOE_ECO_WA=1; fi
+    if [[ -n ${SM90_FINE_WA1_REFERENCE:-} && $GC_MOE_MATRIX_ARM == eco ]]; then
+      export GC_MOE_ECO_COSTFN=2
+    fi
   fi
   export GC_MOE_EPLB_RANDOM_SEED=0
   case "$GC_MOE_MATRIX_ARM" in
