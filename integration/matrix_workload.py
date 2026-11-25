@@ -118,7 +118,7 @@ def prepare_matrix(worker, buf, modules, ref):
         expected = {"mode": 2, "slack": 11469}
         if arm in ("eco_linear", "eco_linear_wa1"):
             expected = {"mode": 0, "slack": 90 + int(arm == "eco_linear_wa1")}
-        if os.getenv("GC_MOE_EP8_LINEAR") == "1":
+        if os.getenv("GC_MOE_EP8_LINEAR") == "1" or os.getenv("SM90_TUNED_EIGHT") == "1":
             expected = {"mode": 0, "slack": 92}
         if plan_price != expected:
             raise ValueError(f"prepared ECO price {plan_price} differs from assigned {expected}")

@@ -192,14 +192,14 @@ def _eplb_extra_floor(experts: int) -> int:
     """
     per_rank = _eplb_extra_per_rank()
     if per_rank >= 0:
-        return max(1, per_rank * 8)
+        return per_rank * 8
     return max(1, int(round(experts * _eplb_redundancy())))
 
 
 def _physical_slots(experts: int) -> int:
     """Physical slot count: experts + a ~redundancy share, divisible by ranks.
 
-    EPLB needs `physical > experts` so some experts get a second copy; the
+    A zero per-rank override permits pure re-placement with no replicas. The
     kernel walks exactly this many slots per rank. `GC_MOE_EPLB_EXTRA_PER_RANK`
     takes precedence and expresses the share directly per rank.
     """

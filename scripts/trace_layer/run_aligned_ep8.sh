@@ -76,7 +76,15 @@ window=1000
 if [[ ${SM90_SIX_ARM:-0} == 1 ]]; then
   window=${SM90_SIX_STEPS:-1000}
   [[ $variant == --study-main20 && $GC_MOE_MATRIX_BS == 256 ]] || exit 2
-  case "$window/$GC_MOE_KV_BYTES" in 1000/7516192768|500/5368709120) ;; *) exit 2 ;; esac
+  case "$window/$GC_MOE_KV_BYTES" in
+    1000/7516192768|500/5368709120) ;;
+    1000/10737418240) [[ ${SM90_TUNED_EIGHT:-0} == 1 ]] || exit 2 ;;
+    *) exit 2 ;;
+  esac
+  if [[ ${SM90_TUNED_EIGHT:-0} == 1 && $GC_MOE_MATRIX_ARM != vanilla ]]; then
+    [[ ${SM90_TUNED_EXTRA:-} =~ ^[1-7]$ ]] || exit 2
+    export GC_MOE_EPLB_EXTRA_PER_RANK=$SM90_TUNED_EXTRA
+  fi
   export GC_MOE_CAPACITY=512 GC_MOE_BOUND=512 MAX_BATCHED=512
 fi
 if [[ ${SM90_PAIRED_SMALL:-0} == 1 ]]; then
@@ -96,7 +104,9 @@ if [[ $variant == --study-main20 ]]; then
     vanilla) export GC_MOE_EPLB=0 GC_MOE_ECO=0 GC_MOE_EPLB_NO_REARRANGE=1 ;;
     random) export GC_MOE_ECO=0 GC_MOE_SLOT_PLACEMENT=random GC_MOE_EPLB_NO_REARRANGE=1 ;;
     rr) export GC_MOE_ECO=0 ;;
-    eco_linear) test "${GC_MOE_MATRIX_SIZE:-20}" = 24; export GC_MOE_ECO_COSTFN=0 ;;
+    eco_linear)
+      test "${GC_MOE_MATRIX_SIZE:-20}" = 24; export GC_MOE_ECO_COSTFN=0
+      if [[ ${SM90_TUNED_EIGHT:-0} == 1 ]]; then export GC_MOE_ECO_WA=2; fi ;;
     eco_linear_wa1)
       [[ ${SM90_LINEAR_WA_PAIR:-0} == 1 && ${GC_MOE_MATRIX_SIZE:-20} == 24 ]] || exit 2
       export GC_MOE_ECO_COSTFN=0 GC_MOE_ECO_WA=1 ;;

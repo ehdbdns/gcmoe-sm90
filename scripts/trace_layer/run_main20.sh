@@ -85,6 +85,7 @@ PY
     ref=docs/trace_executor_20261119/sm90_main24_stable_decode_bs1024_results/delivery/bs1024
     cp "$ref/placement.json" "$GC_MOE_FIXED_DIR/placement.json"
   fi
+  if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then [[ $four == 1 && ${GC_MOE_EP8_LINEAR:-0} == 1 ]] || exit 2; arms=(vanilla rr); fi
   for arm in "${arms[@]}"; do
     export GC_MOE_MATRIX_ARM="$arm"
     dst="$group/$arm"
@@ -127,7 +128,9 @@ PY
     if [[ $arm == rr || ( $wa_pair == 1 && $arm == eco_linear ) ]]; then cp "$GC_MOE_FIXED_DIR/placement.json" "$group/"; fi
   done
   (cd "$GC_MOE_FIXED_DIR" && sha256sum stats-rank*.pt measure-rank*.pt stats-demand.npz tokens.json placement.json *-layout.json) > "$group/workload.sha256"
-  if [[ $wa_pair == 1 ]]; then
+  if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then
+    test -s "$group/rr/installed-layout.json"
+  elif [[ $wa_pair == 1 ]]; then
     "$py" scripts/trace_layer/linear_wa_report.py "$out"
   elif [[ ${GC_COST_HOST_PROBE:-0} == 1 ]]; then
     "$py" scripts/trace_layer/cost_host_report.py "$group" "$ref"

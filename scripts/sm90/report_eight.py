@@ -17,7 +17,10 @@ def check(condition, message):
         raise ValueError(message)
 
 
-def read_arm(root, arm, batch=256, steps=1000, kv_gib=None):
+NATIVE_SHA = "3c2d8e8556fa7ffddf26a1f51e979dec34d7f61e"
+
+
+def read_arm(root, arm, batch=256, steps=1000, kv_gib=None, extra=8, tuned=False):
     path = root / f"arm{arm}"
     run = json.loads((path / "run.json").read_text())
     check((run["steps"], run["layers"], run["batch"], run["stream"]) == (steps, 40, batch, 1), "window")
@@ -30,10 +33,19 @@ def read_arm(root, arm, batch=256, steps=1000, kv_gib=None):
     if kv_gib is not None:
         check(int(run["controls"]["GC_MOE_KV_BYTES"]) == kv_gib * 1024**3, "common KV budget")
         check(int(run["controls"]["GC_MOE_EPLB_WINDOW"]) == steps, "EPLB statistics window")
-        cache = run["kv_capacity"]
-        required = batch * (705 + 2 * steps)
-        check(cache["tokens"] >= cache["required"] == required and cache["concurrency"] >= batch,
-              "insufficient initialized KV capacity")
+        if arm == 1 and (path/"imported-native").exists() and tuned:
+            check((path/"execution.sha").read_text().strip() == NATIVE_SHA and kv_gib == 10 and steps == 1000,
+                  "invalid legacy native provenance")
+        else:
+            cache = run["kv_capacity"]
+            required = batch * (705 + 2 * steps)
+            check(cache["tokens"] >= cache["required"] == required and cache["concurrency"] >= batch,
+                  "insufficient initialized KV capacity")
+    if tuned and arm >= 4:
+        check(int(run["controls"]["GC_MOE_EPLB_EXTRA_PER_RANK"]) == extra, "wrong EPLB slot budget")
+        if arm >= 7:
+            check(all(r["checkpoint"]["plan_price"] == {"mode": 0, "slack": 92}
+                      for r in run["measured"]["initial"]), "wrong linear ECO price")
     for phase in ("stats", "measured"):
         if kv_gib is not None:
             check(len(run[phase]["ten_step_ms"]) == steps // 10, "incomplete host timing window")
@@ -69,7 +81,7 @@ def read_arm(root, arm, batch=256, steps=1000, kv_gib=None):
     for rank in range(8):
         with np.load(path / f"rank{rank}.npz", allow_pickle=False) as f:
             q = f["counts"]
-            check(q.shape == (calls, 48 if arm <= 3 else 56) and np.all(q >= 0), "physical counts")
+            check(q.shape == (calls, 48 if arm <= 3 else 48 + extra) and np.all(q >= 0), "physical counts")
             epoch = initial[rank]["epoch"] + np.arange(calls)
             check(np.array_equal(f["epochs"], epoch), "epoch gap")
             bounds = f["ffn_ns"]
@@ -105,8 +117,11 @@ def read_arm(root, arm, batch=256, steps=1000, kv_gib=None):
     row.update(batch=batch, step_ms=step_ms, total_m_blocks=blocks.sum(1).mean(), peak_rank_m_blocks=blocks.max(1).mean(),
                m_block_ir=(blocks.max(1) / blocks.mean(1)).mean(), block_m=block_m,
                accepted=int(accepted[:, 2].sum()) if accepted is not None else None)
-    if routed:
-        price = np.array([slot_cost(k) for k in range(int(q.max()) + 1)])[q].sum(-1)
+    if routed and (not tuned or arm >= 7):
+        if tuned:
+            price = q.sum(2) + 26 * ((q+63)//64).sum(2) + 2 * np.count_nonzero(q, axis=2)
+        else:
+            price = np.array([slot_cost(k) for k in range(int(q.max()) + 1)])[q].sum(-1)
         for key, target in (("graph", elapsed), ("routed", np.stack(routed, axis=1))):
             err = np.abs(price / price.sum(1, keepdims=True) - target / target.sum(1, keepdims=True))
             row[key + "_mae_pp"] = 100 * err.mean()
@@ -126,17 +141,25 @@ def report_six(root):
     steps = int(marker.read_text()) if marker.is_file() else 1000
     check(steps in (500, 1000), "six-arm window")
     kv_gib = (7 if steps == 1000 else 5) if marker.is_file() else None
-    for arm in range(7):
+    tuned = (root/"tuned-extra").is_file()
+    extra = int((root/"tuned-extra").read_text()) if tuned else 8
+    if tuned:
+        kv_gib = int((root/"tuned-kv").read_text())
+    for arm in range(9 if tuned else 7):
         try:
             folder = root / f"arm{arm}"
-            check((folder / "execution.sha").read_text().strip() == sha, "measurement revision")
+            provenance = (folder / "execution.sha").read_text().strip()
+            imported = tuned and arm == 1 and (folder/"imported-native").is_file()
+            check(provenance == (NATIVE_SHA if imported else sha), "measurement revision")
             check((folder / "complete").is_file(), "incomplete arm")
-            row, audit, tokens = read_arm(root, arm, steps=steps, kv_gib=kv_gib)
-            owner = "_ZeroShared" if arm in (0, 2, 4) else "DeepseekV4MLP"
+            row, audit, tokens = read_arm(root, arm, steps=steps, kv_gib=kv_gib, extra=extra, tuned=tuned)
+            owner = "_ZeroShared" if arm in (0, 2, 4, 7) else "DeepseekV4MLP"
             check(audit["shared"] == [[owner] * 40] * 8, "shared ownership")
             check(all(audit["warm_native"]), "missing warm native-output hash")
             if arm not in (1, 5):
                 roles = ("(4, 1, 8, 2, 3)", "(1, 4, 8, 2, 3)") if arm in (0, 2, 4) else ("(1, 2, 3)",)
+                if arm in (7, 8):
+                    roles = ("(4, 5, 7, 1, 8, 2, 3)",) if arm == 7 else ("(5, 7, 1, 2, 3)",)
                 log = (folder / "runner.log").read_text()
                 check(any(f"[six] GC M=64 roles={order}" in log for order in roles), "GC role geometry")
             if arm:
@@ -147,8 +170,10 @@ def report_six(root):
                 if (peer in (1, 5)) == (arm in (1, 5)):
                     check(audit["weights"] == prior["weights"], "logical weights differ within backend")
                 if (peer >= 4) == (arm >= 4):
-                    for k in ("counts", "placement", "installed_layout"):
-                        check(audit[k] == prior[k], f"policy mismatch in {k}")
+                    check(audit["placement"] == prior["placement"], "rank placement mismatch")
+                    if (arm >= 7) == (peer >= 7):
+                        for k in ("counts", "installed_layout", "auction"):
+                            check(audit[k] == prior[k], f"policy mismatch in {k}")
             audits[arm], native[arm] = audit, tokens
             if arm:
                 valid[arm] = dict(arm=arm, window_steps=steps, kv_gib_per_rank=kv_gib,
@@ -156,6 +181,9 @@ def report_six(root):
                                   ffn_us_per_layer=25 * row["moe_ms_per_step"],
                                   **{k: row[k] for k in ("block_m", "token_ir", "total_m_blocks",
                                      "peak_rank_m_blocks", "m_block_ir", "active_physical_slots")})
+                if tuned:
+                    valid[arm].update(provenance=provenance, extra_per_rank=extra if arm >= 4 else 0,
+                                      routed_mae_pp=row.get("routed_mae_pp"), accepted=row["accepted"])
         except (OSError, KeyError, ValueError) as exc:
             failures[arm] = str(exc)
     pairs = []
@@ -173,7 +201,7 @@ def report_six(root):
                 writer.writeheader()
                 writer.writerows(records)
     (root / "verification.json").write_text(json.dumps(dict(failures=failures, audits=audits), indent=2))
-    return int(bool(failures) or len(pairs) != 15 or not all(p["strict_pair_comparable"] for p in pairs))
+    return int(bool(failures) or len(pairs) != (28 if tuned else 15) or not all(p["strict_pair_comparable"] for p in pairs))
 
 
 def report(root):

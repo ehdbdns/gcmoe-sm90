@@ -9,7 +9,12 @@ resume=0
 mega_only=0
 compact=0
 six=0
-unset SM90_PAIRED_SMALL SM90_SIX_ARM
+unset SM90_PAIRED_SMALL SM90_SIX_ARM SM90_TUNED_EIGHT
+if [[ ${1:-} == --tuned-eight ]]; then
+  [[ ${SM90_TUNED_EXTRA:-} =~ ^[1-7]$ && ${SM90_TUNED_KV:-} =~ ^(10|7|5)$ ]] || exit 2
+  export SM90_SIX_ARM=1 SM90_TUNED_EIGHT=1
+  six=1; shift
+fi
 if [[ ${1:-} == --six-bs256 ]]; then six=1; export SM90_SIX_ARM=1; shift; fi
 if [[ ${1:-} == --paired-bs32 ]]; then compact=1; export SM90_PAIRED_SMALL=1; shift; fi
 arms=(2 3 4 6 7 8 1 5)
@@ -21,6 +26,10 @@ if (( six )); then
   [[ $SM90_SIX_STEPS == 1000 || $SM90_SIX_STEPS == 500 ]] || exit 2
   publisher=0
   arms=(0 5 1 2 3 4 6)
+  if [[ ${SM90_TUNED_EIGHT:-0} == 1 ]]; then
+    unset GC_MOE_EP8_LINEAR SM90_LINEAR_WA_PAIR
+    arms=(0 1 5 2 3 4 6 7 8)
+  fi
 fi
 if (( compact )); then arms=(2 3 1 6 5); fi
 if [[ ${1:-} == --resume-mega ]]; then
@@ -45,6 +54,14 @@ else
   echo "$compact" > "$out/compact-mode"
   if (( six )); then echo "$SM90_SIX_STEPS" > "$out/six-steps"; fi
 fi
+if [[ ${SM90_TUNED_EIGHT:-0} == 1 ]]; then
+  if (( resume )); then
+    [[ $(cat "$out/tuned-extra") == "$SM90_TUNED_EXTRA" && $(cat "$out/tuned-kv") == "$SM90_TUNED_KV" ]] || exit 2
+  else
+    echo "$SM90_TUNED_EXTRA" > "$out/tuned-extra"
+    echo "$SM90_TUNED_KV" > "$out/tuned-kv"
+  fi
+elif [[ -f "$out/tuned-extra" ]]; then exit 2; fi
 exec 8>"$out/run.lock"
 flock -n 8 || { echo "output directory already in use" >&2; exit 1; }
 persist=/home/admin/workspace/aop_lab/app_source/sm90_persist_20261123
@@ -109,6 +126,7 @@ fi
 if (( six )); then
   export GC_MOE_KV_BYTES=7516192768 GC_KV_BUDGET=740000 GC_PREFILL_MARGIN=64
   if [[ $SM90_SIX_STEPS == 500 ]]; then export GC_MOE_KV_BYTES=5368709120 GC_KV_BUDGET=480000; fi
+  if [[ ${SM90_TUNED_EIGHT:-0} == 1 ]]; then export GC_MOE_KV_BYTES=$((SM90_TUNED_KV * 1024**3)); fi
   unset GC_REPEAT_BS512_PROMPT_SHA256 GC_KV_OVERHEAD GC_PREFILL_SLACK
   unset SM90_COLLECT_SE_ROUTES GC_STEP_BOUNDARY GC_COST_HOST_PROBE GC_BS256_TRACE_DIR
 fi
@@ -144,6 +162,9 @@ if [[ -z ${CUDA_VISIBLE_DEVICES:-} ]]; then export CUDA_VISIBLE_DEVICES="$select
 # Preserve the scheduler-assigned device mask. The runtime gate verifies eight SM90 devices.
 for id in "${arms[@]}"; do
   dst="$out/arm$id"
+  if [[ ${SM90_TUNED_EIGHT:-0} == 1 && $SM90_TUNED_KV == 10 && $id == 1 && ! -e $dst ]]; then
+    "$py" "$launcher_dir/tuned_eight.py" reuse "$out" > "$out/native-reuse.log"
+  fi
   if [[ -f "$dst/complete" ]]; then
     (cd "$dst" && sha256sum --quiet -c artifacts.sha256)
     echo "Reusing completed arm $id"
@@ -167,7 +188,8 @@ for id in "${arms[@]}"; do
   case $id in
     0|1|2|3) export GC_MOE_MATRIX_ARM=vanilla ;;
     4|5|6) export GC_MOE_MATRIX_ARM=rr ;;
-    7|8) export GC_MOE_MATRIX_ARM=eco ;;
+    7|8) export GC_MOE_MATRIX_ARM=eco
+         if [[ ${SM90_TUNED_EIGHT:-0} == 1 ]]; then export GC_MOE_MATRIX_ARM=eco_linear; fi ;;
   esac
   case $id in 1|5) export SM90_EIGHT_BACKEND=mega ;; *) export SM90_EIGHT_BACKEND=gc ;; esac
   case $id in 0|2|4|7) export SM90_EIGHT_SHARED=1 ;; *) export SM90_EIGHT_SHARED=0 ;; esac
