@@ -1,0 +1,12 @@
+Starting BS=512 arm=vanilla
+Starting BS=512 arm=eco
+Traceback (most recent call last):
+  File "/mnt/fuse/sm90-shared-first-wa1-fEYZbAI/code/scripts/sm90/shared_first_wa1_report.py", line 164, in <module>
+    report(Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]))
+  File "/mnt/fuse/sm90-shared-first-wa1-fEYZbAI/code/scripts/sm90/shared_first_wa1_report.py", line 103, in report
+    check_pair(ref / "eco", eco)
+  File "/mnt/fuse/sm90-shared-first-wa1-fEYZbAI/code/scripts/sm90/shared_first_wa1_report.py", line 20, in check_pair
+    require(workload(old) == workload(new), "different routes, feedback, KV, placement or native warm outputs")
+  File "/mnt/fuse/sm90-shared-first-wa1-fEYZbAI/code/scripts/trace_layer/long_cost_report.py", line 22, in require
+    raise ValueError(message)
+ValueError: different routes, feedback, KV, placement or native warm outputs
