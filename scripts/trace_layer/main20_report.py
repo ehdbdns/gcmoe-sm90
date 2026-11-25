@@ -55,6 +55,23 @@ def metrics(counts, spans, *, steps=None):
     )
 
 
+def linear_peak_metrics(counts, spans, linear_score):
+    active = np.count_nonzero(counts, axis=2)
+    mblocks = ((counts + 63) // 64).sum(2)
+    peaks = dict(peak_rank_active_slots=float(active.max(1).mean()))
+    # Ties count once per call if any slowest rank satisfies the same condition.
+    mb = mblocks == mblocks.max(1, keepdims=True)
+    slots = active == active.max(1, keepdims=True)
+    price_peak = linear_score == linear_score.max(1, keepdims=True)
+    peaks["price_peak_tied_calls"] = int((price_peak.sum(1) > 1).sum())
+    for index, bound in enumerate(("graph", "routed")):
+        time = spans[:, :, index]
+        slow = time == time.max(1, keepdims=True)
+        for label, mask in (("m", mb), ("active", slots), ("both", mb & slots), ("price", price_peak)):
+            peaks[f"{bound}_slow_at_{label}_peak_calls"] = int((slow & mask).any(1).sum())
+    return peaks
+
+
 def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_wa=2):
     run = load(directory / "run.json")
     eco = arm.startswith("eco")
@@ -281,6 +298,24 @@ def auction_metrics(auction):
     )
 
 
+def write_auction_detail(directory, bs, arm, auction):
+    write_rows(
+        directory / "auction_phases.csv",
+        [
+            dict(bs=bs, arm=arm, phase=phase, **auction_metrics(part))
+            for phase, part in (
+                ("cold_step_0", auction[:LAYERS]),
+                ("warm_steps_1_onwards", auction[LAYERS:]),
+            )
+        ],
+    )
+    with gzip.open(directory / "auction_calls.csv.gz", "wt", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["step", "layer", *AUCTION])
+        for i, values in enumerate(auction):
+            w.writerow([*divmod(i, LAYERS), *values])
+
+
 def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=False, linear_ep8=False):
     arms = ARMS24 if with_linear and not fine_only else ARMS
     rows = []
@@ -390,20 +425,7 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
             )
         )
         if linear_ep8:
-            active = np.count_nonzero(counts, axis=2)
-            mblocks = ((counts + 63) // 64).sum(2)
-            rows[-1]["peak_rank_active_slots"] = float(active.max(1).mean())
-            # Ties count once per call if any slowest rank satisfies the same condition.
-            mb = mblocks == mblocks.max(1, keepdims=True)
-            slots = active == active.max(1, keepdims=True)
-            linear_score = counts.sum(2) + 26 * mblocks + 2 * active
-            price_peak = linear_score == linear_score.max(1, keepdims=True)
-            rows[-1]["price_peak_tied_calls"] = int((price_peak.sum(1) > 1).sum())
-            for index, bound in enumerate(("graph", "routed")):
-                time = spans[:, :, index]
-                slow = time == time.max(1, keepdims=True)
-                for label, mask in (("m", mb), ("active", slots), ("both", mb & slots), ("price", price_peak)):
-                    rows[-1][f"{bound}_slow_at_{label}_peak_calls"] = int((slow & mask).any(1).sum())
+            rows[-1].update(linear_peak_metrics(counts, spans, prices[:, :, 0]))
         if fine_only or four_arms:
             rows[-1]["moe_change_pct_vs_vanilla"] = 100 * (rows[-1]["moe_ms_per_step"] / rows[0]["moe_ms_per_step"] - 1)
         if with_linear and not linear_ep8:
@@ -452,21 +474,7 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
             )
         if auction is not None:
             auctions.append(dict(bs=bs, arm=arm, **auction_metrics(auction)))
-            write_rows(
-                group / arm / "auction_phases.csv",
-                [
-                    dict(bs=bs, arm=arm, phase=phase, **auction_metrics(part))
-                    for phase, part in (
-                        ("cold_step_0", auction[:LAYERS]),
-                        ("warm_steps_1_onwards", auction[LAYERS:]),
-                    )
-                ],
-            )
-            with gzip.open(group / arm / "auction_calls.csv.gz", "wt", newline="") as f:
-                w = csv.writer(f)
-                w.writerow(["step", "layer", *AUCTION])
-                for i, values in enumerate(auction):
-                    w.writerow([*divmod(i, LAYERS), *values])
+            write_auction_detail(group / arm, bs, arm, auction)
     if four_arms:
         rr_ms = outcomes["rr"][2]["moe_ms_per_step"]
         for row in rows:

@@ -905,10 +905,10 @@ def main():
         t0 = time.perf_counter()
         last = t0
         for i in range(1, n + 1):
-            if capture and i == 3 and os.getenv("SM90_WA1_PROFILE_DIR"):
+            if capture and i == 2 and os.getenv("SM90_WA1_PROFILE_DIR"):
                 from trace_layer.bs256_capture import capture_split_step
-                _collect(capture_split_step(engine))
-            elif capture and i == 3:
+                _collect(capture_split_step(engine, i - 1))
+            elif capture and i == 3 and os.getenv("GC_BS256_TRACE_DIR"):
                 from trace_layer.bs256_capture import capture_step
                 _collect(capture_step(engine, matrix))
             elif host is None:

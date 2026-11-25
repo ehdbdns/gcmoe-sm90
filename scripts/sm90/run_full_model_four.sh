@@ -10,7 +10,7 @@ else
   export GC_MOE_EP8_LINEAR=1 GC_PREFILL_MARGIN=256
   batches=(32 64 128 256 512 1024)
   if [[ ${1:-} == --shared-first-wa1 ]]; then
-    batches=(256 512 1024); export SM90_SHARED_FIRST_WA1=1; shift
+    export SM90_SHARED_FIRST_WA1=1; shift
   elif [[ ${1:-} == --ir-reference ]]; then
     [[ ${2:-} =~ ^(32|64|128|256|512|1024)$ ]] || exit 2
     batches=("$2"); export SM90_IR_REFERENCE=1; shift 2
@@ -105,7 +105,11 @@ for bs in "${batches[@]}"; do
   fi
 done
 if (( failed )); then exit "$failed"; fi
-if [[ ${SM90_IR_REFERENCE:-0} == 1 || ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then exit 0; fi
+if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then exit 0; fi
+if [[ ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then
+  source scripts/env.sh
+  exec "$GC_ENV/bin/python" scripts/sm90/shared_first_wa1_report.py --merge "$job"
+fi
 python3 - "$job" "${batches[@]}" <<'PY'
 import csv, pathlib, sys
 job = pathlib.Path(sys.argv[1])

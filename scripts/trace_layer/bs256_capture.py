@@ -44,7 +44,7 @@ def capture_step(engine, arm):
     return outputs
 
 
-def capture_split_step(engine):
+def capture_split_step(engine, step):
     """Bracket one real decode step; the split roles and their CTA clocks are joined offline."""
     raw = Path(os.environ["SM90_WA1_PROFILE_DIR"])
     raw.mkdir()
@@ -65,5 +65,5 @@ def capture_split_step(engine):
     ranks = rpc("_gc_moe_profile_snapshot", args=(start,))
     if any(row["next_epoch"] != start + 40 or len(row.get("calls", [])) != 40 for row in ranks):
         raise ValueError("expected exactly one 40-layer decode graph")
-    (raw / "capture.json").write_text(json.dumps(dict(id=tag, step=2, first_epoch=start, ranks=ranks)))
+    (raw / "capture.json").write_text(json.dumps(dict(id=tag, step=step, first_epoch=start, ranks=ranks)))
     return outputs

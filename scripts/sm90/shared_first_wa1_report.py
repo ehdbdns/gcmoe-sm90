@@ -8,7 +8,11 @@ import numpy as np
 
 from compare_ep8_linear import workload
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "trace_layer"))
-from main20_report import arm_data, auction_metrics, metrics, require, write_rows
+from main20_report import (LAYERS, RANKS, STEPS, arm_data, auction_metrics, linear_peak_metrics,
+                           metrics, require, write_auction_detail, write_rows)
+
+BATCHES = (32, 64, 128, 256, 512, 1024)
+BASELINE_SHA = "2f70314e2d1948db7e45c0066c1e9099cc3021a7"
 
 
 def check_pair(reference, current, same_wa=False):
@@ -36,42 +40,125 @@ def slow_rank_phases(arm, label):
     clocks = np.stack(clocks, axis=1)
     slowest = (clocks[:, :, 3] - clocks[:, :, 0]).argmax(1)
     bounds = clocks[np.arange(len(clocks)), slowest]
-    require(np.all(np.diff(bounds, axis=1) >= 0), "invalid slow-rank CTA boundaries")
-    before, routed, after = np.diff(bounds, axis=1).mean(0) / 1000
-    return dict(arm=label, graph_to_first_cta_us=before, routed_us=routed,
-                last_cta_to_combine_end_us=after, full_moe_us=before+routed+after)
+    # A rank may finish last in combine even when it received no routed rows.
+    active = bounds[:, 1] != -1
+    require(np.all(bounds[~active, 2] == 0) and np.all(np.diff(bounds[active], axis=1) >= 0),
+            "invalid slow-rank CTA boundaries")
+    before, routed, after = np.diff(bounds[active], axis=1).mean(0) / 1000 if active.any() else (None,) * 3
+    return dict(arm=label, calls_with_routed_work=int(active.sum()), graph_to_first_cta_us=before,
+                routed_us=routed, last_cta_to_combine_end_us=after,
+                full_moe_us=float((bounds[:, 3] - bounds[:, 0]).mean() / 1000))
+
+
+def eco_tables(group, bs, wa, reference_times):
+    arm = group / "eco"
+    sha = (group.parent / "measurement.sha").read_text().strip()
+    if wa == 2:
+        require(sha == BASELINE_SHA, "unexpected baseline measurement SHA")
+    _, _, _, _, counts, v, auction, _ = arm_data(arm, bs, "eco", sha, True, True, ep8_wa=wa)
+    graph, routed, price = v.transpose(2, 0, 1)
+    require(np.all(routed.sum(1) > 0), "empty routed span")
+    graph_share, routed_share, predicted = (100 * arr / arr.sum(1, keepdims=True)
+                                            for arr in (graph, routed, price))
+    errors = np.abs(predicted - routed_share)
+    timing = graph.max(1).reshape(STEPS, LAYERS)
+    us = float(timing.mean())
+    key = dict(bs=bs, arm="eco", wa=wa)
+    summary = metrics(counts, v)
+    summary.pop("moe_ms_per_step")
+    main = dict(**key, moe_us_per_layer=us, moe_change_pct_vs_vanilla=100*(us/reference_times["vanilla"]-1),
+                moe_change_pct_vs_rr=100*(us/reference_times["rr"]-1), **summary,
+                routed_mae_pp=float(errors.mean()), auction_accepted_mean=float(auction[:, 2].mean()),
+                **linear_peak_metrics(counts, v, price))
+    layers = [dict(**key, layer=i, mean_slowest_rank_us=float(timing[:, i].mean()),
+                   routed_mae_pp=float(errors[i::LAYERS].mean())) for i in range(LAYERS)]
+    ranks = [dict(**key, rank=r, predicted_pct=float(predicted[:, r].mean()),
+                  routed_pct=float(routed_share[:, r].mean()), routed_mae_pp=float(errors[:, r].mean()),
+                  graph_pct=float(graph_share[:, r].mean())) for r in range(RANKS)]
+    if wa == 1:
+        write_auction_detail(arm, bs, "eco", auction)
+    return dict(main_table=[main], layers=layers, rank_shares=ranks,
+                auction=[dict(**key, **auction_metrics(auction))]), timing
+
+
+def read_rows(path):
+    with path.open() as f:
+        return list(csv.DictReader(f))
+
+
+def check_archived_tables(ref, tables):
+    for name, rows in tables.items():
+        directory = ref / "eco" if name == "rank_shares" else ref
+        historical = [r for r in read_rows(directory / f"{name}.csv") if r["arm"] == "eco"]
+        require(len(historical) == len(rows), f"archived {name} coverage differs")
+        for old, row in zip(historical, rows):
+            for k, value in old.items():
+                if k != "arm":
+                    require(np.isclose(row[k], float(value), rtol=1e-10, atol=1e-10),
+                            f"archived {name} differs for {k}: {value} vs {row[k]}")
 
 
 def report(group, ref, bs):
     eco = group / "eco"
-    sha = (group.parent / "measurement.sha").read_text().strip()
     check_pair(ref / "eco", eco)
-    _, _, _, _, counts, v, auction, _ = arm_data(eco, bs, "eco", sha, True, True, ep8_wa=1)
-    with (ref / "main_table.csv").open() as source:
-        previous = {r["arm"]: float(r["moe_us_per_layer"]) for r in csv.DictReader(source)}
-    graph, routed, price = v.transpose(2, 0, 1)
-    timing = graph.max(1)
-    us = float(timing.mean())
-    row = metrics(counts, v)
-    row.pop("moe_ms_per_step")
-    row.update(bs=bs, wa=1, wb=26, slack=91, moe_us_per_layer=us, wa2_us_per_layer=previous["eco"],
-               change_pct_vs_wa2=100 * (us / previous["eco"] - 1),
-               change_pct_vs_archived_rr=100 * (us / previous["rr"] - 1),
-               change_pct_vs_archived_vanilla=100 * (us / previous["vanilla"] - 1),
-               routed_mae_pp=float(np.abs(price / price.sum(1, keepdims=True) -
-                                          routed / routed.sum(1, keepdims=True)).mean() * 100),
-               **auction_metrics(auction))
-    write_rows(group / "wa1.csv", [row])
-    write_rows(group / "layers.csv", [dict(bs=bs, layer=i, moe_us=float(x.mean()))
-                                       for i, x in enumerate(timing.reshape(1000, 40).T)])
-    phases = [slow_rank_phases(ref / "eco", "shared_first_wa2"), slow_rank_phases(eco, "shared_first_wa1")]
-    if bs == 256:
-        old = ref.parents[2] / "sm90_bs256_linear_wa_pair_results/delivery/bs256/eco_linear_wa1"
-        phases.insert(0, slow_rank_phases(old, "previous_launch_wa1"))
-    write_rows(group / "slow_rank_phases.csv", phases)
+    for r in range(RANKS):
+        for folder in ("checkpoint", "checkpoint/prefill"):
+            path = Path(folder) / f"rank{r}.json"
+            require(json.loads((ref / path).read_text()) == json.loads((group / path).read_text()),
+                    f"changed request/KV boundary manifest: {path}")
     if bs == 256:
         check_pair(eco, group / "eco-profile", same_wa=True)
 
+    reference_times = {r["arm"]: float(r["moe_us_per_layer"]) for r in read_rows(ref / "main_table.csv")}
+    old, old_times = eco_tables(ref, bs, 2, reference_times)
+    check_archived_tables(ref, old)
+    new, new_times = eco_tables(group, bs, 1, reference_times)
+    for name in old:
+        write_rows(group / f"{name}.csv", old[name] + new[name])
+    before = old["main_table"][0]["moe_us_per_layer"]
+    after = new["main_table"][0]["moe_us_per_layer"]
+    delta = after - before
+    pct = 100 * (after / before - 1)
+    # Use matching decode ordinals. Each block includes all 40 layers of 50 consecutive steps.
+    block_deltas = (new_times - old_times).reshape(20, -1).mean(1)
+    write_rows(group / "comparison.csv", [dict(bs=bs, wa2_us=before, wa1_us=after, wa1_minus_wa2_us=delta,
+               change_pct_vs_wa2=pct, faster_observed_wa="tie" if delta == 0 else (1 if delta < 0 else 2),
+               wa1_faster_layers=int((new_times.mean(0) < old_times.mean(0)).sum()),
+               wa1_faster_50step_blocks=int((block_deltas < 0).sum()))])
+    write_rows(group / "pairs.csv", [dict(bs=bs, arm_a="eco_wa2", arm_b="eco_wa1", native_diff=0,
+               measured_samples=bs*STEPS, warm_native_equal=True, strict_pair_comparable=True,
+               moe_change_pct=pct, moe_delta_us_per_layer=delta)])
+    primary = new["main_table"][0]
+    # Keep the single-arm summary used by the original three-batch handoff.
+    write_rows(group / "wa1.csv", [dict(primary, wb=26, slack=91, wa2_us_per_layer=before,
+               change_pct_vs_wa2=pct, change_pct_vs_archived_rr=primary["moe_change_pct_vs_rr"],
+               change_pct_vs_archived_vanilla=primary["moe_change_pct_vs_vanilla"], **new["auction"][0])])
+    phases = [slow_rank_phases(ref / "eco", "shared_first_wa2"), slow_rank_phases(eco, "shared_first_wa1")]
+    if bs == 256:
+        previous = ref.parents[2] / "sm90_bs256_linear_wa_pair_results/delivery/bs256/eco_linear_wa1"
+        phases.insert(0, slow_rank_phases(previous, "previous_launch_wa1"))
+    write_rows(group / "slow_rank_phases.csv", phases)
+
+
+def merge(job):
+    for name, expected in (("main_table", 2), ("layers", 2*LAYERS), ("rank_shares", 2*RANKS),
+                           ("auction", 2), ("comparison", 1), ("pairs", 1)):
+        merged = []
+        for bs in BATCHES:
+            directory = job / f"delivery-{bs}" / f"bs{bs}"
+            rows = read_rows(directory / f"{name}.csv")
+            require(len(rows) == expected and all(int(r["bs"]) == bs for r in rows),
+                    f"BS{bs}: incomplete {name}")
+            if expected > 1:
+                for wa in (1, 2):
+                    arm_rows = [r for r in rows if int(r["wa"]) == wa]
+                    require(len(arm_rows)*2 == expected, f"BS{bs}: missing wa={wa} in {name}")
+            merged.extend(rows)
+        write_rows(job / f"{name}.csv", merged)
+
 
 if __name__ == "__main__":
-    report(Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]))
+    if sys.argv[1] == "--merge":
+        merge(Path(sys.argv[2]))
+    else:
+        report(Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]))

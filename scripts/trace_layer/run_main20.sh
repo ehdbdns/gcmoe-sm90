@@ -77,7 +77,7 @@ for bs in "${batches[@]}"; do
   mkdir "$GC_MOE_FIXED_DIR" "$GC_MOE_STRICT_STATE_DIR"
   retained=0
   if [[ ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then
-    [[ $four == 1 && ${GC_MOE_EP8_LINEAR:-0} == 1 && $bs =~ ^(256|512|1024)$ ]] || exit 2
+    [[ $four == 1 && ${GC_MOE_EP8_LINEAR:-0} == 1 && $bs =~ ^(32|64|128|256|512|1024)$ ]] || exit 2
     ref="$PWD/docs/trace_executor_20261119/sm90_ep8_linear_four_6bs_results/delivery-$bs/bs$bs"
     previous=$(cat "$ref/state-path.txt")
     replay_files=(stats-rank{0..7}.pt measure-rank{0..7}.pt stats-demand.npz tokens.json placement.json)
@@ -166,7 +166,7 @@ PY
   (cd "$GC_MOE_FIXED_DIR" && sha256sum stats-rank*.pt measure-rank*.pt stats-demand.npz tokens.json placement.json *-layout.json) > "$group/workload.sha256"
   if [[ ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then
     if [[ $bs == 256 ]]; then
-      "$py" scripts/sm90/shared_first_perfetto.py "$group" --profile
+      "$py" scripts/sm90/shared_first_perfetto.py "$group" --profile --require-replay2
       gzip -n -- "$group"/profile-raw/rank{0..7}.json
     fi
     "$py" scripts/sm90/shared_first_wa1_report.py "$group" "$ref" "$bs"
