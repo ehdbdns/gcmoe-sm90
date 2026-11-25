@@ -648,7 +648,7 @@ def main():
     ap.add_argument('--timing-tail-steps', type=int, default=0,
                     help='time additional decode steps in the same process after the aligned trace')
     ap.add_argument('--long-cost-study', action='store_true',
-                    help='one 1000-step EPLB statistics window and one 1000-step paired cost window')
+                    help='one EPLB statistics window followed by an equally long measurement window')
     a = ap.parse_args()
     long_cost = a.long_cost_study
     matrix = os.environ.get('GC_MOE_MATRIX_ARM')
@@ -671,12 +671,13 @@ def main():
                     ap.error(f'{matrix} requires GC_MOE_ECO_COSTFN={expected_mode}')
             if matrix not in arms or int(os.environ['GC_MOE_MATRIX_BS']) != 8*a.seqs_per_rank:
                 ap.error('invalid main table arm or batch')
-        if (any(os.getenv(k) != '1' for k in required)
+        window = int(os.getenv('SM90_SIX_STEPS', '1000')) if os.getenv('SM90_SIX_ARM') == '1' else 1000
+        if (window not in (500, 1000) or any(os.getenv(k) != '1' for k in required)
                 or not os.getenv('GC_MOE_FIXED_DIR') or not os.getenv('GC_MOE_STRICT_STATE_DIR')
                 or a.profile_out or a.profile_aligned_step or a.timing_tail_steps or a.fine_layers
                 or os.getenv('GC_MOE_FINE_TRACE') != ('1' if os.getenv('GC_BS256_TRACE_DIR') else '0') or os.getenv('GC_MEASURE_FLUSH') != '0'
-                or (a.seqs_per_rank not in ((4,8,16,32,64,128,256) if matrix else (32,)) or (a.warm_steps, a.measure_steps) != (1000,1000))):
-            ap.error('long cost study requires the fixed, unprofiled 1000+1000 EP8 configuration')
+                or (a.seqs_per_rank not in ((4,8,16,32,64,128,256) if matrix else (32,)) or (a.warm_steps, a.measure_steps) != (window, window))):
+            ap.error(f'long cost study requires two fixed, unprofiled {window}-step EP8 windows')
     if a.timing_tail_steps < 0 or (a.timing_tail_steps and
             (not a.fine_layers or os.environ.get('VLLM_ENABLE_V1_MULTIPROCESSING') != '0')):
         ap.error('the timing tail requires a fine aligned capture with an in-process EngineCore')
@@ -834,6 +835,15 @@ def main():
 
         if not isinstance(engine.engine_core, InprocClient):
             raise RuntimeError('aligned capture requires driver-stepped EngineCore')
+    if six_arm:
+        cache = engine.engine_core.engine_core.vllm_config.cache_config
+        capacity = cache.kv_cache_size_tokens
+        concurrency = cache.kv_cache_max_concurrency
+        print(f'[six-capacity] tokens={capacity} required={required_tokens} concurrency={concurrency} batch={nseq}', flush=True)
+        if capacity is None or concurrency is None:
+            raise ValueError('vLLM did not report initialized KV capacity')
+        if capacity < required_tokens or concurrency < nseq:
+            raise ValueError('[six-capacity] insufficient KV for the fixed batch')
     # [TOKEN-BUDGET] `max_tokens` must cover EVERY decode step any stream will
     # ever be asked to produce, and chunked prefill makes that more than
     # warm+measure:
@@ -1014,6 +1024,7 @@ def main():
 
     # ---- 2. warm decode: EPLB learning window ----------------------------
     def long_window(phase):
+        steps = a.warm_steps if phase == "stats" else a.measure_steps
         start = engine.collective_rpc('_gc_moe_long_begin', args=(phase,))
         for key in ('running', 'gen_tokens', 'ctx_tokens'):
             rec[key].clear()
@@ -1042,14 +1053,14 @@ def main():
                 if os.getenv("GC_COST_HOST_PROBE") == "1":
                     from cost_host_probe import install
                     calls["exclusive_host"] = install(stack, engine, host)
-                elapsed = time_window(1000, blocks, host)
+                elapsed = time_window(steps, blocks, host)
         else:
-            elapsed = time_window(1000, blocks, capture=phase == "measure" and os.getenv("GC_BS256_TRACE_DIR"),
+            elapsed = time_window(steps, blocks, capture=phase == "measure" and os.getenv("GC_BS256_TRACE_DIR"),
                                   check_first=phase == "stats" and requires_layer_aligned_warmup())
         rec['on'] = False
-        if (rec['gen_tokens'] != [nseq]*1000 or rec['ctx_tokens'] != [0]*1000
-                or any(len(got[rid]) != n+1000 for rid,n in zip(ids,before))):
-            raise ValueError(f'{phase}: expected 1000 full pure-decode steps for all requests')
+        if (rec['gen_tokens'] != [nseq]*steps or rec['ctx_tokens'] != [0]*steps
+                or any(len(got[rid]) != n+steps for rid,n in zip(ids,before))):
+            raise ValueError(f'{phase}: expected {steps} full pure-decode steps for all requests')
         audit = engine.collective_rpc('_gc_moe_long_finish', args=(phase, str(Path(a.output).parent)))
         return dict(ms_per_step=elapsed, ten_step_ms=blocks, initial=start, audit=audit,
                     **({"host_boundary_ns": dict(steps=host, **calls)} if diagnose else {}))
@@ -1100,9 +1111,11 @@ def main():
             raise ValueError('feedback differs from the native linear-arm trajectory')
         result = dict(stats=training, measured=measured, prompt_hash=prompt_hash,
                       output_hash=hashlib.sha256(json.dumps(got, sort_keys=True).encode()).hexdigest(),
-                      prefill_steps=prefill_steps, steps=1000, layers=aligned_layers, batch=nseq,
+                      prefill_steps=prefill_steps, steps=a.measure_steps, layers=aligned_layers, batch=nseq,
                       stream=int(os.environ['GC_MOE_SM90_STREAM_M_BLOCKS']), controls=fixed_controls,
                       cost=int(os.environ['GC_MOE_ECO_COSTFN']), rearranged=rearranged)
+        if six_arm:
+            result['kv_capacity'] = dict(tokens=capacity, required=required_tokens, concurrency=concurrency)
         with Path(a.output).open('x') as f:
             json.dump(result, f)
         return

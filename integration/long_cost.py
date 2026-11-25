@@ -1,4 +1,4 @@
-"""Device-resident controls and window export for the paired 1000-step H20 study."""
+"""Device-resident controls and window export for the paired H20 decode studies."""
 
 import hashlib
 import os
@@ -71,7 +71,7 @@ class LongRouteTape(RouteTape):
             print('[route-diag] pos=%d n=%d epochs_eq=%s layers_eq=%s layer0=%d counts_min=%d ord_ok=%s' % (
                 _pos, len(_e), bool(_t.equal(_e, _exp)), bool(_t.equal(_l, (_e - 1) % self.layers)),
                 _l[0].item(), int(self.counts.min()), _ord), flush=True)
-            raise ValueError("incomplete 1000-step route, layer, epoch or ordinal history")
+            raise ValueError(f"incomplete {self.steps}-step route, layer, epoch or ordinal history")
         bank = {k: getattr(self, k).cpu() for k in ("ids", "weights")}
         if self.publish:
             with self.bank_path.open("xb") as f:
@@ -197,7 +197,7 @@ def register_long_rpc(worker_class, get_buffer, modules):
                     self._gc_reference_tokens.verify_native_prefix("stats", self._stats_token_start)
             self._long_stats_done = True
         elif phase == "measure":
-            idx = tape.epochs.long().remainder(len(tape.ids))
+            idx = tape.epochs.long().remainder(len(buf.long_clocks))
             clocks = buf.long_clocks.index_select(0, idx).cpu().numpy()
             ref = self._gc_reference_tokens
             if publishes_checkpoint():
@@ -216,7 +216,7 @@ def register_long_rpc(worker_class, get_buffer, modules):
                 audit["shared_modules"] = buf.shared_paths
                 if buf.full_replays != tape.steps:
                     raise ValueError(f"expected {tape.steps} BS256 full graph replays, got {buf.full_replays}")
-                if buf.ffn_counter.tolist() != [1000] * tape.layers:
+                if buf.ffn_counter.tolist() != [tape.steps] * tape.layers:
                     raise ValueError("model FFN timer missed or duplicated calls")
                 stamps = buf.ffn_stamps.cpu().numpy()
                 if np.any(stamps[:, :, 1] <= stamps[:, :, 0]) or np.any(stamps[:, :, 0] <= 0):

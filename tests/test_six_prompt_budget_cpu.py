@@ -25,11 +25,18 @@ class SixPromptBudget(unittest.TestCase):
         class EngineReached(Exception):
             pass
 
-        engine = Mock(side_effect=EngineReached)
+        class Inproc:
+            get_output = Mock()
+
+        core = Inproc()
+        cache = SimpleNamespace(kv_cache_size_tokens=None, kv_cache_max_concurrency=None)
+        core.engine_core = SimpleNamespace(vllm_config=SimpleNamespace(cache_config=cache))
+        engine = Mock(return_value=SimpleNamespace(llm_engine=SimpleNamespace(engine_core=core)))
         modules = {
             "vllm_warmup_compat": Mock(), "deepep_compare": Mock(),
-            "vllm": SimpleNamespace(LLM=engine, SamplingParams=object),
-            "vllm.sampling_params": SimpleNamespace(RequestOutputKind=object),
+            "vllm": SimpleNamespace(LLM=engine, SamplingParams=Mock(side_effect=EngineReached)),
+            "vllm.v1.engine.core_client": SimpleNamespace(InprocClient=Inproc),
+            "vllm.sampling_params": SimpleNamespace(RequestOutputKind=SimpleNamespace(DELTA=1)),
             "vllm.config.compilation": SimpleNamespace(CUDAGraphMode=SimpleNamespace(FULL_DECODE_ONLY=1)),
         }
         with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules, modules):
@@ -40,7 +47,7 @@ class SixPromptBudget(unittest.TestCase):
                 "prompt_hash": prompt_hash, "tokens": {f"req{i}": [] for i in range(256)}
             }))
             env = dict(DATASET=str(dataset), MODEL="fixture", MAX_BATCHED="512", GC_PREFILL_MARGIN="64",
-                       SM90_SIX_ARM="1", GC_KV_BUDGET="740000", GC_MOE_KV_BYTES=str(10 * 1024**3),
+                       SM90_SIX_ARM="1",
                        GC_MOE_MATRIX_BS="256", GC_MOE_MATRIX_SIZE="24", GC_MOE_ECO_COSTFN="2",
                        GC_MOE_LONG_COST="1", GC_MOE_ORDER_EXTRA="1", GC_MOE_STEP_PROFILE="1",
                        GC_MOE_SM90_STREAM_M_BLOCKS="1", GC_MOE_FIXED_DIR=tmp, GC_MOE_STRICT_STATE_DIR=tmp,
@@ -51,22 +58,35 @@ class SixPromptBudget(unittest.TestCase):
                 spec = importlib.util.spec_from_file_location("decode", DRIVER)
                 driver = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(driver)
-                for arm in range(7):
-                    os.environ.update(SM90_EIGHT_ARM=str(arm), GC_MOE_MATRIX_ARM="vanilla" if arm < 4 else "rr")
-                    os.environ.pop("GC_KV_OVERHEAD", None)
-                    log = io.StringIO()
-                    with redirect_stdout(log), self.assertRaises(EngineReached):
-                        driver.main()
-                    self.assertIn("per_stream_overhead=2449 required=692480 limit=740000", log.getvalue())
-                    kw = engine.call_args.kwargs
-                    self.assertEqual(kw["max_model_len"], 2705)
-                    self.assertEqual(kw["kv_cache_memory_bytes"], 10 * 1024**3)
-                    self.assertEqual(driver.select_decode_prompts(256, 256, 2048), prefixes)
-                os.environ.pop("GC_KV_OVERHEAD")
-                os.environ["GC_KV_BUDGET"] = "692479"
-                with self.assertRaisesRegex(ValueError, "requires 692480"):
-                    driver.main()
-                self.assertEqual(engine.call_count, 7)
+                for steps, gib, limit in ((1000, 7, 740000), (500, 5, 480000)):
+                    max_len = 705 + 2 * steps
+                    required = 256 * max_len
+                    args[args.index("--warm-steps") + 1] = str(steps)
+                    args[args.index("--measure-steps") + 1] = str(steps)
+                    os.environ.update(SM90_SIX_STEPS=str(steps), GC_KV_BUDGET=str(limit),
+                                      GC_MOE_KV_BYTES=str(gib * 1024**3))
+                    cache.kv_cache_size_tokens, cache.kv_cache_max_concurrency = required, 256
+                    for arm in range(7):
+                        os.environ.update(SM90_EIGHT_ARM=str(arm), GC_MOE_MATRIX_ARM="vanilla" if arm < 4 else "rr")
+                        os.environ.pop("GC_KV_OVERHEAD", None)
+                        log = io.StringIO()
+                        with redirect_stdout(log), self.assertRaises(EngineReached):
+                            driver.main()
+                        self.assertIn(f"per_stream_overhead={max_len-256} required={required} limit={limit}", log.getvalue())
+                        self.assertIn(f"[six-capacity] tokens={required} required={required}", log.getvalue())
+                        self.assertEqual(engine.call_args.kwargs["max_model_len"], max_len)
+                        self.assertEqual(engine.call_args.kwargs["kv_cache_memory_bytes"], gib * 1024**3)
+                        self.assertEqual(driver.select_decode_prompts(256, 256, 2048), prefixes)
+                    with redirect_stdout(io.StringIO()):
+                        for tokens, concurrency in ((required-1, 256), (required, 255)):
+                            cache.kv_cache_size_tokens, cache.kv_cache_max_concurrency = tokens, concurrency
+                            with self.assertRaisesRegex(ValueError, "insufficient KV"):
+                                driver.main()
+                        os.environ.pop("GC_KV_OVERHEAD")
+                        os.environ["GC_KV_BUDGET"] = str(required-1)
+                        with self.assertRaisesRegex(ValueError, f"requires {required}"):
+                            driver.main()
+                self.assertEqual(engine.call_count, 18)
 
 
 if __name__ == "__main__":

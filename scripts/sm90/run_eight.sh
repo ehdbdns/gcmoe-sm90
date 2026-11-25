@@ -16,6 +16,9 @@ arms=(2 3 4 6 7 8 1 5)
 publisher=2
 if (( six )); then
   test "$compact" = 0
+  unset SM90_FULL_MODEL_FOUR SM90_LINEAR_WA_PAIR
+  export SM90_SIX_STEPS=${SM90_SIX_STEPS:-1000}
+  [[ $SM90_SIX_STEPS == 1000 || $SM90_SIX_STEPS == 500 ]] || exit 2
   publisher=0
   arms=(0 5 1 2 3 4 6)
 fi
@@ -33,12 +36,14 @@ out=$(realpath -m "$1")
 if (( resume )); then
   test "$six" = "$(cat "$out/six-mode" 2>/dev/null || echo 0)"
   test "$compact" = "$(cat "$out/compact-mode" 2>/dev/null || echo 0)"
+  if (( six )); then test "$(cat "$out/six-steps")" = "$SM90_SIX_STEPS"; fi
   test "$(cat "$out/measurement.sha")" = "${reference:-$sha}" || { echo "resume revision mismatch" >&2; exit 1; }
 else
   mkdir "$out"
   echo "$sha" > "$out/measurement.sha"
   echo "$six" > "$out/six-mode"
   echo "$compact" > "$out/compact-mode"
+  if (( six )); then echo "$SM90_SIX_STEPS" > "$out/six-steps"; fi
 fi
 exec 8>"$out/run.lock"
 flock -n 8 || { echo "output directory already in use" >&2; exit 1; }
@@ -102,7 +107,8 @@ if (( compact )); then
   export GC_MOE_KV_BYTES=4294967296 GC_MOE_MATRIX_BS=32
 fi
 if (( six )); then
-  export GC_MOE_KV_BYTES=10737418240 GC_KV_BUDGET=740000 GC_PREFILL_MARGIN=64
+  export GC_MOE_KV_BYTES=7516192768 GC_KV_BUDGET=740000 GC_PREFILL_MARGIN=64
+  if [[ $SM90_SIX_STEPS == 500 ]]; then export GC_MOE_KV_BYTES=5368709120 GC_KV_BUDGET=480000; fi
   unset GC_REPEAT_BS512_PROMPT_SHA256 GC_KV_OVERHEAD GC_PREFILL_SLACK
   unset SM90_COLLECT_SE_ROUTES GC_STEP_BOUNDARY GC_COST_HOST_PROBE GC_BS256_TRACE_DIR
 fi
@@ -179,6 +185,11 @@ for id in "${arms[@]}"; do
     for file in run.json rank{0..7}.npz runtime.log status.txt execution.sha failed-command.txt; do
       if [[ -f "$raw/$file" ]]; then cp "$raw/$file" "$dst/"; fi
     done
+  fi
+  # Capacity failures use a fresh common protocol for every arm, outside this directory.
+  if (( six && code != 0 )) && grep -Eq 'torch\.(cuda\.)?OutOfMemoryError: CUDA out of memory|\[six-capacity\] insufficient KV|ValueError: No available memory for the cache blocks|KV cache is needed, which is larger than the available KV cache' "$dst/runner.log"; then
+    echo "$id" > "$out/capacity-failed-arm"
+    exit 75
   fi
   if (( (compact || six) && id == publisher && code != 0 )); then exit "$code"; fi
   if [[ $code == 0 ]]; then

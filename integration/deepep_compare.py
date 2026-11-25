@@ -1476,8 +1476,11 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                     tape_type = LongRouteTape
                 else:
                     tape_type = RouteTape
+                tape_args = {'batch': int(os.environ['GC_MOE_MATRIX_BS'])} if buf.layout.matrix else {}
+                if buf.layout.long_cost and os.getenv('SM90_SIX_ARM') == '1':
+                    tape_args['steps'] = buf.layout.eplb_window
                 buf.fixed_routes = tape_type(buf.buffer.device, buf.num_topk, buf.profile_slot_counts.shape[1],
-                                             **({'batch': int(os.environ['GC_MOE_MATRIX_BS'])} if buf.layout.matrix else {}))
+                                             **tape_args)
                 if os.environ.get('GC_MOE_FIRST_STEP_AUDIT') == '1':
                     from replay_probe import ReplayProbe
                     buf.fixed_routes.first_step_probe = ReplayProbe(
@@ -1725,7 +1728,7 @@ def rearrange_now() -> bool:
     if os.environ.get('GC_MOE_LONG_COST') == '1':
         from pathlib import Path
         from fixed_workload import publishes_checkpoint
-        if hist.shape != (1000, 40, experts) or not torch.all(hist.sum(-1) == buf.fixed_routes.batch * 6 * ranks):
+        if hist.shape != (buf.fixed_routes.steps, 40, experts) or not torch.all(hist.sum(-1) == buf.fixed_routes.batch * 6 * ranks):
             raise ValueError('EPLB requires one full logical histogram per decode step and layer')
         if matrix:
             from fixed_workload import digest

@@ -17,21 +17,31 @@ def check(condition, message):
         raise ValueError(message)
 
 
-def read_arm(root, arm, batch=256):
+def read_arm(root, arm, batch=256, steps=1000, kv_gib=None):
     path = root / f"arm{arm}"
     run = json.loads((path / "run.json").read_text())
-    check((run["steps"], run["layers"], run["batch"], run["stream"]) == (1000, 40, batch, 1), "window")
+    check((run["steps"], run["layers"], run["batch"], run["stream"]) == (steps, 40, batch, 1), "window")
     check(run["rearranged"] == (arm >= 4), "placement treatment")
     data, widths, spans, routed = [], [], [], []
     audit = {}
     greedy = None
     accepted = None
+    calls = steps * 40
+    if kv_gib is not None:
+        check(int(run["controls"]["GC_MOE_KV_BYTES"]) == kv_gib * 1024**3, "common KV budget")
+        check(int(run["controls"]["GC_MOE_EPLB_WINDOW"]) == steps, "EPLB statistics window")
+        cache = run["kv_capacity"]
+        required = batch * (705 + 2 * steps)
+        check(cache["tokens"] >= cache["required"] == required and cache["concurrency"] >= batch,
+              "insufficient initialized KV capacity")
     for phase in ("stats", "measured"):
+        if kv_gib is not None:
+            check(len(run[phase]["ten_step_ms"]) == steps // 10, "incomplete host timing window")
         rows = sorted(run[phase]["audit"], key=lambda r: r["rank"])
         check([r["rank"] for r in rows] == list(range(8)), "audit ranks")
-        check(all(r["calls"] == 40000 for r in rows), "call coverage")
+        check(all(r["calls"] == calls for r in rows), "call coverage")
         if phase == "measured":
-            check(all(r["full_graph_replays"] == 1000 and len(r["shared_modules"]) == 40 for r in rows),
+            check(all(r["full_graph_replays"] == steps and len(r["shared_modules"]) == 40 for r in rows),
                   "graph or shared workload coverage")
         audit[phase] = [[r[k] for k in ("ids", "weights", "demand")] for r in rows]
     audit["warm_native"] = [r.get("warm_native") for r in rows]
@@ -59,11 +69,11 @@ def read_arm(root, arm, batch=256):
     for rank in range(8):
         with np.load(path / f"rank{rank}.npz", allow_pickle=False) as f:
             q = f["counts"]
-            check(q.shape == (40000, 48 if arm <= 3 else 56) and np.all(q >= 0), "physical counts")
-            epoch = initial[rank]["epoch"] + np.arange(40000)
+            check(q.shape == (calls, 48 if arm <= 3 else 56) and np.all(q >= 0), "physical counts")
+            epoch = initial[rank]["epoch"] + np.arange(calls)
             check(np.array_equal(f["epochs"], epoch), "epoch gap")
             bounds = f["ffn_ns"]
-            check(bounds.shape == (1000, 40, 2) and np.all(bounds[..., 0] > 0)
+            check(bounds.shape == (steps, 40, 2) and np.all(bounds[..., 0] > 0)
                   and np.all(bounds[..., 1] > bounds[..., 0]), "FFN timeline")
             spans.append((bounds[..., 1] - bounds[..., 0]).ravel() / 1000)
             data.append(q)
@@ -75,20 +85,20 @@ def read_arm(root, arm, batch=256):
                 check(np.all(clocks[active, 2] > clocks[active, 1]), "GC routed clocks")
                 routed.append(np.where(active, clocks[:, 2] - clocks[:, 1], 0))
             x = f["native"]
-            check(x.shape == (1000, batch) and np.all(x >= 0), "native output")
+            check(x.shape == (steps, batch) and np.all(x >= 0), "native output")
             if greedy is None:
                 greedy = x
             check(np.array_equal(x, greedy), "rank disagreement on native output")
             if arm in (7, 8):
                 a = f["auction"]
-                check(a.shape == (40000, 7) and np.all(a >= 0), "auction records")
+                check(a.shape == (calls, 7) and np.all(a >= 0), "auction records")
                 if accepted is None:
                     accepted = a
                 check(np.array_equal(accepted, a), "replicated auction disagreement")
     q = np.stack(data, axis=1)
     check(np.all(q.sum((1, 2)) == 8 * batch * 6), "route conservation")
     elapsed = np.stack(spans, axis=1)
-    row = metrics(q, elapsed[..., None])
+    row = metrics(q, elapsed[..., None], steps=steps)
     blocks = np.stack(widths, axis=1)
     step_ms = float(run["measured"]["ms_per_step"])
     check(np.isfinite(step_ms) and step_ms > 0, "invalid full step timer")
@@ -112,12 +122,16 @@ def report_six(root):
 
     valid, audits, native, failures = {}, {}, {}, {}
     sha = (root / "measurement.sha").read_text().strip()
+    marker = root / "six-steps"
+    steps = int(marker.read_text()) if marker.is_file() else 1000
+    check(steps in (500, 1000), "six-arm window")
+    kv_gib = (7 if steps == 1000 else 5) if marker.is_file() else None
     for arm in range(7):
         try:
             folder = root / f"arm{arm}"
             check((folder / "execution.sha").read_text().strip() == sha, "measurement revision")
             check((folder / "complete").is_file(), "incomplete arm")
-            row, audit, tokens = read_arm(root, arm)
+            row, audit, tokens = read_arm(root, arm, steps=steps, kv_gib=kv_gib)
             owner = "_ZeroShared" if arm in (0, 2, 4) else "DeepseekV4MLP"
             check(audit["shared"] == [[owner] * 40] * 8, "shared ownership")
             check(all(audit["warm_native"]), "missing warm native-output hash")
@@ -136,7 +150,8 @@ def report_six(root):
                         check(audit[k] == prior[k], f"policy mismatch in {k}")
             audits[arm], native[arm] = audit, tokens
             if arm:
-                valid[arm] = dict(arm=arm, step_ms=row["step_ms"], ffn_ms_per_step=row["moe_ms_per_step"],
+                valid[arm] = dict(arm=arm, window_steps=steps, kv_gib_per_rank=kv_gib,
+                                  step_ms=row["step_ms"], ffn_ms_per_step=row["moe_ms_per_step"],
                                   ffn_us_per_layer=25 * row["moe_ms_per_step"],
                                   **{k: row[k] for k in ("block_m", "token_ir", "total_m_blocks",
                                      "peak_rank_m_blocks", "m_block_ir", "active_physical_slots")})

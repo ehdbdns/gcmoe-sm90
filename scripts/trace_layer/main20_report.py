@@ -41,12 +41,12 @@ def write_rows(path, rows):
         w.writerows(rows)
 
 
-def metrics(counts, spans):
+def metrics(counts, spans, *, steps=None):
     rows = counts.sum(-1)
     blocks = ((counts + 63) // 64).sum(-1)
     peak = spans[:, :, 0].max(1)
     return dict(
-        moe_ms_per_step=float(peak.reshape(STEPS, LAYERS).sum(1).mean() / 1000),
+        moe_ms_per_step=float(peak.reshape(STEPS if steps is None else steps, LAYERS).sum(1).mean() / 1000),
         token_ir=float((rows.max(1) / rows.mean(1)).mean()),
         total_m_blocks=float(blocks.sum(1).mean()),
         peak_rank_m_blocks=float(blocks.max(1).mean()),

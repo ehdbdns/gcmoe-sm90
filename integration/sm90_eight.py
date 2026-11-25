@@ -9,11 +9,11 @@ from sm90_deepgemm import mega_backend
 
 
 @triton.jit
-def _mark(counter, stamps, layer: tl.constexpr, end: tl.constexpr):
+def _mark(counter, stamps, layer: tl.constexpr, end: tl.constexpr, steps: tl.constexpr):
     step = tl.load(counter + layer)
     now = tl.inline_asm_elementwise("mov.u64 $0, %globaltimer;", constraints="=l",
                                     args=[], dtype=tl.int64, is_pure=False, pack=1)
-    tl.store(stamps + ((step % 1000) * 40 + layer) * 2 + end, now)
+    tl.store(stamps + ((step % steps) * 40 + layer) * 2 + end, now)
     if end:
         tl.store(counter + layer, step + 1)
 
@@ -21,9 +21,9 @@ def _mark(counter, stamps, layer: tl.constexpr, end: tl.constexpr):
 def _wrap_forward(original, counter, stamps, layer):
     @wraps(original)
     def measured(*args, **kwargs):
-        _mark[(1,)](counter, stamps, layer, False)
+        _mark[(1,)](counter, stamps, layer, False, stamps.shape[0])
         result = original(*args, **kwargs)
-        _mark[(1,)](counter, stamps, layer, True)
+        _mark[(1,)](counter, stamps, layer, True, stamps.shape[0])
         return result
     return measured
 
@@ -33,7 +33,7 @@ def install_clocks(model, buf):
     if len(layers) != 40:
         raise ValueError(f"expected 40 V4.1 decoder FFNs, found {len(layers)}")
     buf.ffn_counter = torch.zeros(40, dtype=torch.int32, device=buf.buffer.device)
-    buf.ffn_stamps = torch.zeros((1000, 40, 2), dtype=torch.int64, device=buf.buffer.device)
+    buf.ffn_stamps = torch.zeros((buf.fixed_routes.steps, 40, 2), dtype=torch.int64, device=buf.buffer.device)
     from vllm.model_executor.layers.fused_moe.runner.shared_experts import SharedExperts
     buf.shared_paths = []
     for i, layer in enumerate(layers):

@@ -72,8 +72,11 @@ test "$GC_MOE_SM90_STREAM_M_BLOCKS" = 0 || test "$GC_MOE_SM90_STREAM_M_BLOCKS" =
 export GC_MOE_SHARED_IN_GC=1 GC_MOE_SM90_SM_REUSE=0 GC_MOE_SM90_DISPATCH_SMS=6
 if [[ -n ${SM90_EIGHT_ARM:-} ]]; then export GC_MOE_SHARED_IN_GC="${SM90_EIGHT_SHARED:?}"; fi
 export GC_MOE_CAPACITY=2048 GC_MOE_BOUND=2048 GC_MOE_BLOCK_M_FORCE=64 MAX_BATCHED=2048
+window=1000
 if [[ ${SM90_SIX_ARM:-0} == 1 ]]; then
-  [[ $variant == --study-main20 && $GC_MOE_MATRIX_BS == 256 && $GC_MOE_KV_BYTES == 10737418240 ]] || exit 2
+  window=${SM90_SIX_STEPS:-1000}
+  [[ $variant == --study-main20 && $GC_MOE_MATRIX_BS == 256 ]] || exit 2
+  case "$window/$GC_MOE_KV_BYTES" in 1000/7516192768|500/5368709120) ;; *) exit 2 ;; esac
   export GC_MOE_CAPACITY=512 GC_MOE_BOUND=512 MAX_BATCHED=512
 fi
 if [[ ${SM90_PAIRED_SMALL:-0} == 1 ]]; then
@@ -83,7 +86,7 @@ fi
 export GC_MOE_PULL_TRACE=1 GC_MOE_ECO_TRACE=1 GC_MOE_FINE_TRACE=0
 export GC_MOE_IR_STEP=0 GC_MEASURE_IR_STEP=0 GC_MEASURE_IR=0 GC_MEASURE_LOAD=0
 if [[ $variant == --study-main20 ]]; then
-  export GC_MOE_ECO_COSTFN=2 GC_MOE_EPLB_WINDOW=1000 GC_MOE_STEP_PROFILE=1
+  export GC_MOE_ECO_COSTFN=2 GC_MOE_EPLB_WINDOW="$window" GC_MOE_STEP_PROFILE=1
   export GC_MOE_EPLB_RANDOM_SEED=0
   case "$GC_MOE_MATRIX_ARM" in
     vanilla) export GC_MOE_EPLB=0 GC_MOE_ECO=0 GC_MOE_EPLB_NO_REARRANGE=1 ;;
@@ -164,7 +167,7 @@ driver="$analysis_dir/../real_decode_100_100.py"
 if [[ $variant == --study-long-cost || $variant == --study-main20 ]]; then
   export GC_MOE_STEP_PROFILE=1
   "$GC_ENV/bin/python" -u "$driver" --long-cost-study --label LONG_COST --output "$out/run.json" \
-    --seqs-per-rank "$(( ${GC_MOE_MATRIX_BS:-256} / 8 ))" --prefill-lo 256 --prefill-hi 2048 --warm-steps 1000 --measure-steps 1000 \
+    --seqs-per-rank "$(( ${GC_MOE_MATRIX_BS:-256} / 8 ))" --prefill-lo 256 --prefill-hi 2048 --warm-steps "$window" --measure-steps "$window" \
     2>&1 | tee "$out/run.log"
   exit 0
 fi
