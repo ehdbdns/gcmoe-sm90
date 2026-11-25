@@ -90,6 +90,9 @@ if [[ $variant == --study-main20 ]]; then
     random) export GC_MOE_ECO=0 GC_MOE_SLOT_PLACEMENT=random GC_MOE_EPLB_NO_REARRANGE=1 ;;
     rr) export GC_MOE_ECO=0 ;;
     eco_linear) test "${GC_MOE_MATRIX_SIZE:-20}" = 24; export GC_MOE_ECO_COSTFN=0 ;;
+    eco_linear_wa1)
+      [[ ${SM90_LINEAR_WA_PAIR:-0} == 1 && ${GC_MOE_MATRIX_SIZE:-20} == 24 ]] || exit 2
+      export GC_MOE_ECO_COSTFN=0 GC_MOE_ECO_WA=1 ;;
     eco) ;;
     eco_smr) export GC_MOE_SM90_SM_REUSE=1 ;;
     *) exit 2 ;;

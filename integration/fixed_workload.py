@@ -8,7 +8,8 @@ import torch
 
 def requires_layer_aligned_warmup():
     """These full-model studies index the per-layer GPU state by protocol epoch."""
-    return bool(os.getenv("SM90_EIGHT_ARM")) or os.getenv("SM90_FULL_MODEL_FOUR") == "1"
+    return (bool(os.getenv("SM90_EIGHT_ARM")) or os.getenv("SM90_FULL_MODEL_FOUR") == "1"
+            or os.getenv("SM90_LINEAR_WA_PAIR") == "1")
 
 
 def publishes_checkpoint():

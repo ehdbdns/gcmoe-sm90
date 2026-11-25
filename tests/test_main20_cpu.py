@@ -7,6 +7,7 @@ from unittest.mock import patch
 import hashlib
 import csv
 import json
+import shutil
 import sys
 import numpy as np
 import torch
@@ -174,9 +175,9 @@ def test_prepared_prices():
     ):
         layout = SM90GCBufferLayout(8, 384, 2048, 6, 5120, 2304, 0, 448, True, True)
         buf = SimpleNamespace(layout=layout, buffer=t, peer_table=t, rank_idx=0)
-        for batch, mode, slack in [(32, 0, 90), (256, 2, 11469)]:
+        for batch, mode, wa, slack in [(32, 0, 0, 90), (256, 0, 1, 91), (512, 2, 0, 11469)]:
             jit.prepare_role_binaries(
-                replace(config, tokens=batch, eco_cost_mode=mode),
+                replace(config, tokens=batch, eco_cost_mode=mode, eco_wa=wa),
                 t,
                 (t, t, t),
                 (t, t, t),
@@ -382,6 +383,26 @@ def test_archive(root):
         "True",
     )
     linear_dir = group / "eco_linear"
+    # Candidate ranks must include one charge per nonempty slot and a slack of 91.
+    candidate = group / "eco_linear_wa1"
+    shutil.copytree(linear_dir, candidate)
+    run = json.loads((candidate / "run.json").read_text())
+    run["controls"].update(GC_MOE_MATRIX_ARM=candidate.name, GC_MOE_ECO_WA="1")
+    for rank in run["measured"]["initial"]:
+        rank["checkpoint"]["plan_price"]["slack"] = 91
+    (candidate / "run.json").write_text(json.dumps(run))
+    try:
+        report.arm_data(candidate, bs, candidate.name, "revision", with_linear=True)
+    except ValueError as e:
+        assert "role-5 score" in str(e)
+    else:
+        raise AssertionError("accepted wa=0 scores for the wa=1 arm")
+    for path in candidate.glob("rank*.npz"):
+        with np.load(path) as data:
+            corrected = dict(data)
+        corrected["clocks"][:, 5] += np.count_nonzero(corrected["counts"], axis=1)
+        np.savez(path, **corrected)
+    report.arm_data(candidate, bs, candidate.name, "revision", with_linear=True)
     run_file = linear_dir / "run.json"
     archived = run_file.read_text()
     run = json.loads(archived)

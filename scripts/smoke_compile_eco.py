@@ -37,7 +37,7 @@ def main():
                            eco_logical_experts=(E if eco else 0),
                            eco_max_copies=8 if step_profile else 4,
                            eco_wb=int(os.environ.get('SMOKE_ECO_WB', '64')),
-                           eco_wa=0, eco_rounds=1, eco_cold_rounds=6,
+                           eco_wa=int(os.environ.get('SMOKE_ECO_WA', '0')), eco_rounds=1, eco_cold_rounds=6,
                            # [ECO-MEAS] gates, driven from the environment so
                            # one smoke run can prove every variant compiles
                            eco_null_plan=os.environ.get('SMOKE_NULL') == '1',
@@ -53,7 +53,9 @@ def main():
     print('roles', [(s[1][0], s[1][1], s[1][2], s[1][3]) for s in specs], flush=True)
     if eco and os.getenv('GC_MOE_MATRIX_SIZE') == '24':
         plan = next(kernel for kernel, launch in specs if launch[0] == 5)
-        expected = (0, 90) if matrix == 'eco_linear' else (2, 11469)
+        expected = (2, 11469)
+        if matrix in ('eco_linear', 'eco_linear_wa1'):
+            expected = (0, 90 + int(matrix == 'eco_linear_wa1'))
         actual = (config.eco_cost_mode, plan.eco_slack)
         if actual != expected:
             raise ValueError(f'{matrix}: prepared {actual}, expected {expected}')

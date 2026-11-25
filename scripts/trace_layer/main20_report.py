@@ -58,8 +58,9 @@ def metrics(counts, spans):
 def arm_data(directory, bs, arm, sha, with_linear=False):
     run = load(directory / "run.json")
     eco = arm.startswith("eco")
-    mode = 0 if arm == "eco_linear" else 2
-    expected_price = dict(mode=mode, slack=90 if mode == 0 else 11469) if eco else None
+    wa = int(arm == "eco_linear_wa1")
+    mode = 0 if arm in ("eco_linear", "eco_linear_wa1") else 2
+    expected_price = dict(mode=mode, slack=90 + wa if mode == 0 else 11469) if eco else None
     require(
         run["batch"] == bs
         and run["steps"] == STEPS
@@ -102,7 +103,7 @@ def arm_data(directory, bs, arm, sha, with_linear=False):
         fixed.update(
             GC_MOE_MATRIX_SIZE="24",
             GC_MOE_ECO_WB="26",
-            GC_MOE_ECO_WA="0",
+            GC_MOE_ECO_WA=str(wa),
             GC_MOE_ECO_BLOCKS_ONLY="0",
             GC_MOE_ECO_TOKENS_ONLY="0",
             GC_MOE_ECO_ROUNDS="1",
@@ -213,6 +214,8 @@ def arm_data(directory, bs, arm, sha, with_linear=False):
             lookup = np.array([slot_cost(i) for i in range(int(q.max()) + 1)])
             fine_price = lookup[q].sum(1)
             linear_price = q.sum(1) + 26 * ((q + 63) // 64).sum(1)
+            if wa:
+                linear_price += wa * np.count_nonzero(q, axis=1)
             price = linear_price if mode == 0 else fine_price
             require(np.all(clocks[:, 5] == (price if eco else 0)), "incorrect role-5 score")
             observers.append(

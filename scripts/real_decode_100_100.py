@@ -662,7 +662,11 @@ def main():
             arms = ('vanilla', 'random', 'rr', 'eco', 'eco_smr')
             if os.getenv('GC_MOE_MATRIX_SIZE') == '24':
                 arms += ('eco_linear',)
-                expected_mode = '0' if matrix == 'eco_linear' else '2'
+                if os.getenv('SM90_LINEAR_WA_PAIR') == '1':
+                    arms += ('eco_linear_wa1',)
+                    if os.getenv('GC_MOE_ECO_WA') != str(int(matrix == 'eco_linear_wa1')):
+                        ap.error(f'{matrix}: incorrect active-slot weight')
+                expected_mode = '0' if matrix in ('eco_linear', 'eco_linear_wa1') else '2'
                 if os.getenv('GC_MOE_ECO_COSTFN') != expected_mode:
                     ap.error(f'{matrix} requires GC_MOE_ECO_COSTFN={expected_mode}')
             if matrix not in arms or int(os.environ['GC_MOE_MATRIX_BS']) != 8*a.seqs_per_rank:

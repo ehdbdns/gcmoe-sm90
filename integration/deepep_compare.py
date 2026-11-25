@@ -1753,7 +1753,9 @@ def rearrange_now() -> bool:
             new_plan = torch.tensor(json.loads(layout_path.read_text()), dtype=torch.int32, device=stats.device)
         else:
             new_plan, inverse, _ = rebalance_experts_global(hist, buf.physical, per_rank)
-            if fixed_dir and (not matrix or os.environ['GC_MOE_MATRIX_ARM'] == 'rr'):
+            publish_wa_layout = (os.getenv('SM90_LINEAR_WA_PAIR') == '1'
+                                 and os.getenv('GC_MOE_MATRIX_ARM') == 'eco_linear')
+            if fixed_dir and (not matrix or os.environ['GC_MOE_MATRIX_ARM'] == 'rr' or publish_wa_layout):
                 layout = new_plan.tolist()
                 if os.getenv("SM90_EIGHT_ARM") and layout_path.exists():
                     if layout != json.loads(layout_path.read_text()):

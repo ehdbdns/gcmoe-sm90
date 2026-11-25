@@ -16,11 +16,15 @@ export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1 GC_CAP
 unset GC_MOE_FIXED_REUSE GC_MOE_FIRST_STEP_AUDIT GC_MOE_AA_CONTROL GC_MOE_COST_STUDY
 arms=(vanilla random rr)
 four=${SM90_FULL_MODEL_FOUR:-0}
+wa_pair=${SM90_LINEAR_WA_PAIR:-0}
 report_args=()
 case ${GC_MOE_MATRIX_SIZE:-20} in
   20) ;;
   24)
-    if [[ $four == 1 ]]; then
+    if [[ $wa_pair == 1 ]]; then
+      [[ $four == 0 && ${GC_MAIN24_SINGLE_BS:-} == 256 && ${GC_STEP_BOUNDARY:-0} == 0 && ${GC_COST_HOST_PROBE:-0} == 0 ]] || exit 2
+      export GC_MOE_SM90_PLAN_DISPATCH=1
+    elif [[ $four == 1 ]]; then
       [[ ${GC_MAIN24_SINGLE_BS:-} =~ ^(512|1024)$ && ${GC_STEP_BOUNDARY:-0} == 0 && ${GC_COST_HOST_PROBE:-0} == 0 ]] || exit 2
       export GC_MOE_SM90_PLAN_DISPATCH=1
       report_args+=(--four-arms)
@@ -34,7 +38,8 @@ case ${GC_MOE_MATRIX_SIZE:-20} in
   *) exit 2 ;;
 esac
 arms+=(eco)
-if [[ $four == 1 ]]; then
+if [[ $wa_pair == 1 ]]; then arms=(vanilla eco_linear eco_linear_wa1); fi
+if [[ $four == 1 || $wa_pair == 1 ]]; then
   [[ ${GC_MOE_MATRIX_SIZE:-20} == 24 ]] || exit 2
   exec 9>/home/admin/workspace/aop_lab/app_source/sm90_persist_20261123/h20-eight.lock
 else
@@ -79,7 +84,7 @@ PY
     dst="$group/$arm"
     mkdir "$dst"
     log="$dst/runner.log"
-    if [[ $four == 1 ]]; then
+    if [[ $four == 1 || $wa_pair == 1 ]]; then
       while true; do
         flock 9
         nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name --format=csv,noheader > "$dst/preexisting-processes.csv"
@@ -95,7 +100,7 @@ PY
     awk -F, '$3 !~ /NVIDIA H20/ { bad=1 } END { exit (NR != 8 || bad) }' "$dst/hardware.csv"
     echo "Starting BS=$bs arm=$arm"
     if bash scripts/trace_layer/run_aligned_ep8.sh "$sha" --study-main20 > "$log" 2>&1; then code=0; else code=$?; fi
-    if [[ $four == 1 ]]; then flock -u 9; fi
+    if [[ $four == 1 || $wa_pair == 1 ]]; then flock -u 9; fi
     raw=$(sed -n 's/^Capture workspace: //p' "$log")
     if [[ -d "$raw" ]]; then
       for name in execution.sha runtime.log status.txt gpu.log failed-command.txt run.json rank{0..7}.npz; do
@@ -113,10 +118,12 @@ PY
       cp "$GC_MOE_STRICT_STATE_DIR"/rank{0..7}.json "$group/checkpoint/"
       cp "$GC_MOE_FIXED_DIR/stats-demand.npz" "$group/"
     fi
-    if [[ $arm == rr ]]; then cp "$GC_MOE_FIXED_DIR/placement.json" "$group/"; fi
+    if [[ $arm == rr || ( $wa_pair == 1 && $arm == eco_linear ) ]]; then cp "$GC_MOE_FIXED_DIR/placement.json" "$group/"; fi
   done
   (cd "$GC_MOE_FIXED_DIR" && sha256sum stats-rank*.pt measure-rank*.pt stats-demand.npz tokens.json placement.json *-layout.json) > "$group/workload.sha256"
-  if [[ ${GC_COST_HOST_PROBE:-0} == 1 ]]; then
+  if [[ $wa_pair == 1 ]]; then
+    "$py" scripts/trace_layer/linear_wa_report.py "$out"
+  elif [[ ${GC_COST_HOST_PROBE:-0} == 1 ]]; then
     "$py" scripts/trace_layer/cost_host_report.py "$group" "$ref"
   else
     "$py" scripts/trace_layer/main20_report.py "$out" "${report_args[@]}" --bs "$bs"

@@ -114,11 +114,10 @@ def prepare_matrix(worker, buf, modules, ref):
         from gc_moe.jit_kernels.impls.sm90_fp8_fp4_gc_moe import prepared_matrix_price
 
         plan_price = prepared_matrix_price(buf.layout, tape.batch)
-        expected = (
-            {"mode": 0, "slack": 90}
-            if os.environ["GC_MOE_MATRIX_ARM"] == "eco_linear"
-            else {"mode": 2, "slack": 11469}
-        )
+        arm = os.environ["GC_MOE_MATRIX_ARM"]
+        expected = {"mode": 2, "slack": 11469}
+        if arm in ("eco_linear", "eco_linear_wa1"):
+            expected = {"mode": 0, "slack": 90 + int(arm == "eco_linear_wa1")}
         if plan_price != expected:
             raise ValueError(f"prepared ECO price {plan_price} differs from assigned {expected}")
     controls = runner_boundary(worker.model_runner, ref)
