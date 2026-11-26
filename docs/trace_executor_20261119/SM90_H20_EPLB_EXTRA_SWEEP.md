@@ -1,5 +1,7 @@
 # SM90 H20 EP8 · BS256 Mega/GC 八臂，先用 4 个冗余槽
 
+2026-11-26 重发给 SM90 执行者。请接续 BS256 Mega/GC 八臂，运行原任务的测量提交 `983f955`。独立的六档冗余扫描不作为启动条件。先检查节点上已有的 `/mnt/fuse/h20-ir-eight-*`；若同版本八臂作业正在运行，接续其回执。若中断，将 `SM90_MEGA_JOB` 设为原 job 根目录（含 `code/` 和 `eight/`），执行下列命令续跑。首次启动时让该变量留空。
+
 执行优先级为 BS256 八臂。原生 Mega、GC fused、GC unfused 各用 48 个物理槽/rank。三个 EPLB + RR 臂和两个 GC + ECO 臂统一从每卡额外 4 槽开始，共 52 个物理槽/rank。任一放置臂因设备显存或 KV 容量不足失败时，五个放置臂统一切换到每卡额外 1 槽，共 49 个物理槽/rank。记录同一配置下的完整 step 时间和完整 FFN 时间。
 
 ## 冗余扫描
@@ -30,13 +32,18 @@
 ~~~bash
 set -eo pipefail
 git fetch origin main
-book=docs/trace_executor_20261119/SM90_H20_EPLB_EXTRA_SWEEP.md
-rev=$(git log -1 --format=%H origin/main -- "$book")
-job=$(mktemp -d /mnt/fuse/h20-ir-eight-XXXXXXXX)
+rev=983f955f9e2953b35c5578dcb26a26f87501c2c6
+if [[ -n ${SM90_MEGA_JOB:-} ]]; then
+  job=$(realpath -e "$SM90_MEGA_JOB")
+  test -d "$job/eight"
+  test "$(git -C "$job/code" rev-parse HEAD)" = "$rev"
+else
+  job=$(mktemp -d /mnt/fuse/h20-ir-eight-XXXXXXXX)
+  git worktree add --detach "$job/code" "$rev"
+fi
 echo "$job"
-git worktree add --detach "$job/code" "$rev"
 cd "$job/code"
-bash scripts/sm90/run_tuned_eight.sh "$job/eight" > "$job/eight.log" 2>&1
+bash scripts/sm90/run_tuned_eight.sh "$job/eight" >> "$job/eight.log" 2>&1
 ~~~
 
 六档有序路由扫描可独立执行。已在运行的扫描可保留各档结果。补做扫描时执行 `bash scripts/sm90/run_h20_token_ir.sh "$job/scan"`，先处理 BS256。若新六档四臂 job 路径已知，可在扫描前 export SM90_SIX_BS_JOB 指向其父目录。脚本按档查找完整有序 route bank，找不到才以该档主表设置生成原生参考和 8 槽 RR 校准臂。GPU 仅用来训练所有预算的实际放置，随后释放协作锁。CPU 校验源 ID 摘要，在每个专家的有序副本映射上按 (源 rank + 23333 × 本地 token 序号) 对副本数取模，逐次计算八个目的 rank 的 token 数。对 k=8 与历史逐槽布局一致的层还校验真实物理计数。初筛与实算均采用 1000+1000。
