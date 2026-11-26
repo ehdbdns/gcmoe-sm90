@@ -15,7 +15,7 @@ BATCHES = (32, 64, 128, 256, 512, 1024)
 BASELINE_SHA = "2f70314e2d1948db7e45c0066c1e9099cc3021a7"
 
 
-def check_pair(reference, current, same_wa=False, *, fine=False, reference_wa=2):
+def check_pair(reference, current, same_wa=False, *, fine=False, reference_wa=2, current_wa=1, change_launch=False):
     old, new = [json.loads((d / "run.json").read_text()) for d in (reference, current)]
     require(workload(old) == workload(new), "different routes, feedback, KV, placement or native warm outputs")
     paths = {"GC_MOE_FIXED_DIR", "GC_MOE_STRICT_STATE_DIR", "GC_MOE_EXEC_ROOT", "GC_MOE_SRC", "GC_MOE_CHECKPOINT_ROOT"}
@@ -24,9 +24,13 @@ def check_pair(reference, current, same_wa=False, *, fine=False, reference_wa=2)
         if k not in paths and k not in cost_keys:
             require(old["controls"].get(k) == new["controls"].get(k), f"different runtime control: {k}")
     require((old["controls"]["GC_MOE_ECO_WA"], new["controls"]["GC_MOE_ECO_WA"])
-            == (("1" if same_wa else str(reference_wa)), "1"), "wrong linear weight")
+            == ((str(current_wa) if same_wa else str(reference_wa)), str(current_wa)), "wrong linear weight")
     for run, mode in ((old, 0), (new, 2 if fine else 0)):
         require(run["cost"] == mode and run["controls"]["GC_MOE_ECO_COSTFN"] == str(mode), "wrong cost mode")
+    marker = "shared_launch=((4, 2, 0, 1),) independent_plan=True"
+    graph_modes = [marker in (d / "runner.log").read_text() for d in (reference, current)]
+    require(graph_modes == [False, True] if change_launch else graph_modes[0] == graph_modes[1],
+            "unexpected ECO launch policy difference")
     for name in ("runtime.log", "hardware.csv", "installed-layout.json"):
         require((reference / name).read_bytes() == (current / name).read_bytes(), f"different {name}")
     for rank in range(8):

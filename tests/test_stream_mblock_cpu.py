@@ -50,11 +50,11 @@ def main():
         assert by_role[8][1][3:] == (18, (), ((4, 2, 0, 1),))
         assert by_role[2][1][4] == (4,)
         assert by_role[4][1][4:] == ((),)
-        assert by_role[5][1][4:] == ((), ((4, 2, 0, 1),))
         if conf.plan_dispatch:
-            assert by_role[7][1][4:] == ((), ((4, 2, 0, 1),))
+            assert by_role[5][1][4:] == by_role[7][1][4:] == ((),)
             assert by_role[1][1][4:] == ((7,),)
         else:
+            assert by_role[5][1][4:] == ((), ((4, 2, 0, 1),))
             assert by_role[1][1][4:] == ((), ((4, 2, 0, 1),))
         assert by_role[4][1][3] == 144
         with patch.dict(os.environ, {'GC_MOE_BLOCK_M_FORCE': '0'}):

@@ -35,7 +35,7 @@ def export(group, dest, profile, arm_name="eco"):
         capture = json.loads((raw / "capture.json").read_text())
         workers = {r["rank"]: r for r in capture["ranks"]}
         step = capture["step"]
-        check(wa == 1 and step in (1, 2) and sorted(workers) == list(range(8)), "incorrect capture")
+        check(wa in (1, 2) and step in (1, 2) and sorted(workers) == list(range(8)), "incorrect capture")
     for rank in range(8):
         with np.load(arm / f"rank{rank}.npz") as arrays:
             sl = slice(step * 40, (step + 1) * 40)
@@ -80,6 +80,7 @@ def export(group, dest, profile, arm_name="eco"):
                                   dispatch_minus_l1_start_us=d0-s0, plan_minus_l1_end_us=p0-s1,
                                   first_routed_cta_minus_l1_end_us=stamps["first_cta_raw_us"]-s1,
                                   plan_l1_overlap_us=overlap((s0, s1), (p0, p1)),
+                                  overlap_pct_of_shorter=100*overlap((s0, s1), (p0, p1))/min(s1-s0, p1-p0),
                                   shared_l2_routed_overlap_us=overlap(segments["shared expert L2"], segments["routed GEMM"]),
                                   pull_routed_overlap_us=overlap(segments["pull token"], segments["routed GEMM"]),
                                   routed_kernel_minus_l1_end_us=segments["routed kernel"][0]-s1))

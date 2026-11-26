@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Full-model four-arm groups on the shared H20 node.
 set -eo pipefail
-unset GC_MOE_EP8_LINEAR SM90_LINEAR_WA_PAIR SM90_SIX_ARM SM90_IR_REFERENCE SM90_SHARED_FIRST_WA1 SM90_WA1_PROFILE_DIR SM90_FINE_WA1_REFERENCE
+unset SM90_SHARED_PLAN_OVERLAP GC_MOE_EP8_LINEAR SM90_LINEAR_WA_PAIR SM90_SIX_ARM SM90_IR_REFERENCE SM90_SHARED_FIRST_WA1 SM90_WA1_PROFILE_DIR SM90_FINE_WA1_REFERENCE
 if [[ ${1:-} == --fine-bs512-1024 ]]; then
   shift
   batches=(512 1024)
@@ -9,7 +9,9 @@ else
   if [[ ${1:-} == --linear-ep8 ]]; then shift; fi
   export GC_MOE_EP8_LINEAR=1 GC_PREFILL_MARGIN=256
   batches=(32 64 128 256 512 1024)
-  if [[ ${1:-} == --shared-first-wa1 ]]; then
+  if [[ ${1:-} == --shared-plan-overlap ]]; then
+    batches=(256); export SM90_SHARED_PLAN_OVERLAP=1; shift
+  elif [[ ${1:-} == --shared-first-wa1 ]]; then
     export SM90_SHARED_FIRST_WA1=1; shift
   elif [[ ${1:-} == --shared-first-fine ]]; then
     [[ $# == 3 ]] || { echo 'expected --shared-first-fine WA1_RESULTS NEW_JOB' >&2; exit 2; }
@@ -21,12 +23,18 @@ else
     batches=("$2"); export SM90_IR_REFERENCE=1; shift 2
   fi
 fi
-[[ $# == 1 ]] || { echo "usage: run_full_model_four.sh [--linear-ep8|--fine-bs512-1024|--shared-first-wa1|--shared-first-fine WA1_RESULTS] JOB_DIRECTORY" >&2; exit 2; }
+[[ $# == 1 ]] || { echo "usage: run_full_model_four.sh [--linear-ep8|--fine-bs512-1024|--shared-plan-overlap|--shared-first-wa1|--shared-first-fine WA1_RESULTS] JOB_DIRECTORY" >&2; exit 2; }
 cd "$(git rev-parse --show-toplevel)"
 job=$(realpath -m "$1")
 mkdir -p "$job"
 exec 8>"$job/launcher.lock"
 flock -n 8 || { echo "job already active" >&2; exit 2; }
+if [[ ${SM90_SHARED_PLAN_OVERLAP:-0} == 1 ]]; then
+  if [[ -e $job/measurement.sha ]]; then test -f "$job/shared-plan-overlap"; fi
+  touch "$job/shared-plan-overlap"
+else
+  test ! -e "$job/shared-plan-overlap"
+fi
 if [[ -n ${SM90_FINE_WA1_REFERENCE:-} ]]; then
   [[ $job != "$SM90_FINE_WA1_REFERENCE" ]] || exit 2
   if [[ -e $job/measurement.sha ]]; then test -f "$job/fine-reference"; fi
@@ -117,7 +125,7 @@ for bs in "${batches[@]}"; do
   fi
 done
 if (( failed )); then exit "$failed"; fi
-if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then exit 0; fi
+if [[ ${SM90_IR_REFERENCE:-0} == 1 || ${SM90_SHARED_PLAN_OVERLAP:-0} == 1 ]]; then exit 0; fi
 if [[ ${SM90_SHARED_FIRST_WA1:-0} == 1 ]]; then
   source scripts/env.sh
   if [[ -n ${SM90_FINE_WA1_REFERENCE:-} ]]; then
