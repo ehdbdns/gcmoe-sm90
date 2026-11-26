@@ -1,6 +1,6 @@
 # SM90 H20 EP8 · BS256 Mega/GC 八臂，先用 4 个冗余槽
 
-2026-11-26 重发给 SM90 执行者。请接续 BS256 Mega/GC 八臂，运行原任务的测量提交 `983f955`。独立的六档冗余扫描不作为启动条件。先检查节点上已有的 `/mnt/fuse/h20-ir-eight-*`；若同版本八臂作业正在运行，接续其回执。若中断，将 `SM90_MEGA_JOB` 设为原 job 根目录（含 `code/` 和 `eight/`），执行下列命令续跑。首次启动时让该变量留空。
+2026-11-26 更新给 SM90 执行者。BS256 Mega/GC 八臂使用测量提交 `8db94bc`，GC 恢复 shared 优先改动前的启动顺序。先检查节点上已有的 `/mnt/fuse/h20-ir-eight-*`。若该版本的八臂正在执行，继续原作业；若中断，将 `SM90_MEGA_JOB` 设为该版本原 job 根目录后续跑。若旧版 `983f955` 已经启动，在当前臂落盘并释放 GPU 后切换，保留原始结果和实际 SHA。新版本首次启动时使用独立 job，继续按下文核验可复用的 Mega 原生结果。
 
 执行优先级为 BS256 八臂。原生 Mega、GC fused、GC unfused 各用 48 个物理槽/rank。三个 EPLB + RR 臂和两个 GC + ECO 臂统一从每卡额外 4 槽开始，共 52 个物理槽/rank。任一放置臂因设备显存或 KV 容量不足失败时，五个放置臂统一切换到每卡额外 1 槽，共 49 个物理槽/rank。记录同一配置下的完整 step 时间和完整 FFN 时间。
 
@@ -32,7 +32,7 @@
 ~~~bash
 set -eo pipefail
 git fetch origin main
-rev=983f955f9e2953b35c5578dcb26a26f87501c2c6
+rev=8db94bc57ea0ae826a5202fef6a4a42b6e8eae7c
 if [[ -n ${SM90_MEGA_JOB:-} ]]; then
   job=$(realpath -e "$SM90_MEGA_JOB")
   test -d "$job/eight"
@@ -60,6 +60,8 @@ bash scripts/sm90/run_tuned_eight.sh "$job/eight" >> "$job/eight.log" 2>&1
 | 6 | GC | vLLM unfused | 同一 k、同一 EPLB + RR |
 | 7 | GC | fused split | 同一 k、同一 EPLB rank 成员 + ECO |
 | 8 | GC | vLLM unfused | 同一 k、同一 EPLB rank 成员 + ECO |
+
+核对运行日志中的角色顺序。原生和 RR 的 GC fused split 为 `(1, 4, 8, 2, 3)`，ECO 的 GC fused split 为 `(5, 7, 1, 4, 8, 2, 3)`。回执标明测量 SHA 及各臂来源，旧作业的 fused GC 耗时单独归档。
 
 arm0 是统一路由、反馈和 KV 的发布者。测量使用六臂协议的 256 条真实 256-token 前缀、TP8/EP8、512-token prefill chunk、满批 256、40 层、完整 decode graph。GC 使用 M64、按块发号。ECO 采用 T+26M+2A，slack 92，plan 的一个 SM 来自 dispatch。八臂记录完整 step ms 和完整模型 FFN 的 µs/层，后者覆盖 vLLM 外置 shared 到该层最终求和的工作。八个臂均记录 token IR、总/峰值 M 块、M 块 IR 和活跃槽。ECO 两臂还报成交次数与 routed MAE。记录后端原生 M 块尺寸、权重精度差异及所有配对的原生输出差异。
 
