@@ -43,7 +43,7 @@ def main():
             assert geom.grids[0] * (geom.smem[0] + 1024) <= context.dispatch_sms * 228 * 1024
         assert (schedule.grids[0], schedule.smem[0]) == (20 if conf.plan_dispatch else 24, 43008)
         specs = _role_specs(conf, stream, schedule, True)
-        assert [spec[0] for _, spec in specs] == ([4, 5, 7, 1, 8, 2, 3] if conf.plan_dispatch else [4, 1, 8, 2, 5, 3])
+        assert [spec[0] for _, spec in specs] == ([5, 7, 1, 4, 8, 2, 3] if conf.plan_dispatch else [1, 4, 8, 2, 5, 3])
         by_role = {spec[0]: (kernel, spec) for kernel, spec in specs}
         l1, l2 = by_role[4][0], by_role[8][0]
         assert (l1.max_m, l1.shared_phase_end, l2.max_m, l2.shared_phase_start) == (32, 1, 32, 1)
@@ -54,8 +54,7 @@ def main():
             assert by_role[5][1][4:] == by_role[7][1][4:] == ((),)
             assert by_role[1][1][4:] == ((7,),)
         else:
-            assert by_role[5][1][4:] == ((), ((4, 2, 0, 1),))
-            assert by_role[1][1][4:] == ((), ((4, 2, 0, 1),))
+            assert by_role[5][1][4:] == by_role[1][1][4:] == ((),)
         assert by_role[4][1][3] == 144
         with patch.dict(os.environ, {'GC_MOE_BLOCK_M_FORCE': '0'}):
             for bound, block_m in ((96, 16), (128, 32)):

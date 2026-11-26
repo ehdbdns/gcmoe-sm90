@@ -72,6 +72,18 @@ def linear_peak_metrics(counts, spans, linear_score):
     return peaks
 
 
+def ep8_launch_policy(directory, eco):
+    log = (directory / "runner.log").read_text()
+    original = (5, 7, 1, 4, 8, 2, 3) if eco else (1, 4, 8, 2, 3)
+    shared_first = (4, 5, 7, 1, 8, 2, 3) if eco else (4, 1, 8, 2, 3)
+    current = f"[ep8] M=64 roles={original} launch_order=original" in log
+    historical = f"[ep8] M=64 roles={shared_first} shared_launch=((4, 2, 0, 1),)"
+    require(current != (historical in log), f"{directory}: missing or mixed launch orders")
+    if current:
+        return "original"
+    return "independent_plan" if historical + " independent_plan=True" in log else "shared_first"
+
+
 def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_wa=2, ep8_mode=0):
     run = load(directory / "run.json")
     eco = arm.startswith("eco")
@@ -119,9 +131,6 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
     if linear_ep8:
         fixed.update(GC_MOE_EP8_LINEAR="1", GC_MOE_KV_BYTES=str(20 * 1024**3), GC_MOE_NO_PREFETCH="1",
                      GC_MOE_EPLB_EXTRA_PER_RANK="8", GC_MOE_EPLB_RANDOM_SEED="0")
-        roles = (4, 5, 7, 1, 8, 2, 3) if eco else (4, 1, 8, 2, 3)
-        marker = f"[ep8] M=64 roles={roles} shared_launch=((4, 2, 0, 1),)"
-        require(marker in (directory / "runner.log").read_text(), f"{arm}: missing shared launch configuration")
     if with_linear:
         fixed.update(
             GC_MOE_MATRIX_SIZE="24",
@@ -142,6 +151,8 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
         hardware=(directory / "hardware.csv").read_text(),
         runtime=(directory / "runtime.log").read_text(),
     )
+    if linear_ep8:
+        control["shared_first"] = ep8_launch_policy(directory, eco) != "original"
     installed_hash = hashlib.sha256(
         json.dumps(load(directory / "installed-layout.json"), separators=(",", ":")).encode()
     ).hexdigest()

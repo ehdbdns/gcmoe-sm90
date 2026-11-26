@@ -1,5 +1,7 @@
 # SM90 · BS256 shared L1 与 ECO plan 启动和重叠验证
 
+**任务已撤回。SM90 执行者接续 BS256 Mega/GC 八臂。以下是历史实验说明。**
+
 在 H20 × 8 上复测 BS256 整模，shared L1 先入图，ECO plan 和 dispatch 入场 CTA 可在通信分区独立启动。要看 shared L1 能否领先几微秒并与 plan 大部分重叠，以及正式窗口的完整 MoE 是否缩短。旧 shared-first 的 replay 2 三层共 24 个样本中，plan 与 L1 重叠全部为 0 µs。该图的 wa=1，供查看原先的时间线现象。正式耗时对照使用同价的已归档线性 wa=2（测量 SHA 2f70314，BS256 为 872.49 µs/层）。
 
 ## 执行
@@ -9,9 +11,7 @@
 ~~~bash
 set -eo pipefail
 git fetch origin main
-book=docs/trace_executor_20261119/SM90_BS256_SHARED_PLAN_OVERLAP.md
-rev=$(git log -1 --format=%H origin/main -- "$book")
-test -n "$rev"
+rev=3a64b348612ab85a86d6d4491d4644f1cfcaa315
 job=$(mktemp -d /mnt/fuse/sm90-bs256-shared-plan-overlap-XXXXXXXX)
 echo "$job"
 git worktree add --detach "$job/code" "$rev"

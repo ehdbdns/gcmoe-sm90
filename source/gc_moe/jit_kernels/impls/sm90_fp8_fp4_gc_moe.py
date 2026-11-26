@@ -112,15 +112,8 @@ def _role_specs(config, layout, schedule, has_stats):
         roles = roles[:-1] + (6,) + roles[-1:]
     if eco and config.plan_dispatch:
         roles = (5, 7) + tuple(role for role in roles if role != 5)
-    if schedule.split_shared:
-        roles = (4,) + tuple(role for role in roles if role != 4)
-    # Port 2 waits for *all* L1 CTAs to start. Keep that edge for shared L2,
-    # but let the independent communication partition launch beside shared L1.
-    after_shared_launch = ((4, 2, 0, 1),) if schedule.split_shared else ()
-    independent_plan = schedule.split_shared and eco and config.plan_dispatch
     if os.getenv("GC_MOE_EP8_LINEAR") == "1" and config.tokens == int(os.environ["GC_MOE_MATRIX_BS"]):
-        print(f"[ep8] M={schedule.tile_m} roles={roles} shared_launch={after_shared_launch} "
-              f"independent_plan={bool(independent_plan)}", flush=True)
+        print(f"[ep8] M={schedule.tile_m} roles={roles} launch_order=original", flush=True)
     if os.getenv("SM90_SIX_ARM") == "1":
         print(f"[six] GC M={schedule.tile_m} roles={roles}", flush=True)
     specs = []
@@ -172,10 +165,7 @@ def _role_specs(config, layout, schedule, has_stats):
             k = SM90GCMoERoleKernel(config, layout, 5, schedule, has_stats)
             # [ECO-WARP] thread count comes from the kernel (512 since the
             # warp split), not a literal.
-            launch = (5, k.eco_smem, k.threads, 1, ())
-            if after_shared_launch and not independent_plan:
-                launch += (after_shared_launch,)
-            specs.append((k, launch))
+            specs.append((k, (5, k.eco_smem, k.threads, 1, ())))
             continue
         index = 1 if role in (4, 8) else role - 1
         # Workspace routed offsets are a strict prefix of the shared layout.
@@ -188,11 +178,11 @@ def _role_specs(config, layout, schedule, has_stats):
         wait_for = (4,) if config.shared_experts and role == 2 and schedule.tile_m >= 32 else ()
         if role == 1 and eco and config.plan_dispatch:
             wait_for = (7,)
-        launch_after = after_shared_launch if role == 1 and not wait_for else ()
+        launch_after = ()
         if role == 8:
             if role_schedule.grids[1] < schedule.compute_sms:
                 # CUDA launch-order port: all shared L1 CTAs have started.
-                launch_after = after_shared_launch
+                launch_after = ((4, 2, 0, 1),)
             else:
                 wait_for = (4,)
         launch = (role, role_schedule.smem[index], role_schedule.threads[index],

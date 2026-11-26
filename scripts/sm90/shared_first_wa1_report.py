@@ -8,7 +8,7 @@ import numpy as np
 
 from compare_ep8_linear import workload
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "trace_layer"))
-from main20_report import (LAYERS, RANKS, STEPS, arm_data, auction_metrics, linear_peak_metrics,
+from main20_report import (LAYERS, RANKS, STEPS, arm_data, auction_metrics, ep8_launch_policy, linear_peak_metrics,
                            metrics, require, write_auction_detail, write_rows)
 
 BATCHES = (32, 64, 128, 256, 512, 1024)
@@ -27,10 +27,9 @@ def check_pair(reference, current, same_wa=False, *, fine=False, reference_wa=2,
             == ((str(current_wa) if same_wa else str(reference_wa)), str(current_wa)), "wrong linear weight")
     for run, mode in ((old, 0), (new, 2 if fine else 0)):
         require(run["cost"] == mode and run["controls"]["GC_MOE_ECO_COSTFN"] == str(mode), "wrong cost mode")
-    marker = "shared_launch=((4, 2, 0, 1),) independent_plan=True"
-    graph_modes = [marker in (d / "runner.log").read_text() for d in (reference, current)]
-    require(graph_modes == [False, True] if change_launch else graph_modes[0] == graph_modes[1],
-            "unexpected ECO launch policy difference")
+    policies = [ep8_launch_policy(d, True) for d in (reference, current)]
+    expected = ["shared_first", "independent_plan"] if change_launch else [policies[0]] * 2
+    require(policies == expected, f"unexpected ECO launch policies: {policies}")
     for name in ("runtime.log", "hardware.csv", "installed-layout.json"):
         require((reference / name).read_bytes() == (current / name).read_bytes(), f"different {name}")
     for rank in range(8):

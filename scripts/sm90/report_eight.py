@@ -157,11 +157,18 @@ def report_six(root):
             check(audit["shared"] == [[owner] * 40] * 8, "shared ownership")
             check(all(audit["warm_native"]), "missing warm native-output hash")
             if arm not in (1, 5):
-                roles = ("(4, 1, 8, 2, 3)", "(1, 4, 8, 2, 3)") if arm in (0, 2, 4) else ("(1, 2, 3)",)
-                if arm in (7, 8):
-                    roles = ("(4, 5, 7, 1, 8, 2, 3)",) if arm == 7 else ("(5, 7, 1, 2, 3)",)
                 log = (folder / "runner.log").read_text()
-                check(any(f"[six] GC M=64 roles={order}" in log for order in roles), "GC role geometry")
+                if arm in (0, 2, 4, 7):
+                    original = (5, 7, 1, 4, 8, 2, 3) if arm == 7 else (1, 4, 8, 2, 3)
+                    shared_first = (4, 5, 7, 1, 8, 2, 3) if arm == 7 else (4, 1, 8, 2, 3)
+                    first = f"[six] GC M=64 roles={shared_first}" in log
+                    check(first != (f"[six] GC M=64 roles={original}" in log), "GC split role order")
+                    audit["shared_first"] = first
+                    if arm:
+                        check(first == audits[0]["shared_first"], "split launch order differs from publisher")
+                else:
+                    roles = (5, 7, 1, 2, 3) if arm == 8 else (1, 2, 3)
+                    check(f"[six] GC M=64 roles={roles}" in log, "GC role geometry")
             if arm:
                 check(0 in audits, "reference validation failed")
                 for k in ("trajectory", "order", "prefill_kv", "stats", "measured", "kv"):
