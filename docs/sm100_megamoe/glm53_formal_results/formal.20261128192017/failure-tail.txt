@@ -1,0 +1,100 @@
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/_inductor/graph.py", line 2611, in codegen
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     self.scheduler.codegen()
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/_inductor/scheduler.py", line 9206, in codegen
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     self._codegen_partitions()
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/_inductor/scheduler.py", line 9354, in _codegen_partitions
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     self._codegen(partition)
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/_inductor/scheduler.py", line 9508, in _codegen
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     self.get_backend(device).codegen_node(node)
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/_inductor/codegen/cuda_combined_scheduling.py", line 155, in codegen_node
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     return self._triton_scheduling.codegen_node(node)
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/_inductor/codegen/simd.py", line 2966, in codegen_node
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     return self._codegen_nodes(nodes, coalesce_analysis)  # type: ignore[arg-type]
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/_inductor/codegen/simd.py", line 2939, in _codegen_nodes
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     return self.codegen_node_schedule(
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/_inductor/codegen/simd.py", line 3063, in codegen_node_schedule
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     src_code = kernel.codegen_kernel()
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]                ^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/_inductor/codegen/triton.py", line 6477, in codegen_kernel
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     **self.inductor_meta_common(),
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/_inductor/codegen/triton.py", line 6187, in inductor_meta_common
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     "backend_hash": torch.utils._triton.triton_hash_with_backend(),
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/utils/_triton.py", line 253, in triton_hash_with_backend
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     backend = triton_backend()
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]               ^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/utils/_triton.py", line 223, in triton_backend
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     target = driver.active.get_current_target()
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]              ^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/triton/runtime/driver.py", line 39, in active
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     self._active = self.default
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]                    ^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/triton/runtime/driver.py", line 33, in default
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     self._default = _create_driver()
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]                     ^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/triton/runtime/driver.py", line 21, in _create_driver
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     return active_drivers[0]()
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/triton/backends/nvidia/driver.py", line 336, in __init__
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     self.utils = CudaUtils()  # TODO: make static
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]                  ^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/triton/backends/nvidia/driver.py", line 66, in __init__
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     mod = compile_module_from_src(
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]           ^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/triton/runtime/build.py", line 93, in compile_module_from_src
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     so = _build(name, src_path, tmpdir, library_dirs or [], include_dirs or [], libraries or [], ccflags or [])
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/triton/runtime/build.py", line 48, in _build
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     subprocess.check_call(cc_cmd, stdout=subprocess.DEVNULL)
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]   File "/usr/lib64/python3.12/subprocess.py", line 413, in check_call
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948]     raise CalledProcessError(retcode, cmd)
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948] torch._inductor.exc.InductorError: CalledProcessError: Command '['/opt/rh/gcc-toolset-12/root/usr/bin/gcc', '/tmp/tmpi5pepcox/cuda_utils.c', '-O3', '-shared', '-fPIC', '-Wno-psabi', '-o', '/tmp/tmpi5pepcox/cuda_utils.cpython-312-x86_64-linux-gnu.so', '-l:libcuda.so.1', '-L/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/triton/backends/nvidia/lib', '-L/lib64', '-L/lib', '-I/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/triton/backends/nvidia/include', '-I/tmp/tmpi5pepcox', '-I/usr/include/python3.12']' returned non-zero exit status 1.
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948] 
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948] Set TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS="+dynamo"
+(Worker_TP1_EP1 pid=956463) ERROR 11-28 19:25:22 [multiproc_executor.py:948] 
+(MainProcess pid=915026) WARNING 11-28 19:25:26 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=5
+[rank0]:[W1128 19:25:28.227339049 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see [URL] (function operator())
+(MainProcess pid=915026) WARNING 11-28 19:25:30 [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=1
+Traceback (most recent call last):
+  File "/data0/home/admin/workspace/repo-exec/scripts/sm100/glm53_matrix.py", line 318, in <module>
+    arm_run(root, args.action)
+  File "/data0/home/admin/workspace/repo-exec/scripts/sm100/glm53_matrix.py", line 128, in arm_run
+    llm = LLM(
+          ^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/entrypoints/llm.py", line 344, in __init__
+    self.llm_engine = LLMEngine.from_engine_args(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 185, in from_engine_args
+    return cls(
+           ^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 111, in __init__
+    self.engine_core = EngineCoreClient.make_client(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 133, in make_client
+    return InprocClient(vllm_config, executor_class, log_stats)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 363, in __init__
+    self.engine_core = EngineCore(
+                       ^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 140, in __init__
+    self.model_executor = executor_class(vllm_config)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 116, in __init__
+    super().__init__(vllm_config)
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/abstract.py", line 113, in __init__
+    self._init_executor()
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 214, in _init_executor
+    self.workers = WorkerProc.wait_for_ready(unready_workers)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 810, in wait_for_ready
+    raise e from None
+Exception: WorkerProc initialization failed due to an exception in a background process. See stack trace for root cause.
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
