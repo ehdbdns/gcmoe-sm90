@@ -69,7 +69,7 @@ if [[ -z $py ]]; then
   pkgs=(nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-core nvidia-cutlass-dsl-libs-cu12 nvidia-cutlass-dsl-libs-cu13)
   manifest="$repo/docs/sm100_megamoe/v41_native_phase_results/dsl-wheelhouse.sha256"
   wheels=""
-  for candidate in "${SM100_DSL_WHEELS:-}" "$(dirname "$(dirname "$root")")"/formal.*/results/wheels; do
+  for candidate in "${SM100_DSL_WHEELS:-}" "$storage/dsl-wheels-4.8.1" "$storage"/formal.*/results/wheels; do
     if [[ -d $candidate ]] && (cd "$candidate" && sha256sum --status -c "$manifest"); then
       wheels=$candidate
       echo "[prepare] reusing verified wheels $candidate"
@@ -86,13 +86,41 @@ if [[ -z $py ]]; then
   printf "import site; site.addsitedir('%s')\n" "$blib" > "$lib/zz_glm_runtime.pth"
   cp docs/sm100_megamoe/v41_full_decode_pair_results/compat/sitecustomize.py "$lib/sitecustomize.py"
 fi
-export PATH="$(dirname "$py"):$lib/nvidia/cu13/bin:$blib/nvidia/cu13/bin:/usr/local/cuda/bin:$PATH"
-if ! command -v nvcc >/dev/null; then
-  "$py" -m pip install 'nvidia-cuda-nvcc>=13,<14'
-  export PATH="$lib/nvidia/cu13/bin:$PATH"
+# DeepJIT discovers CUDA_HOME and its DG-prefixed nvcc override at import.
+# GC assembles newer CuTe PTX separately from C++ compilation.
+export CUDA_HOME=/usr/local/cuda
+export CUDA_PATH="$CUDA_HOME"
+export DG_JIT_NVCC_COMPILER="$CUDA_HOME/bin/nvcc"
+export GC_MOE_NVCC="$DG_JIT_NVCC_COMPILER"
+export PATH="$CUDA_HOME/bin:$(dirname "$py"):$lib/nvidia/cu13/bin:$blib/nvidia/cu13/bin:$PATH"
+"$DG_JIT_NVCC_COMPILER" --version
+"$py" - <<'HEADERS'
+import sysconfig
+from pathlib import Path
+includes = [Path(sysconfig.get_path(key)) / "Python.h" for key in ("include", "platinclude")]
+if not any(path.is_file() for path in includes):
+    raise SystemExit(f"Inductor needs the Python development header: {includes}")
+HEADERS
+ptx="$repo/scripts/sm100/glm53_probe.ptx"
+GC_MOE_PTXAS=""
+for candidate in "$lib/nvidia/cu13/bin/ptxas" "$blib/nvidia/cu13/bin/ptxas" "$CUDA_HOME/bin/ptxas"; do
+  [[ -x $candidate ]] || continue
+  version=$("$candidate" --version) || continue
+  [[ $version =~ release[[:space:]]+([0-9]+)\.([0-9]+) ]] || continue
+  (( BASH_REMATCH[1] > 13 || (BASH_REMATCH[1] == 13 && BASH_REMATCH[2] >= 2) )) || continue
+  if "$candidate" -arch=sm_103f "$ptx" -o "$root/sm103f.cubin"; then
+    GC_MOE_PTXAS=$candidate
+    break
+  fi
+done
+if [[ -z $GC_MOE_PTXAS ]]; then
+  "$py" -m pip install --no-deps --target "$root/assembler" 'nvidia-cuda-nvcc==13.5.37'
+  GC_MOE_PTXAS="$root/assembler/nvidia/cu13/bin/ptxas"
+  "$GC_MOE_PTXAS" -arch=sm_103f "$ptx" -o "$root/sm103f.cubin"
 fi
-export GC_MOE_PTXAS="$(command -v ptxas)" GC_MOE_NVCC="$(command -v nvcc)"
-test -x "$GC_MOE_PTXAS" && test -x "$GC_MOE_NVCC"
+export GC_MOE_PTXAS
+echo "[prepare] DeepGEMM nvcc=$DG_JIT_NVCC_COMPILER GC ptxas=$GC_MOE_PTXAS"
+"$GC_MOE_PTXAS" --version
 export PYTHONPATH="$root/upstream:$repo/scripts/sm100:$repo/integration"
 if ! "$py" -c 'from cuda.bindings import driver as cu; assert hasattr(cu.CUdevWorkqueueConfigScope, "CU_WORKQUEUE_SCOPE_GREEN_CTX_BALANCED")' >/dev/null 2>&1; then
   "$py" -m pip install --ignore-installed 'cuda-bindings==13.2.0' 'cuda-python==13.2.0'
@@ -102,6 +130,7 @@ export GC_MOE_SM100_TRACE=2 GC_MOE_ECO_PLAN_DISPATCH=1 GC_MOE_SM100_TRACE_EVENTS
 unset GC_MOE_ECO_UNIT_CFG GC_MOE_ECO_OBJECTIVE GC_MOE_ECO_BLOCK_M GC_MOE_ECO_HELPER GC_MOE_DISPATCH_SMS
 unset GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY SM90_SIX_ARM SM90_EIGHT_ARM
 export GC_MOE_ECO_CACHE_DIR="$root/eco-cache" TRITON_CACHE_DIR="$root/triton" VLLM_CACHE_ROOT="$root/vllm-cache"
+export DG_JIT_CACHE_DIR="$VLLM_CACHE_ROOT/deep_gemm"
 export HF_HUB_OFFLINE=1 TORCHINDUCTOR_CACHE_DIR="$root/inductor" PYTHONHASHSEED=0
 export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1
 "$py" scripts/sm100/glm53_matrix.py prepare "$root"
@@ -163,8 +192,6 @@ acquire() {
     sleep 60
   done
 }
-# Assemble before reserving GPUs. This file contains a single native image and no PTX fallback.
-"$GC_MOE_PTXAS" -arch=sm_103f "$repo/scripts/sm100/glm53_probe.ptx" -o "$root/sm103f.cubin"
 for arm in vanilla rr eco; do
   echo "$(date -Is) $arm checkpoint readahead"
   "$base" - "$GLM_MODEL" <<'WARM'
@@ -188,7 +215,7 @@ WARM
   acquire
   export CUDA_VISIBLE_DEVICES="$grant"
   if [[ $arm == vanilla ]]; then
-    "$py" -u "$repo/scripts/sm100/glm53_probe.py" "$root"
+    DG_JIT_PRINT_COMPILER_COMMAND=1 "$py" -u "$repo/scripts/sm100/glm53_probe.py" "$root"
   fi
   echo "$(date -Is) starting $arm $grant"
   "$py" -u scripts/sm100/glm53_matrix.py "$arm" "$root"
