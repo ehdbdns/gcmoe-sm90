@@ -64,7 +64,7 @@ def collect(root, out, rc):
                     h.update(block)
                 digest = h.hexdigest()
             row = {"path": str(rel), "bytes": f.stat().st_size, "sha256": digest}
-            if f.name == "result.json" or f.name.endswith((".perfetto.json", ".ranks.json")):
+            if f.name in ("setup.json", "result.json") or f.name.endswith((".perfetto.json", ".ranks.json")):
                 dst = out / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 if row["bytes"] < 45 << 20:

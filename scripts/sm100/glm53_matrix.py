@@ -105,6 +105,30 @@ def load(root, arm, phase, rank, key):
         return v[key]
 
 
+def validate_refit_setup(arm, setup, native_setup):
+    from glm53_price import NEW
+
+    eco = arm == "eco"
+    roles = [[2, 1, 136], [1, 0, 11 if eco else 12]]
+    if eco:
+        roles.append([4, 0, 1])
+    roles.append([3, 1, 64])
+    if len(setup) != 8 or len(native_setup) != 8:
+        raise ValueError(f"{arm}: expected eight current and eight reference ranks")
+    for rank, (worker, reference) in enumerate(zip(setup, native_setup)):
+        expected = dict(rank=rank, gpu=reference["gpu"], slots=32 if arm == "vanilla" else 36,
+                        block_m=16, trace_level=2, dispatch_sms=12, compute_sms=136, roles=roles,
+                        eco_unit=[16, *NEW, 1, 6, 0] if eco else None)
+        for field, want in expected.items():
+            actual = worker[field]
+            if field == "roles":
+                actual = [list(node) for node in actual]
+            elif field == "eco_unit" and actual is not None:
+                actual = list(actual)
+            if actual != want:
+                raise ValueError(f"{arm} rank{rank} {field}: observed {actual!r}, expected {want!r}")
+
+
 def arm_run(root, arm):
     import torch
     from eco_trace import export
@@ -183,7 +207,8 @@ def arm_run(root, arm):
     ):
         raise ValueError("shared-first ECO graph was not installed on every rank")
     if os.getenv("GLM_REFIT4") == "1":
-        from glm53_price import NEW, PUBLIC
+        from glm53_price import PUBLIC
+        (folder / "setup.json").write_text(json.dumps(result, indent=2) + "\n")
         old = json.loads((PUBLIC / "receipt.json").read_text())
         # Match the assigned UUID/order and official prompt cohort before timing.
         reference = Path(os.environ["GLM_PRICE_REFERENCE"])
@@ -192,15 +217,7 @@ def arm_run(root, arm):
         native = json.loads((reference / "vanilla/result.json").read_text())
         if result["prompt_sha256"] != native["prompt_sha256"]:
             raise ValueError("prompt cohort changed")
-        expected = ([[2, 1, 136], [1, 0, 11], [4, 0, 1], [3, 1, 64]] if arm == "eco"
-                    else [[2, 1, 136], [1, 0, 12], [3, 1, 64]])
-        for r, worker in enumerate(result["setup"]):
-            if (worker["rank"] != r or worker["gpu"] != native["setup"][r]["gpu"]
-                    or worker["slots"] != (32 if arm == "vanilla" else 36)
-                    or worker["block_m"] != 16 or worker["trace_level"] != 2
-                    or worker["roles"] != expected
-                    or worker["eco_unit"] != ([16, *NEW, 1, 6, 0] if arm == "eco" else None)):
-                raise ValueError(f"{arm} rank{r}: incorrect shared-first graph, device, price or slot count")
+        validate_refit_setup(arm, result["setup"], native["setup"])
     tokens = {f"req{i}": [] for i in range(BS)}
     params = SamplingParams(
         temperature=0, max_tokens=2400, ignore_eos=True, output_kind=RequestOutputKind.DELTA
