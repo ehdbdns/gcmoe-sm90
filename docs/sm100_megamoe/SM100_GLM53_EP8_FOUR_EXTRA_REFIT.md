@@ -1,6 +1,6 @@
 # SM100 · GLM-5.3 EP8 · 每卡 32 个独立流、4 个冗余槽、shared 优先
 
-在原来的八张设备上执行三臂整模 decode。比较原生 GC、逐层 EPLB + RR、同一放置的 EPLB + ECO。模型为 GLM-5.3 FP4 MoE / FP8 UE8M0。站点设备名为 L20D，上次实测 CUDA capability 10.3，并通过了 sm_103f 原生指令探针。本轮代码版本为 `4516d6e81878e4623564dfb682cf78f06552bf6e`。
+在原来的八张设备上执行三臂整模 decode。比较原生 GC、逐层 EPLB + RR、同一放置的 EPLB + ECO。模型为 GLM-5.3 FP4 MoE / FP8 UE8M0。站点设备名为 L20D，上次实测 CUDA capability 10.3，并通过了 sm_103f 原生指令探针。本轮代码版本为 `2fd9fba8f37604bfba24ff6e6e486f5078af31f4`。
 
 ## 1. 拟合依据和本轮价格
 
@@ -18,6 +18,8 @@
 
 末行每折只用其余两层训练连续系数，再评估留出的整层。每折一起留出三个臂及全部 rank。完整旧窗口的原始 NPZ 存在执行节点，公开回执提供文件摘要。本任务首先在 CPU 核验之前三臂的 24 份正式 NPZ，然后按完整的 3 × 1000 步 × 75 层评估两套固定价格。额外记录全量重拟合以及在前 800 步训练、后 200 步检验的结果。写入 `historical-price/scores.json`。本次 GPU 实验固定使用上文已经汇报的 66、74。公开样本上的改善集中在原生臂，能否降低新放置下的完整 MoE 耗时由实测决定。[旧实验主表、三臂 Perfetto 和 rank 表](glm53_formal_results/formal.QLfEZmKt/) · [拟合和复核脚本](../../scripts/sm100/glm53_price.py)
 
+公开样本中 2,412 个非空槽观测有 2,260 个只接收一个 M 块。将 wa 固定为 0 或 1、在各折重新拟合 wb，两组留层 MAE 都为 0.31633 个百分点。允许 wa 自由拟合后为 0.21772。三折独立拟合的 wa 分别约为 134、55、62。完整历史窗口在相同的前 800 步拟合、后 200 步检验上也分别报告 wa=0、wa=1 和自由拟合。
+
 ## 2. 三臂配置和公平性
 
 | 顺序 | 臂 | 每卡物理槽 | 分发 | CUDA 子图节点提交顺序 |
@@ -34,6 +36,8 @@
 ## 3. 从空闲八卡开始
 
 在原节点 `e01-cn-il24rbk1805` 使用站点授权账号、原八卡和原 rank 顺序。先核对调度器预约。上一个执行者仍在运行时等它退卡；八卡中任一张在用就等待，不占用部分空闲卡。保留站点分配的设备掩码。执行器在每臂前取得协作锁并连续两次检查 GPU 进程、句柄、利用率和显存，结束该臂即释放 GPU 锁。权重、旧实验和其他用户作业均保留。
+
+上一轮启动在历史 CPU 拟合时遇到缺少 SciPy，完成 0 个 GPU 臂，首错归档于 `formal.7MYZCaAQ`。使用下面命令新建 job；启动器先查找可用的 CPU 拟合解释器，需要时在作业私有目录安装固定版本的 NumPy 和 SciPy。
 
 默认上次完整原件目录为 `/data0/home/admin/workspace/glm53-work/formal.QLfEZmKt/results`。若站点已经迁移原件，通过 `GLM_PRICE_REFERENCE` 指向原件。脚本核对已发布的文件哈希。使用足以容纳本次模型参考、KV 快照和三个臂结果的私有工作盘。八卡 CUDA 进程之外的准备、历史复核和归档均在 CPU 上运行。执行下面整段命令，记录打印的 job 路径。
 
@@ -59,7 +63,7 @@ job=$(mktemp -d "$GLM_WORK_ROOT/formal.XXXXXXXX")
 echo "本次任务 $job"
 mkdir "$job/repo"
 cd "$job"
-blob=24b79e0ec1d98d34a48ba341b0acec60c250d308
+blob=9d0147c47f2457af4a3790ed9de14ee3bccd7403
 printf 'Authorization: Bearer %s\n' "$GH_TOKEN" |
   curl -fsS --connect-timeout 10 --max-time 90 --retry 3 -H @- \
     -H 'Accept: application/vnd.github+json' \
@@ -70,12 +74,12 @@ obj = json.loads(pathlib.Path("bundle.json").read_text())
 if obj["encoding"] != "base64" or obj["sha"] != sys.argv[1]:
     raise SystemExit("GitHub blob mismatch")
 payload = base64.b64decode(obj["content"])
-if hashlib.sha256(payload).hexdigest() != "cdd1db5f1c288e448059562a6e5072d6cfa23e152d9d9717d364690b0028ed5c":
+if hashlib.sha256(payload).hexdigest() != "125ab3d8e708954f0ffc0391421c0b90e28a338439a2a15594d8714ea0aba8fd":
     raise SystemExit("executor archive SHA256 mismatch")
 pathlib.Path("executor.tar.gz").write_bytes(payload)
 PY
 tar xzf executor.tar.gz -C repo
-echo 4516d6e81878e4623564dfb682cf78f06552bf6e > repo/SOURCE_REVISION
+echo 2fd9fba8f37604bfba24ff6e6e486f5078af31f4 > repo/SOURCE_REVISION
 bash repo/scripts/sm100/glm53_execute.sh "$job" --refit4 "$old"
 )
 ~~~
