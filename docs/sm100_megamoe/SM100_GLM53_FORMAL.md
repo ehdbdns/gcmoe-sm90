@@ -1,79 +1,115 @@
-# SM100 · GLM-5.3 BS256 三臂整模实验
+# SM100 新执行者任务书 · GLM-5.3 EP8 三臂
 
-**只在获准使用的同组 8 张 Blackwell GPU 全部空闲时启动每一臂。** 有任一张卡被占用或被他人预约，就整组等待。每一臂结束释放八卡，再独立检查下一臂。CPU 安装和 EPLB 放置计算均在 GPU 锁外。执行者只运行下面的命令；如有编译器兼容性修复，保留原错误和补丁。模型加载、拓扑、路由、数值、采样和指标差异都交回构建者处理。
+你接手的是节点 `e01-cn-il24rbk1805` 上的正式实验。上次回执 `516235d` 为 **0/3**。旧执行者在下载代码时退出，三臂均未启动。模型和权重已在这台机器上校验过。你只需要这份任务书、该节点的 Bash 登录权限、指定八卡的使用授权以及可向本仓库提交回执的 GitHub 身份。可以从空目录和新的 Linux 账号开始。
 
-## 执行
+## 本次交付
 
-在完成 CPU 回执 `0415075` 的同一台机器运行。复用回执确认的 vLLM 0.31.0 环境，脚本优先复用通过版本与来源检查的 CuTe DSL 4.8.1 环境，其次复用校验过的本机 wheels。确认调度分配/预约有效，再在分配的 shell 执行整段。若调度器提供 `CUDA_VISIBLE_DEVICES`，直接沿用；在无调度器且共享超过 8 卡的机器，请事先用 `SM100_GPU_UUIDS` 填入本任务获准使用的八个逗号分隔 UUID。两者均未设置时，仅在节点恰好可见本任务获准使用的八卡时执行。卡忙时脚本每 60 秒复查，不占空闲卡。
+| 项目 | 固定设定 |
+|---|---|
+| 节点与模型 | NVIDIA L20D 节点，实际模型目录为 `/mnt/hf3fs/3fs/models/GLM-5.3-FP4Moe-FP8ue8m0` |
+| 三臂顺序 | `vanilla` 原生 GC → `rr` 逐层 EPLB + RR → `eco` 同一份 EPLB 放置 + Natureal ECO |
+| 工作量 | TP8/EP8，BS256，每 rank 32 个 decode token，75 个 routed 层；每臂前 1000 步统计、后 1000 步测量 |
+| 共同配置 | GC 上游底座 `af5a7a75`，模型原始 FP4 routed / FP8 shared 权重，CUDA Graph，`GC_MOE_SM100_TRACE=2`；原生 32 槽/rank，两条 EPLB 臂 40 槽/rank，ECO plan 从 dispatch 分区取 1 SM |
+| 采样 | 后半段第 2 个 replay，实际 decoder 第 8、20、32 层，每层八个 rank 的 token、M 块、概要及 absolute Perfetto；保留对应 torch.profiler 原件 |
+| 返回位置 | `main` 分支的 `docs/sm100_megamoe/glm53_formal_results/formal.<本次编号>/`；完成后回复 GitHub 返回的提交地址、三臂状态和首个错误（如有） |
 
-默认工作目录沿用上轮私有盘。可事先把 `GLM_WORK_ROOT` 指向同机更大的私有存储。两份完整 KV 快照的逻辑大小最多约 768 GiB。全零块按稀疏文件写入，其余块保留原字节；物理占用取决于数据和文件系统。优先选空间充足的私有卷。若此前环境已被清理，先按运行环境任务书在同机恢复，并通过 `GLM_RUNTIME_PYTHON` 指向新回执中的解释器。
+## 登录后先看现场
 
-先看本机原任务的最后日志。若正式启动器还在，下面整段命令会保留原进程，并直接把 PID、运行时长、日志最后更新时间和尾部提交到 GitHub。旧任务已退出且没有正式结果时，直接执行以下重试命令，跳过两轮已通过的 CPU 探针。有完整臂时先交回结果，避免重复测量。
+在获准使用的这台节点上运行以下只读命令。确认自己的调度分配或预约覆盖同一组八卡。即使卡的利用率为零，也要尊重他人预约。调度器已设置的 `CUDA_VISIBLE_DEVICES` 原样保留。无调度器且节点仅有这八张卡时，在确认可使用整组后执行。若能看到更多卡，先把获准的八个完整 GPU UUID 以逗号分隔写入 `SM100_GPU_UUIDS`。
+
+~~~bash
+hostname -s
+id -un
+nvidia-smi -L
+nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name --format=csv
+pgrep -af '^([^ ]*/)?bash[[:space:]]+([^ ]*/)?(glm53_execute|run_glm53_three)[.]sh([[:space:]]|$)' || true
+ls -d /data0/home/admin/workspace/glm53-work/formal.*/results/{main.csv,*/result.json} 2>/dev/null || true
+~~~
+
+回执中的旧目录 `formal.jQxs5nOk` 是空的。若上面出现新进程，先看该进程所属任务的 `results/run.log`，让已启动的任务继续。如果发现已有正式臂的 `result.json`，先按末节交回已有记录。仅有空目录时直接继续。不要终止其他人的进程。
+
+## 从空目录启动
+
+1. 在有持久终端的 Bash 中执行下面两段，可以用节点已有的 tmux 会话，或先运行 `tmux new -s glm53-ep8`。断开连接后，用 `tmux attach -t glm53-ep8` 回到原任务。代码从现场已验证可用的 GitHub Contents API 下载。执行包约 0.4 MiB，含 GC 上游源、补丁、运行及回传脚本，下载一次即齐备。
+2. 默认私有盘为 `/data0/home/当前用户名/workspace/glm53-work`。新账号的目录位置若不同，先把 `GLM_WORK_ROOT` 设为自己可写且空间充足的私有卷。两份 KV 快照逻辑大小合计最多约 768 GiB，实际磁盘占用取决于稀疏文件支持和非零数据量。先用 `df -h` 查看该卷。
+3. 默认复用上轮的 vLLM 0.31.0、torch 2.13.0 / CUDA 13.0 环境。该环境对新账号不可访问时，脚本先找自己的同版环境，再使用 `python3.12 -m venv` 安装到本次目录。已有同版私有环境可通过 `GLM_RUNTIME_PYTHON` 指向其 `bin/python`。现场确认的 CUDA 工具在 `/usr/local/cuda/bin`。Python 镜像优先沿用本站配置，未设置时命令使用上轮验证过的清华镜像。
+
+第一段定义本次 GitHub 登录方式。可使用现场已有的 `GH_TOKEN`、`GITHUB_TOKEN`、GitHub CLI 登录或 Git credential helper。所在账号需要本仓库 Contents 读写权限。新账号若使用 GitHub CLI，可先运行 `gh auth login --hostname github.com --web`。凭据只在本机使用。
+
+~~~bash
+glm53_auth() {
+  set +x
+  local token=${GH_TOKEN:-${GITHUB_TOKEN:-}}
+  if [[ -z $token ]] && command -v gh >/dev/null; then
+    token=$(gh auth token --hostname github.com 2>/dev/null) || token=
+  fi
+  if [[ -z $token ]]; then
+    token=$(printf 'protocol=https\nhost=github.com\npath=ehdbdns/gcmoe-sm90.git\n\n' |
+      GIT_TERMINAL_PROMPT=0 git credential fill 2>/dev/null | sed -n 's/^password=//p') || token=
+  fi
+  [[ -n $token ]] || { echo '请在此账号登录获准的 GitHub 身份，或注入 GH_TOKEN 后重试。' >&2; return 1; }
+  export GH_TOKEN=$token
+}
+~~~
+
+第二段完成下载、校验、执行和回传。保留终端打印的私有目录，后续查看日志和补传都用它。
 
 ~~~bash
 (
 set -euo pipefail
+set +x
 umask 077
-storage=${GLM_WORK_ROOT:-/data0/home/admin/workspace/glm53-work}
-mkdir -p "$storage"
-job=$(mktemp -d "$storage/formal.XXXXXXXX")
+glm53_auth
+[[ $(hostname -s) == e01-cn-il24rbk1805 ]] || { echo '请登录任务指定的节点'; exit 2; }
+export GLM_WORK_ROOT="${GLM_WORK_ROOT:-/data0/home/$(id -un)/workspace/glm53-work}"
+export PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+mkdir -p "$GLM_WORK_ROOT"
+df -h "$GLM_WORK_ROOT"
+job=$(mktemp -d "$GLM_WORK_ROOT/formal.XXXXXXXX")
 echo "本次私有目录 $job"
-url=https://github.com/ehdbdns/gcmoe-sm90.git
-local_repo=""
-for prev in "$storage"/formal.*/repo; do
-  if [[ -e "$prev/.git" && $(git -C "$prev" remote get-url origin) == "$url" ]]; then local_repo=$prev; break; fi
-done
-if [[ -n $local_repo ]]; then
-  git -C "$local_repo" fetch --depth=1 --no-tags --filter=blob:none origin main
-  git -C "$local_repo" worktree add --detach --no-checkout "$job/repo" FETCH_HEAD
-else
-  git clone --depth=1 --filter=blob:none --no-checkout --branch main "$url" "$job/repo"
-fi
-cd "$job/repo"
-dest="docs/sm100_megamoe/glm53_formal_results/$(basename "$job")"
-git sparse-checkout set --no-cone '/scripts/sm100/glm53*.py' '/scripts/sm100/real_routed_weights.py' '/scripts/sm100/eco_trace.py' '/scripts/sm100/native_phase_clock.py' '/scripts/sm100/run_glm53_three.sh' '/scripts/sm100/bruce_sm100_eco.patch' '/scripts/sm100/bruce-af5a7a7.tar.gz' '/integration/*.py' '/source/gc_moe/eco/' '/source/gc_moe/eplb/' '/docs/sm100_megamoe/v41_native_phase_results/dsl-wheelhouse.sha256' '/docs/sm100_megamoe/v41_full_decode_pair_results/compat/sitecustomize.py' "/$dest/"
-git checkout --detach HEAD
-active=$(pgrep -u "$(id -u)" -f '^([^ ]*/)?bash[[:space:]]+([^ ]*/)?run_glm53_three[.]sh[[:space:]]+' || true)
-rc=0
-if [[ -n $active ]]; then
-  mkdir -p "$dest"
-  for pid in $active; do
-    [[ -r /proc/$pid/cmdline ]] || continue
-    mapfile -d '' -t argv < "/proc/$pid/cmdline"
-    log="${argv[-1]}/run.log"
-    {
-      date -Is
-      ps -p "$pid" -o pid=,etime=,stat=,comm= || true
-      if [[ -f $log ]]; then
-        stat -c 'last_log_update=%y bytes=%s' "$log"
-        tail -n 30 "$log" | sed -E 's|[^[:space:]]+://[^[:space:]]+|[URL]|g'
-      fi
-    } > "$dest/active-$pid.txt"
-  done
-  echo '原任务保留，本次只交状态。' | tee "$dest/status.txt"
-else
-  mkdir "$job/results"
-  bash scripts/sm100/run_glm53_three.sh "$job/results" 2>&1 | tee "$job/results/run.log" || rc=$?
-  python3 scripts/sm100/glm53_receipt.py "$job/results" "$dest" "$rc"
-fi
-git add -- "$dest"
-git -c user.name="SM100 executor" -c user.email="sm100-executor@users.noreply.github.com" commit -m "[SM100] GLM-5.3 BS256 trace-2 formal execution (exit $rc)"
-git push origin HEAD:refs/heads/main
-git fetch --depth=8 origin main
-git merge-base --is-ancestor HEAD FETCH_HEAD
-echo "回执已到 main：$(git rev-parse HEAD)；运行退出码 $rc"
+mkdir "$job/repo"
+cd "$job"
+stage=download
+trap 'rc=$?; if ((rc)); then echo "stage=$stage exit=$rc job=$job" | tee "$job/bootstrap-status.txt"; fi' EXIT
+api=https://api.github.com/repos/ehdbdns/gcmoe-sm90/contents/docs/sm100_megamoe/glm53_executor.tar.gz
+printf 'Authorization: Bearer %s\n' "$GH_TOKEN" |
+  curl -fsS --connect-timeout 10 --max-time 90 --retry 3 -H @- \
+    -H 'Accept: application/vnd.github+json' \
+    "$api?ref=444969ae13dd438c12ef571fc0cb9708f0d2cb38" -o bundle.json
+stage=verify
+python3 - <<'PY'
+import base64, hashlib, json, pathlib
+obj = json.loads(pathlib.Path("bundle.json").read_text())
+if obj.get("encoding") != "base64" or obj.get("sha") != "8e08c43d45044fef2034c0f75d2aa3a4e198fb2b":
+    raise SystemExit("incorrect Contents API response")
+payload = base64.b64decode(obj["content"])
+if hashlib.sha256(payload).hexdigest() != "43d9ff691e59ba28900d61b3cbe9702946312d41eaaa8786a252311cf0eba33b":
+    raise SystemExit("incorrect execution bundle SHA256")
+pathlib.Path("executor.tar.gz").write_bytes(payload)
+PY
+tar xzf executor.tar.gz -C repo
+printf '%s\n' 0daa8328d6d53211869b0de5a683054ca2be2c4a > repo/SOURCE_REVISION
+stage=execution-or-return
+bash repo/scripts/sm100/glm53_execute.sh "$job"
 )
 ~~~
 
-从另一终端用 `tail -f 私有目录/results/run.log` 查看进展。若 push 仅因另一个执行者先提交被拒，在本次 checkout 运行 `git pull --rebase origin main` 后再次 push。退出码非零时保留日志和首个失败现场；CPU 校验或离线 cubin 均不作为本轮性能结果。
+## 启动后如何判断进度
 
-## 权重加载
+- 在另一个终端用 `tail -F <本次私有目录>/results/run.log`。准备阶段检查 checkpoint 摘要、准备 DSL 4.8.1 并预读分片。正式脚本在每臂开始前取共享锁，检查八卡进程、利用率和设备占用。任一卡忙则释放锁，每 60 秒复查。每臂退出即释放八卡，EPLB 放置在 CPU 上计算。
+- 节点的 `nvidia-smi` 报 8.9，CUDA Driver 和 torch 对相同 UUID 均报 10.3。**裁定由设备执行结果决定。** 首臂取得八张空闲卡后，脚本在每张卡执行只含 `sm_103f` 原生机器码的探针，要求八卡逐一返回预期值。通过后立即加载模型，证据写在 `arch-proof.json`。若有设备失败，交回具体 UUID、CUDA 错误和已通过的设备；无需另起 GPU 作业判卡。
+- 权重加载优化已启用。每臂对 282 个 HF 分片申请页缓存预读，vLLM 采用 safetensors 延迟 mmap 和 EP 本地专家过滤；GC 复用分片句柄。重排时从已加载的 packed 权重做设备间搬运。每臂 `result.json` 记录各 rank 读取的专家 ID、vLLM 与 GC 加载时间。
+- 你负责执行以及留下原始证据。只允许处理可确认不改变语义的编译兼容问题，附原始错误、最小补丁及其使用的臂；涉及公共代码的补丁需整组保持一致。遇到 OOM、路由或数值差异、运行时错误，保留第一个失败，交回构建者。保持 BS、统计及测量步数、放置、量化、trace 和采样层配置。
 
-三臂在取得 GPU 前统一对真实 checkpoint 的分片发出一次系统页缓存预读请求，日志记录成功提交的分片数。vLLM 使用 mmap 和 EP 本地专家过滤；GC 初次组装权重沿用 checkpoint 的原始字节并缓存分片句柄。第 1000 步后 RR/ECO 直接通过八卡进程组搬运已打包的 routed 权重，写回图捕获的原地址；shared 权重继续复用。每臂的 result.json 记录各 rank 实际读到的 routed 专家 ID（预期 32/256）及 vLLM、GC 权重加载秒数。
+## 验收和补传
 
-## 运行口径与验收
+成功回执的 `receipt.json` 有三个 `complete_arms`、退出码 0、源码版本和原始文件清单。`main.csv` 有三行，涵盖 MoE 微秒数、token IR、总/峰值 M 块、总/峰值活跃槽、M 块 IR、相对原生和 RR 的变化；ECO 另有 routed MAE、报价数、成交数和接受率。逐步逐层验证逻辑 dispatch 总数，各臂核对 token、请求顺序、KV 边界、gate 和原生 top1。仅在严格匹配时填写配对百分比。
 
-- 三臂依次为原生 GC、逐层 EPLB + DeepInfer RR、同放置 EPLB + Natureal ECO。原生每卡 32 槽，两条 EPLB 臂每卡 40 槽。TP8/EP8、BS256、每 rank 32 个 token、全部 75 个 routed 层。CUDA Graph 模式与 trace 2 对三臂相同。ECO 从 dispatch 分区拿 1 个 SM。GLM 的 shared FP8 为 128×128 尺度，routed FP4 为每行 K32 尺度。私有 HF 配置显式选择 vLLM 的 routed MXFP4 loader。
-- 使用固定的 256 条中文研究问题和 GLM 自己的 tokenizer，属于受控工作负载。这批问题与历史 DS4.1 的线上请求来源不同。每臂同一批请求连续跑 1000 个统计步和 1000 个测量步。统计结束，按原生臂的逐步逐层专家计数计算 EPLB，冻结放置。两个 consumer 在原图地址安装物理槽对应的权重、映射和 ECO 状态。两处 KV 边界字节校验，反馈、批内顺序、原生及强制逻辑 gate 分别留证。
-- 从重排后第 2 个 replay 取层 8、20、32 的逐 rank counts、torch.profiler 原件、概览和 absolute Perfetto。各样本与对应步层主表原始 clocks/counts 对照。主表覆盖后 1000 步 × 75 层；完整 MoE 是每层每步八 rank 最大的首角色到 combine 结束跨度，routed 从真实 routed MMA 开始到最后 L2 push。记录 token IR、总 M 块、峰值 M 块、活跃槽、M 块 IR，以及 ECO 的 routed MAE、报价、成交与接受率。计时代表 trace 2 开启时的性能。
-- GPU 进程退出即释放。报告含主表、逐臂校验结果、小型 Perfetto、各原始文件路径/大小/摘要。大文件保存在私有目录。严格配对不通过时，主表仍保留绝对测量，配对百分比留空。核对回执后可清理本任务的安装包和编译缓存，保留 KV/路由参考、结果与日志以便复核。
+每臂的 `perfetto/` 中，`step0002-layer{08,20,32}.perfetto.json` 看阶段重叠，`.absolute.perfetto.json` 看 CTA，`.ranks.json` 看逐 rank token 和 M 块。完整 Kineto、原始 clocks/counts、KV 与反馈留在回执注明的私有目录。失败回执保留已完成臂和 `failure-tail.txt`。等待 API 回传并核实终端打印的 GitHub 地址后，可清理自己本轮的 wheels 和编译缓存；保留可复用环境及复核材料。
+
+如果只在回传时断网，使用第一段登录函数和下面的命令补传同一份回执。将第一行改成启动时打印的目录；补传会校验 GitHub 上的整棵结果目录，可以重复执行。若发现旧启动器已完成部分臂但尚未生成回执，在新执行包目录用 `python3 repo/scripts/sm100/glm53_receipt.py 旧目录/results 私有目录/receipt/formal.原编号 1` 打包（已有完整三臂及主表时用 0），再通过同一发布脚本上传。若在执行包下载前即失败，在交接消息附节点、API HTTP 状态与 `bootstrap-status.txt`；仅重试下载。所有回执都不含权重或登录凭据。
+
+~~~bash
+job='/替换为本次私有目录/formal.XXXXXXXX'
+( glm53_auth && python3 "$job/repo/scripts/sm100/glm53_publish.py" "$job/receipt/$(basename "$job")" )
+~~~
