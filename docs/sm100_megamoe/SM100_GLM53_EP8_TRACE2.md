@@ -4,7 +4,11 @@
 
 执行者为 **SM100**。模型取自本机 HF3FS 的 GLM5.3 FP4moe-FP8ue8m0。三个整模臂均用 Bruce GC fused shared，底座为 `af5a7a750800954f52b9ff28cc55d945ead48da6`，ECO 使用本仓库的 `scripts/sm100/bruce_sm100_eco.patch`。三臂均从进程启动设置 `GC_MOE_SM100_TRACE=2`。本轮先按上一份 SM100 回执实际要求的 BS256（32 个 decode token/rank）准备三臂。
 
-## 新执行者从这里开始
+## 当前执行入口
+
+第一阶段回执已合入 main（68d019e）。请直接执行下一阶段，下面保留第一阶段的复现步骤。[运行环境与真实权重任务书](SM100_GLM53_RUNTIME.md)
+
+## 第一阶段复现
 
 在能访问 `/mnt/hf3fs/3fs/models` 的 **SM100 机器**打开 Bash。你负责执行命令和交回原始结果；代码、参数选择和数据分析由构建者负责。**本次任务完成的标志是 CPU 回执已经出现在 GitHub 的 main 分支。** 这一步随时可做，机器上的 GPU 正在运行其他人的作业也不影响。它读取 checkpoint 配置、索引、分片头和本机 vLLM 安装信息，通常只需 Git、Bash 和 Python 3.9+，不用安装 CUDA 或重新下载模型。
 
