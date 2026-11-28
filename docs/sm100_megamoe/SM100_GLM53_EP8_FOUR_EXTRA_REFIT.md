@@ -1,5 +1,7 @@
 # SM100 · GLM-5.3 EP8 · 每卡 32 个独立流、4 个冗余槽、shared 优先
 
+后续执行使用[SM100 每卡 1、8、12 冗余槽任务书](SM100_GLM53_EP8_SLOT_BUDGETS.md)。本页保留历史四槽实验配置。
+
 在原来的八张设备上执行三臂整模 decode。比较原生 GC、逐层 EPLB + RR、同一放置的 EPLB + ECO。模型为 GLM-5.3 FP4 MoE / FP8 UE8M0。站点设备名为 L20D，上次实测 CUDA capability 10.3，并通过了 sm_103f 原生指令探针。本轮代码版本为 `79514e6f0c78efd711ccd0de1a72e03d412e8d42`。
 
 ## 1. 拟合依据和本轮价格
