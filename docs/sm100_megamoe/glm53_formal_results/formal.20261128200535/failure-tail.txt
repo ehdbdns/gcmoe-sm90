@@ -1,0 +1,100 @@
+(Worker_TP7_EP7 pid=2043532) ERROR 11-28 20:59:15 [multiproc_executor.py:948]     self.bank[layer] = self.reader.load_gc(layer, row.reshape(8, -1)[self.rank])
+(Worker_TP7_EP7 pid=2043532) ERROR 11-28 20:59:15 [multiproc_executor.py:948]                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP7_EP7 pid=2043532) ERROR 11-28 20:59:15 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/repo-exec-v2/scripts/sm100/glm53_weights.py", line 87, in load_gc
+(Worker_TP7_EP7 pid=2043532) ERROR 11-28 20:59:15 [multiproc_executor.py:948]     routed = transform_weights_for_gc_moe(*bank)
+(Worker_TP7_EP7 pid=2043532) ERROR 11-28 20:59:15 [multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP7_EP7 pid=2043532) ERROR 11-28 20:59:15 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/formal.20261128200535/results/upstream/gc_moe/gc/__init__.py", line 222, in transform_weights_for_gc_moe
+(Worker_TP7_EP7 pid=2043532) ERROR 11-28 20:59:15 [multiproc_executor.py:948]     packed = [repack(_gc_interleave_rows(l1_weights[0])), repack(l2_weights[0])]
+(Worker_TP7_EP7 pid=2043532) ERROR 11-28 20:59:15 [multiproc_executor.py:948]                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP7_EP7 pid=2043532) ERROR 11-28 20:59:15 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/formal.20261128200535/results/upstream/gc_moe/gc/__init__.py", line 179, in _gc_interleave_rows
+(Worker_TP7_EP7 pid=2043532) ERROR 11-28 20:59:15 [multiproc_executor.py:948]     result = torch.empty_like(grouped).copy_(torch.stack((gate, up), dim=2).reshape(grouped.shape))
+(Worker_TP7_EP7 pid=2043532) ERROR 11-28 20:59:15 [multiproc_executor.py:948]                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP7_EP7 pid=2043532) ERROR 11-28 20:59:15 [multiproc_executor.py:948] torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 480.00 MiB. GPU 7 has a total capacity of 267.69 GiB of which 40.38 MiB is free. Including non-PyTorch memory, this process has 69.55 GiB memory in use. Process 2092119 has 197.88 GiB memory in use. Of the allocated memory 65.69 GiB is allocated by PyTorch, and 23.05 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  [URL]
+(MainProcess pid=2029153) INFO 11-28 20:59:15 [multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+[rank4]:[W1128 20:59:16.692233960 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 4 while trying to allocate 503316480 bytes (free: 113508352, total: 287428771840).
+[rank4]:[W1128 20:59:16.717235188 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 4 while trying to allocate 503316480 bytes (free: 430178304, total: 287428771840).
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948] WorkerProc failed to start.
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948] Traceback (most recent call last):
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 915, in worker_main
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     worker = WorkerProc(*args, **kwargs)
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 682, in __init__
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     self.worker.load_model()
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 545, in load_model
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     self.model_runner.load_model(load_dummy_weights=load_dummy_weights)
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu/model_runner.py", line 379, in load_model
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     self.model = model_loader.load_model(
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]                  ^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/model_executor/model_loader/base_loader.py", line 75, in load_model
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     self.load_weights(model, model_config)
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/model_executor/model_loader/default_loader.py", line 481, in load_weights
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     loaded_weights = model.load_weights(self.get_all_weights(model_config, model))
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/repo-exec-v2/scripts/sm100/glm53_decode_worker.py", line 251, in load
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     STATE = Decode(model)
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]             ^^^^^^^^^^^^^
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/repo-exec-v2/scripts/sm100/glm53_decode_worker.py", line 89, in __init__
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     self.bank[layer] = self.reader.load_gc(layer, row.reshape(8, -1)[self.rank])
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/repo-exec-v2/scripts/sm100/glm53_weights.py", line 87, in load_gc
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     routed = transform_weights_for_gc_moe(*bank)
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/formal.20261128200535/results/upstream/gc_moe/gc/__init__.py", line 222, in transform_weights_for_gc_moe
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     packed = [repack(_gc_interleave_rows(l1_weights[0])), repack(l2_weights[0])]
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/formal.20261128200535/results/upstream/gc_moe/gc/__init__.py", line 179, in _gc_interleave_rows
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]     result = torch.empty_like(grouped).copy_(torch.stack((gate, up), dim=2).reshape(grouped.shape))
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948]                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP4_EP4 pid=2043521) ERROR 11-28 20:59:17 [multiproc_executor.py:948] torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 480.00 MiB. GPU 4 has a total capacity of 267.69 GiB of which 410.25 MiB is free. Including non-PyTorch memory, this process has 68.77 GiB memory in use. Process 2091567 has 198.31 GiB memory in use. Of the allocated memory 64.90 GiB is allocated by PyTorch, and 23.40 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  [URL]
+(MainProcess pid=2029153) WARNING 11-28 20:59:20 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=8
+(MainProcess pid=2029153) WARNING 11-28 20:59:24 [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=8
+Traceback (most recent call last):
+  File "/data0/home/admin/workspace/repo-exec-v2/scripts/sm100/glm53_matrix.py", line 318, in <module>
+    arm_run(root, args.action)
+  File "/data0/home/admin/workspace/repo-exec-v2/scripts/sm100/glm53_matrix.py", line 128, in arm_run
+    llm = LLM(
+          ^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/entrypoints/llm.py", line 344, in __init__
+    self.llm_engine = LLMEngine.from_engine_args(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 185, in from_engine_args
+    return cls(
+           ^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 111, in __init__
+    self.engine_core = EngineCoreClient.make_client(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 133, in make_client
+    return InprocClient(vllm_config, executor_class, log_stats)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 363, in __init__
+    self.engine_core = EngineCore(
+                       ^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 140, in __init__
+    self.model_executor = executor_class(vllm_config)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 116, in __init__
+    super().__init__(vllm_config)
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/abstract.py", line 113, in __init__
+    self._init_executor()
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 214, in _init_executor
+    self.workers = WorkerProc.wait_for_ready(unready_workers)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 810, in wait_for_ready
+    raise e from None
+Exception: WorkerProc initialization failed due to an exception in a background process. See stack trace for root cause.
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 6 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
