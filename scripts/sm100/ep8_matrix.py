@@ -90,8 +90,17 @@ def run(group, arm, bs):
         rpc("ep8_begin", phase)
         t = time.perf_counter()
         for i in range(1000):
+            sample = (phase == "measure" and i == 1 and os.getenv("SM100_BRUCE_ECO") == "1"
+                      and os.getenv("GC_MOE_SM100_TRACE") == "2")
+            if sample:
+                rpc("ep8_profile_begin")
             if step() != bs:
                 raise ValueError(f"incomplete batch: {arm} {phase} step {i}")
+            if sample:
+                rpc("ep8_profile_end", i + 1)
+                from eco_trace import export
+                for layer in (8, 20, 32):
+                    export(dest / "perfetto", f"step{i + 1:04d}-layer{layer:02d}")
         # All workers synchronize in finish, outside device MoE stamps.
         ranks = rpc("ep8_finish")
         result[phase] = dict(ranks=ranks)

@@ -3,6 +3,7 @@ import argparse
 import csv
 import itertools
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -25,7 +26,7 @@ def peaks(clocks, price):
                 tied_price=int((price_max.sum(-1) > 1).sum()), tied_time=int((slow.sum(-1) > 1).sum()))
 
 
-def summarize(counts, clocks, bm, eco):
+def summarize(counts, clocks, bm, eco, weights=(26, 2)):
     g, t, u, c = clocks.transpose(2, 0, 1)
     tokens = counts.sum(-1)
     blocks = ((counts + bm - 1) // bm).sum(-1)
@@ -35,7 +36,7 @@ def summarize(counts, clocks, bm, eco):
     if not (np.all((g > 0) & (graph > 0)) and
             np.all(np.where(tokens > 0, (g <= t) & (u > t) & (u <= c), (t == -1) & (u == 0)))):
         raise ValueError("invalid device clocks")
-    price = tokens + 26 * blocks + 2 * active
+    price = tokens + weights[0] * blocks + weights[1] * active
     stats = dict(moe_us_per_layer=graph.max(1).mean() / 1000,
                  token_ir=(tokens.max(1) / tokens.mean(1)).mean(),
                  total_m_blocks=blocks.sum(1).mean(), peak_rank_m_blocks=blocks.max(1).mean(),
@@ -96,9 +97,11 @@ def verify_slots(group, phase, arm, counts, vanilla):
 
 
 def group_report(group, bs):
+    port = os.getenv("SM100_BRUCE_ECO") == "1"
+    arms = ("vanilla", "rr", "eco") if port else ARMS
     results, summary, layers, auctions = {}, [], [], []
     for phase in ("stats", "measure"):
-        for arm in ARMS:
+        for arm in arms:
             folder = group / arm
             result = results[arm] = json.loads((folder / "result.json").read_text())
             ranks = result[phase]["ranks"]
@@ -107,6 +110,7 @@ def group_report(group, bs):
             bm, = {r["block_m"] for r in ranks}
             assert bm == {256: 16, 512: 16, 1024: 32}[bs]
             is_eco = arm == "eco"
+            weights = ranks[0]["eco_unit_config"][1:3] if is_eco else (26, 2)
             if any(r["native_window"] != ranks[0]["native_window"] for r in ranks):
                 raise ValueError(f"{arm} {phase}: TP workers disagree on native greedy outputs")
             physical, timestamps, auction = [], [], []
@@ -115,11 +119,16 @@ def group_report(group, bs):
                 ctx = r["sm_split"]
                 assert ctx["plan_ctas"] == int(is_eco) and ctx["dispatch_ctas"] == ctx["dispatch"] - int(is_eco)
                 roles = ctx["roles"]
-                assert [role[0] for role in roles] == ([2, 4, 1, 3] if is_eco else [2, 1, 3])
-                assert roles[0] == [2, 1, ctx["compute"]] and roles[-2] == [1, 0, ctx["dispatch_ctas"]]
-                assert roles[-1][1] == 1 and (not is_eco or roles[1] == [4, 0, 1])
+                expected = ([4, 1, 2, 3] if is_eco else [1, 2, 3]) if port else (
+                    [2, 4, 1, 3] if is_eco else [2, 1, 3])
+                assert [role[0] for role in roles] == expected
+                by_role = {role[0]: role[1:] for role in roles}
+                assert by_role[2] == [1, ctx["compute"]] and by_role[1] == [0, ctx["dispatch_ctas"]]
+                assert by_role[3][0] == 1 and (not is_eco or by_role[4] == [0, 1])
                 if is_eco:
-                    assert r["eco_unit_config"] == [bm, 26, 2, 1, 6, 0]
+                    assert r["eco_unit_config"] == [bm, *weights, 1, 6, 0]
+                    if not port:
+                        assert list(weights) == [26, 2]
                 with np.load(folder / f"{phase}-rank{i}.npz") as f:
                     assert f["counts"].shape == (1000, 40, 48 if arm == "vanilla" else 56)
                     physical.append(f["counts"].reshape(40000, -1))
@@ -138,7 +147,7 @@ def group_report(group, bs):
             if phase != "measure":
                 continue
             clocks = np.stack(timestamps, axis=1)
-            metrics, prices = summarize(counts, clocks, bm, is_eco)
+            metrics, prices = summarize(counts, clocks, bm, is_eco, weights)
             accepted = None
             if is_eco:
                 if not all(np.array_equal(a[:, :2], auction[0][:, :2]) for a in auction):
@@ -152,11 +161,11 @@ def group_report(group, bs):
             summary.append(dict(bs=bs, arm=arm, block_m=bm, **metrics,
                                 accepted_per_call=accepted.mean() if is_eco else None))
             for layer in range(40):
-                stats, _ = summarize(counts[layer::40], clocks[layer::40], bm, is_eco)
+                stats, _ = summarize(counts[layer::40], clocks[layer::40], bm, is_eco, weights)
                 layers.append(dict(bs=bs, arm=arm, layer=layer, **stats,
                                    accepted_per_call=accepted[layer::40].mean() if is_eco else None))
     pairs = []
-    for a, b in itertools.combinations(ARMS, 2):
+    for a, b in itertools.combinations(arms, 2):
         failures = []
         native_diff = {}
         if results[a]["feedback_sha256"] != results[b]["feedback_sha256"]:

@@ -36,9 +36,24 @@ else
   python scripts/sm100/ep8_inputs.py "$data" "$root"
 fi
 upstream=fb8b65fa829c97962eb2dbc9a4ad8b759b9cd736
+arms=(vanilla random rr eco)
+upstream_url=https://github.com/Natureal/gc-moe.git
+upstream_branch=eco
+if [[ ${SM100_BRUCE_ECO:-0} == 1 ]]; then
+  upstream=af5a7a750800954f52b9ff28cc55d945ead48da6
+  upstream_url=https://github.com/Bruce-Lee-LY/gc-moe.git
+  upstream_branch=main
+  arms=(vanilla rr eco)
+  trace_config="${GC_MOE_SM100_TRACE:-1} ${GC_MOE_SM100_TRACE_EVENTS:-65536} ${GC_MOE_ECO_UNIT_CFG:-native}"
+  if [[ -e $root/trace-config ]]; then
+    test "$(cat "$root/trace-config")" = "$trace_config" || { echo "Use a separate run directory for this trace configuration" >&2; exit 1; }
+  else
+    echo "$trace_config" > "$root/trace-config"
+  fi
+fi
 export SM100_CLOCKED_UPSTREAM="$root/upstream"
 if [[ ! -f $root/prepared ]]; then
-  if [[ ! -d $root/upstream ]]; then git clone --branch eco https://github.com/Natureal/gc-moe.git "$root/upstream"; fi
+  if [[ ! -d $root/upstream ]]; then git clone --branch "$upstream_branch" "$upstream_url" "$root/upstream"; fi
   git -C "$root/upstream" checkout --detach "$upstream"
   test -z "$(git -C "$root/upstream" status --porcelain)"
   "$base/bin/python" -m venv "$root/dsl-env"
@@ -54,18 +69,27 @@ if [[ ! -f $root/prepared ]]; then
   blib=$("$base/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
   printf "import site; site.addsitedir('%s')\n" "$blib" > "$lib/zz_v41_common.pth"
   cp docs/sm100_megamoe/v41_full_decode_pair_results/compat/sitecustomize.py "$lib/sitecustomize.py"
-  for patch in scripts/sm100/natureal_matrix_audit.patch docs/sm100_megamoe/v41_full_decode_pair_results/compat/gc_capture_fix.diff scripts/sm100/vllm_combine_order.patch scripts/sm100/ep8_linear_roles.patch; do
-    git -C "$root/upstream" apply "$repo/$patch"
-  done
+  if [[ ${SM100_BRUCE_ECO:-0} == 1 ]]; then
+    git -C "$root/upstream" apply --index "$repo/scripts/sm100/bruce_sm100_eco.patch"
+  else
+    for patch in scripts/sm100/natureal_matrix_audit.patch docs/sm100_megamoe/v41_full_decode_pair_results/compat/gc_capture_fix.diff scripts/sm100/vllm_combine_order.patch scripts/sm100/ep8_linear_roles.patch; do
+      git -C "$root/upstream" apply "$repo/$patch"
+    done
+  fi
   cp -R source/gc_moe/eplb "$root/upstream/gc_moe/"
   cp source/gc_moe/eco/meta_sm{90,100}.py "$root/upstream/gc_moe/eco/"
-  git -C "$root/upstream" diff > "$root/upstream.diff"
+  git -C "$root/upstream" diff HEAD > "$root/upstream.diff"
   touch "$root/prepared"
 fi
 test "$(git -C "$root/upstream" rev-parse HEAD)" = "$upstream"
-git -C "$root/upstream" diff | cmp - "$root/upstream.diff"
+git -C "$root/upstream" diff HEAD | cmp - "$root/upstream.diff"
 export PATH="$root/dsl-env/bin:$PATH" PYTHONPATH="$root/upstream:$repo/integration:$repo/scripts/sm100"
-export SM100_EP8_LINEAR_FOUR=1 GC_SM100_MATRIX_CLOCKS=1 GC_MOE_ECO_UNIT_CFG=26,2,1,6,0
+export SM100_EP8_LINEAR_FOUR=1 GC_SM100_MATRIX_CLOCKS=1
+if [[ ${SM100_BRUCE_ECO:-0} == 1 ]]; then
+  export GC_MOE_SM100_TRACE=${GC_MOE_SM100_TRACE:-1} GC_MOE_ECO_PLAN_DISPATCH=1
+else
+  export GC_MOE_ECO_UNIT_CFG=26,2,1,6,0
+fi
 unset SM100_FORMAL_512 SM100_DIRECT_512 SM100_PHASE_TRACE SM100_FULL_DECODE SM100_FIRST_DIFF SM100_FAIR_BOUNDARY SM100_NATIVE_GREEDY
 unset GC_MOE_ECO_BLOCK_M GC_MOE_ECO_OBJECTIVE GC_MOE_ECO_HELPER GC_MOE_ECO_TRACE GC_MOE_DISPATCH_SMS
 unset GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY GC_MOE_PRIMARY_CTX GC_MOE_BALANCED_WORKQUEUES
@@ -109,7 +133,7 @@ if shutil.disk_usage(sys.argv[1]).free < required:
 PY
   fi
   complete=1
-  for arm in vanilla random rr eco; do
+  for arm in "${arms[@]}"; do
     dest="$group/$arm"
     if [[ -f "$dest/result.json" && $(cat "$dest/exit-code" 2>/dev/null) == 0 ]]; then continue; fi
     if [[ -e "$dest" ]]; then
@@ -143,12 +167,13 @@ PY
   (cd "$group" && sha256sum *.csv */result.json */*.npz */*.npy */exit-code kv-*/rank*.json plan.npz random.npz eco-initial.npz > verified.sha256)
   # Only this successful group's reproducible reference banks and KV payloads.
   (cd "$group" && sha256sum *-routes-*.pt kv-{stats,measure}/rank*.bin > reference.sha256)
-  rm -- "$group"/*-routes-*.pt "$group"/kv-{stats,measure}/rank*.bin
+  rm -- "$group"/{stats,measure}-routes-*.pt "$group"/kv-{stats,measure}/rank*.bin
 done
 python - "$root" <<'PYREPORT'
-import csv, pathlib, sys
+import csv, os, pathlib, sys
+port = os.getenv("SM100_BRUCE_ECO") == "1"
 root = pathlib.Path(sys.argv[1])
-for name, expected in (("main",12), ("layers",480), ("auction",3), ("pairs",18)):
+for name, expected in (("main",9 if port else 12), ("layers",360 if port else 480), ("auction",3), ("pairs",9 if port else 18)):
     paths = [root/f"bs{bs}"/f"{name}.csv" for bs in (256,512,1024)]
     if all(p.exists() for p in paths):
         rows = []

@@ -57,6 +57,35 @@ def collect(scratch, result, audit, quota, details, cursor, active, tags, layer:
         tl.store(cursor, n + 1)
 
 
+@triton.jit
+def collect_upstream(header, counts, quota, result, details, cursor, active, tags, layer: tl.constexpr,
+                     slots: tl.constexpr, eco: tl.constexpr):
+    if tl.load(active) != 0:
+        n = tl.load(cursor)
+        if n < 40000:
+            lane = tl.arange(0, 128)
+            out = result + n * (slots + 8)
+            tl.store(out + lane, tl.load(counts + lane, lane < slots, 0), lane < slots)
+            start = tl.minimum(tl.load(header), tl.load(header + 1))
+            if eco:
+                plan = tl.load(header + 15)
+                start = tl.minimum(start, plan)
+                row = details + n * (slots + 5)
+                tl.store(row, tl.load(header + 17))
+                tl.store(row + 1, tl.load(header + 18))
+                tl.store(row + 2, plan.to(tl.int32))
+                tl.store(row + 3, (plan >> 32).to(tl.int32))
+                tl.store(row + 4, tl.load(header + 19))
+                tl.store(row + 5 + lane, tl.load(quota + lane, lane < slots, 0), lane < slots)
+            times = (out + slots).to(tl.pointer_type(tl.int64))
+            tl.store(times, start)
+            tl.store(times + 1, tl.load(header + 4))
+            tl.store(times + 2, tl.load(header + 7))
+            tl.store(times + 3, tl.load(header + 13))
+            tl.store(tags + n, layer)
+        tl.store(cursor, n + 1)
+
+
 class GraphState:
     clocks = 4
 
@@ -69,6 +98,7 @@ class GraphState:
         self.eco = self.arm == "eco"
         self.slots = 48 if self.publisher else 56
         self.layers = {}
+        self.samples = {}
         self.rows = self.bs // 8
         self.cursor = torch.zeros(1, device="cuda", dtype=torch.int32)
         self.active = torch.zeros_like(self.cursor)
@@ -113,6 +143,26 @@ class GraphState:
                 kw.update(eco_meta=self.meta[layer], eco_state=self.warm[layer], eco_logical_experts=384)
             if y.shape[0] != self.rows:
                 return kernel(y, l1, l2, buf, *args, **kw)
+            if hasattr(buf, "trace_level"):
+                from gc_moe.eco.measurement import HEADER
+                from gc_moe.layout.gc_moe import ECO_SIGNAL_OFFSETS
+                if not buf.trace_level:
+                    # The formal table requires counts. A bare replay timing
+                    # uses the ordinary, uninstrumented GC entrypoint.
+                    raise ValueError("table collection requires GC_MOE_SM100_TRACE=1 or 2")
+                output = kernel(y, l1, l2, buf, *args, **kw)
+                if buf.trace_level == 2 and layer in (8, 20, 32) and torch.cuda.is_current_stream_capturing():
+                    from gc_moe.eco.measurement import snapshot
+                    self.samples[layer] = snapshot(buf)
+                clocks = buf.trace_header[:HEADER * 8].view(torch.int64)
+                counts = buf.trace_header[HEADER * 8:].view(torch.int32)
+                quota = self.audit
+                if self.eco:
+                    offset = buf.layout.eco_base + ECO_SIGNAL_OFFSETS["eco_quota"] + 4 * buf.rank_idx * self.slots
+                    quota = buf.buffer.narrow(0, offset, self.slots * 4).view(torch.int32)
+                collect_upstream[(1,)](clocks, counts, quota, self.recv, self.details, self.cursor,
+                                       self.active, self.tags, layer, self.slots, self.eco)
+                return output
             scratch = buf.buffer.narrow(0, buf.clock_offset - self.slots * 4,
                                         self.template.numel() * 4).view(torch.int32)
             scratch.copy_(self.template)
@@ -180,13 +230,15 @@ class EP8Worker(MoeAuditWorker):
         m.tokens = install_tokens(m.model_runner, m.root, capacity=capacity)
         m.backend_file = inspect.getfile(fp8_fp4_gc_moe)
         assert Path(os.environ["SM100_CLOCKED_UPSTREAM"]).resolve() in Path(m.backend_file).resolve().parents
-        ctx = get_context()
+        port = os.getenv("SM100_BRUCE_ECO") == "1"
+        ctx = get_context(num_ranks=8) if port else get_context()
         m.sm_split = dict(dispatch=ctx.dispatch_sms, compute=ctx.compute_sms,
                           dispatch_ctas=ctx.dispatch_sms - int(s.eco), plan_ctas=int(s.eco),
                           roles=ctx.ep8_roles)
         exp = next(v.experts for name, v in self.get_model().named_modules() if name.endswith(".ffn"))
         buf = exp.get_symm_buffer()
-        assert buf.clock_offset is not None and buf.num_experts == s.slots * 8 and buf.layout.eco == s.eco
+        assert (buf.trace_level if port else buf.clock_offset is not None)
+        assert buf.num_experts == s.slots * 8 and buf.layout.eco == s.eco
         m.bm = _import_deep_gemm().get_block_m_for_mega_moe(8, buf.num_experts,
                                                              buf.num_max_tokens_per_rank, s.rows, 6, "fp8xfp4")
         m.phase = None
@@ -201,6 +253,24 @@ class EP8Worker(MoeAuditWorker):
             return result
         mgr.run_fullgraph = replay
         return m.sm_split
+
+    def ep8_profile_begin(self):
+        from eco_trace import ProfileWindow
+        self.ep8_window = ProfileWindow()
+        return True
+
+    def ep8_profile_end(self, step):
+        from eco_trace import save_sample
+        m = self._matrix
+        folder = m.folder / "perfetto"
+        folder.mkdir(exist_ok=True)
+        ticks = self.ep8_window.finish(folder / f"step{step:04d}-rank{m.rank}.kineto.json")
+        if set(STATE.samples) != {8, 20, 32}:
+            raise ValueError("missing sampled layers in the decode graph")
+        for layer, sample in STATE.samples.items():
+            save_sample(sample, ticks, folder, rank=m.rank, step=step, layer=layer, block_m=m.bm)
+        del self.ep8_window
+        return True
 
     def ep8_begin(self, phase):
         s, m = STATE, self._matrix
@@ -241,6 +311,12 @@ class EP8Worker(MoeAuditWorker):
         positions = m.phase_start[:, None] + torch.arange(1000, device="cuda")
         native = m.tokens.native.gather(1, positions)
         np.save(m.folder / f"{m.phase}-native-rank{m.rank}.npy", native.cpu().numpy().astype(np.int32))
+        if (m.publisher and m.phase == "measure" and os.getenv("SM100_BRUCE_ECO") == "1"):
+            # Keep the three post-placement replay fixtures after large banks are released.
+            for layer in (8, 20, 32):
+                call = 40 + layer
+                torch.save((s.bank_i[call].cpu(), s.bank_w[call].cpu()),
+                           m.root / f"step0002-layer{layer:02d}-routes-{m.rank}.pt")
         result = m.five_finish()
         result.pop("validated_layer_graphs", None)
         result.update(full_graph_replays=m.full_replays, full_graph_observed_calls=m.calls)
