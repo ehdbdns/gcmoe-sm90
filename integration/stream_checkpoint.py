@@ -81,7 +81,7 @@ def cache_layout(views):
     return dict(views=schemas, sizes=[b.numel() for b in blobs]), blobs
 
 
-def checkpoint(directory, rank, publish, views, controls, audit_prior=False):
+def checkpoint(directory, rank, publish, views, controls, audit_prior=False, *, sparse_zeros=False):
     """Both arms reload into existing graph addresses and independently read back."""
     prefix = Path(directory) / f'rank{rank}'
     manifest = prefix.with_suffix('.json')
@@ -97,7 +97,13 @@ def checkpoint(directory, rank, publish, views, controls, audit_prior=False):
                 for slab in blob.split(CHUNK):
                     host = slab.cpu().numpy()
                     h.update(host)
-                    out.write(host)
+                    if sparse_zeros and not host.any():
+                        out.seek(host.nbytes, 1)
+                    else:
+                        out.write(host)
+            # A seek over a final all-zero slab alone does not extend EOF.
+            if sparse_zeros:
+                out.truncate(out.tell())
         with manifest.open('x') as out:
             json.dump(dict(boundary, sha256=h.hexdigest()), out, sort_keys=True)
     expected = json.loads(manifest.read_text())

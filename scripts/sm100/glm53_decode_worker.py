@@ -1,6 +1,7 @@
 """GLM-DSA TP8 decoder adapter and fixed-address telemetry for the three GC arms."""
 
 import os
+import time
 from functools import wraps
 from pathlib import Path
 
@@ -18,9 +19,11 @@ STEPS = 1000
 STATE = None
 
 
-def translate(weights):
+def translate(weights, observed=None):
     for name, tensor in weights:
         routed = ".mlp.experts." in name
+        if routed and observed is not None:
+            observed.add(int(name.split(".mlp.experts.", 1)[1].split(".", 1)[0]))
         if name.endswith(".scale"):
             if tensor.dtype != torch.float8_e8m0fnu:
                 raise ValueError(f"expected UE8M0 for {name}")
@@ -71,7 +74,9 @@ class Decode:
         self.reader = GlmWeights(MODEL)
         self.bank, self.maps, self.samples = {}, {}, {}
         row, inv, ct = slot_tables(np.arange(p) % 256)
+        self.initial_layout = row.copy()
         self.plan = None if ARM == "vanilla" else np.load(ROOT / "placement.npy", allow_pickle=False)
+        load_start = time.monotonic()
         for layer in LAYERS:
             mlp = model.model.layers[layer].mlp
             if not isinstance(mlp, DeepseekV2MoE):
@@ -91,6 +96,11 @@ class Decode:
                 meta[: len(initial)].copy_(torch.from_numpy(initial))
                 self.maps[layer] += [meta, torch.zeros(p + 256, dtype=torch.int16, device="cuda")]
             mlp.forward = self.wrapper(mlp, layer)
+            if self.rank == 0 and (layer % 10 == 0 or layer == 77):
+                print(f"[GLM GC weights] layer {layer} / 77", flush=True)
+        torch.cuda.synchronize()
+        self.gc_load_seconds = time.monotonic() - load_start
+        self.reader.close()
         self.pos = torch.zeros(1, device="cuda", dtype=torch.long)
         self.on = torch.zeros_like(self.pos)
         self.tags = torch.full((STEPS + 1, 75), -1, device="cuda", dtype=torch.int32)
@@ -111,16 +121,15 @@ class Decode:
         self.setup_complete = False
 
     def place(self):
+        from glm53_relocate import relocate
+
         from gc_moe.eco.meta_sm100 import build_eco_meta_sm100
 
         for layer in LAYERS:
             row, inv, ct = slot_tables(self.plan[layer - 3])
             if not np.array_equal(row, self.plan[layer - 3]):
                 raise ValueError("placement lost single-copy prefix")
-            routed, _ = self.reader.load_gc(layer, row.reshape(8, -1)[self.rank])
-            for old, new in zip(self.bank[layer][0], routed):
-                for dst, src in zip(old, new):
-                    dst.copy_(src)
+            relocate(self.bank[layer][0], self.initial_layout, row, self.group)
             for dst, src in zip(self.maps[layer][:2], (inv, ct)):
                 dst.copy_(torch.from_numpy(src))
             if ARM == "eco":
@@ -234,8 +243,16 @@ def install():
     @wraps(original)
     def load(model, weights):
         global STATE
-        result = original(model, translate(weights))
+        start = time.monotonic()
+        observed = set()
+        result = original(model, translate(weights, observed))
+        torch.cuda.synchronize()
+        stock_seconds = time.monotonic() - start
         STATE = Decode(model)
+        STATE.stock_load_seconds = stock_seconds
+        STATE.stock_expert_ids = sorted(observed)
+        print(f"[GLM load] rank={STATE.rank} vLLM read {len(observed)}/256 routed expert IDs, "
+              f"vLLM={stock_seconds:.1f}s GC={STATE.gc_load_seconds:.1f}s", flush=True)
         return result
 
     DeepseekV32ForCausalLM.load_weights = load
@@ -280,6 +297,9 @@ class GlmWorker:
             "compute_sms": ctx.compute_sms,
             "roles": ctx.ep8_roles,
             "trace_level": s.buf.trace_level,
+            "stock_load_seconds": s.stock_load_seconds,
+            "stock_expert_ids": s.stock_expert_ids,
+            "gc_load_seconds": s.gc_load_seconds,
             "eco_unit": eco_unit_config(8, s.bm, 64) if ARM == "eco" else None,
         }
 
@@ -316,6 +336,7 @@ class GlmWorker:
             ARM == "vanilla",
             named_caches(self.model_runner),
             runner_boundary(self.model_runner, self.reference),
+            sparse_zeros=True,
         )
         s.full_replays = 0
         s.tags.fill_(-1)

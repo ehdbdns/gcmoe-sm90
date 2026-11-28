@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+from functools import lru_cache
 from pathlib import Path
 
 import torch
@@ -21,7 +22,13 @@ def pack_scales(scale, row_block):
 
 class GlmWeights(ExpertCheckpoint):
     def __init__(self, root):
+        from safetensors import safe_open
+
         super().__init__(root)
+        directory = self.root
+        self.open_shard = lru_cache(maxsize=8)(
+            lambda name: safe_open(directory / name, framework="pt", device="cpu")
+        )
         config = json.loads((self.root / "config.json").read_text())
         self.h = config["hidden_size"]
         self.i = config["moe_intermediate_size"]
@@ -31,6 +38,16 @@ class GlmWeights(ExpertCheckpoint):
         if (q["expert_dtype"], q["fmt"], q["scale_fmt"], q["weight_block_size"],
             config["n_shared_experts"], config["hidden_act"]) != ("fp4", "e4m3", "ue8m0", [128, 128], 1, "silu"):
             raise ValueError("unexpected GLM-5.3 expert format")
+
+    def close(self):
+        self.open_shard.cache_clear()
+
+    def tensor(self, key, dtype, shape):
+        value = self.open_shard(self.shards[key]).get_tensor(key)
+        types = {"I8": torch.int8, "F8_E8M0": torch.float8_e8m0fnu, "F8_E4M3": torch.float8_e4m3fn}
+        if tuple(value.shape) != shape or value.dtype != types[dtype]:
+            raise ValueError(f"unexpected {key} dtype or shape: {value.dtype}, {value.shape}")
+        return value
 
     def projection(self, layer, expert, name):
         if layer not in self.routed or (expert is not None and not 0 <= expert < self.experts):
@@ -74,8 +91,8 @@ class GlmWeights(ExpertCheckpoint):
 
 
 def cpu_check(root):
-    from safetensors import safe_open
     weights = GlmWeights(root)
+    reference = ExpertCheckpoint(root)
     checks = []
     for layer in (8, 20, 32):
         for expert in (0, weights.experts - 1, None):
@@ -90,10 +107,13 @@ def cpu_check(root):
                 restored = sf[offset:offset + rows].contiguous().view(torch.uint8)
                 for suffix, candidate in ((".weight", w), (".scale", restored)):
                     name = key + suffix
-                    with safe_open(root / weights.shards[name], framework="pt", device="cpu") as shard:
-                        # Slicing bytes through the public reader handles older
-                        # torch builds where arithmetic on E8M0 is unsupported.
-                        ref = shard.get_tensor(name).view(torch.uint8)
+                    if suffix == ".weight":
+                        dtype = "F8_E4M3" if expert is None else "I8"
+                        shape = tuple(w.shape)
+                    else:
+                        dtype = "F8_E8M0"
+                        shape = (rows // 128 if expert is None else rows, restored.shape[1])
+                    ref = reference.tensor(name, dtype, shape).view(torch.uint8)
                     if suffix == ".scale" and expert is None:
                         ref = ref.repeat_interleave(128, dim=0)
                     if not torch.equal(ref, candidate):

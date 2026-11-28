@@ -4,26 +4,58 @@
 
 ## 执行
 
-在完成 CPU 回执 `0415075` 的同一台机器运行。复用回执确认的 vLLM 0.31.0 环境，脚本新建私有 CuTe DSL 4.8.1 环境。确认调度分配/预约有效，再在分配的 shell 执行整段。若调度器提供 `CUDA_VISIBLE_DEVICES`，直接沿用；在无调度器且共享超过 8 卡的机器，请事先用 `SM100_GPU_UUIDS` 填入本任务获准使用的八个逗号分隔 UUID。两者均未设置时，仅在节点恰好可见本任务获准使用的八卡时执行。卡忙时脚本每 60 秒复查，不占空闲卡。
+在完成 CPU 回执 `0415075` 的同一台机器运行。复用回执确认的 vLLM 0.31.0 环境，脚本优先复用通过版本与来源检查的 CuTe DSL 4.8.1 环境，其次复用校验过的本机 wheels。确认调度分配/预约有效，再在分配的 shell 执行整段。若调度器提供 `CUDA_VISIBLE_DEVICES`，直接沿用；在无调度器且共享超过 8 卡的机器，请事先用 `SM100_GPU_UUIDS` 填入本任务获准使用的八个逗号分隔 UUID。两者均未设置时，仅在节点恰好可见本任务获准使用的八卡时执行。卡忙时脚本每 60 秒复查，不占空闲卡。
 
-默认工作目录沿用上轮私有盘。可事先把 `GLM_WORK_ROOT` 指向同机更大的私有存储。48 GiB/rank 的两份逐字节 KV 快照需要 768 GiB，脚本检查卷上至少 800 GiB 可用；实际存储建议预留更多空间给环境、原始 trace 和日志。若此前环境已被清理，先按运行环境任务书在同机恢复，并通过 `GLM_RUNTIME_PYTHON` 指向新回执中的解释器。
+默认工作目录沿用上轮私有盘。可事先把 `GLM_WORK_ROOT` 指向同机更大的私有存储。两份完整 KV 快照的逻辑大小最多约 768 GiB。全零块按稀疏文件写入，其余块保留原字节；物理占用取决于数据和文件系统。优先选空间充足的私有卷。若此前环境已被清理，先按运行环境任务书在同机恢复，并通过 `GLM_RUNTIME_PYTHON` 指向新回执中的解释器。
+
+先看本机原任务的最后日志。若正式启动器还在，下面整段命令会保留原进程，并直接把 PID、运行时长、日志最后更新时间和尾部提交到 GitHub。旧任务已退出且没有正式结果时，直接执行以下重试命令，跳过两轮已通过的 CPU 探针。有完整臂时先交回结果，避免重复测量。
 
 ~~~bash
 (
-set -eu
+set -euo pipefail
 umask 077
 storage=${GLM_WORK_ROOT:-/data0/home/admin/workspace/glm53-work}
 mkdir -p "$storage"
 job=$(mktemp -d "$storage/formal.XXXXXXXX")
 echo "本次私有目录 $job"
-git clone --depth=1 --filter=blob:none --sparse --branch main https://github.com/ehdbdns/gcmoe-sm90.git "$job/repo"
+url=https://github.com/ehdbdns/gcmoe-sm90.git
+local_repo=""
+for prev in "$storage"/formal.*/repo; do
+  if [[ -e "$prev/.git" && $(git -C "$prev" remote get-url origin) == "$url" ]]; then local_repo=$prev; break; fi
+done
+if [[ -n $local_repo ]]; then
+  git -C "$local_repo" fetch --depth=1 --no-tags --filter=blob:none origin main
+  git -C "$local_repo" worktree add --detach --no-checkout "$job/repo" FETCH_HEAD
+else
+  git clone --depth=1 --filter=blob:none --no-checkout --branch main "$url" "$job/repo"
+fi
 cd "$job/repo"
-git sparse-checkout set --no-cone '/scripts/sm100/*.py' '/scripts/sm100/run_glm53_three.sh' '/scripts/sm100/bruce_sm100_eco.patch' '/integration/*.py' '/source/gc_moe/eco/' '/source/gc_moe/eplb/' '/docs/sm100_megamoe/v41_native_phase_results/dsl-wheelhouse.sha256' '/docs/sm100_megamoe/v41_full_decode_pair_results/compat/sitecustomize.py' '/docs/sm100_megamoe/glm53_formal_results/'
-mkdir "$job/results"
-rc=0
-bash scripts/sm100/run_glm53_three.sh "$job/results" > "$job/results/run.log" 2>&1 || rc=$?
 dest="docs/sm100_megamoe/glm53_formal_results/$(basename "$job")"
-python3 scripts/sm100/glm53_receipt.py "$job/results" "$dest" "$rc"
+git sparse-checkout set --no-cone '/scripts/sm100/glm53*.py' '/scripts/sm100/real_routed_weights.py' '/scripts/sm100/eco_trace.py' '/scripts/sm100/native_phase_clock.py' '/scripts/sm100/run_glm53_three.sh' '/scripts/sm100/bruce_sm100_eco.patch' '/scripts/sm100/bruce-af5a7a7.tar.gz' '/integration/*.py' '/source/gc_moe/eco/' '/source/gc_moe/eplb/' '/docs/sm100_megamoe/v41_native_phase_results/dsl-wheelhouse.sha256' '/docs/sm100_megamoe/v41_full_decode_pair_results/compat/sitecustomize.py' "/$dest/"
+git checkout --detach HEAD
+active=$(pgrep -u "$(id -u)" -f '^([^ ]*/)?bash[[:space:]]+([^ ]*/)?run_glm53_three[.]sh[[:space:]]+' || true)
+rc=0
+if [[ -n $active ]]; then
+  mkdir -p "$dest"
+  for pid in $active; do
+    [[ -r /proc/$pid/cmdline ]] || continue
+    mapfile -d '' -t argv < "/proc/$pid/cmdline"
+    log="${argv[-1]}/run.log"
+    {
+      date -Is
+      ps -p "$pid" -o pid=,etime=,stat=,comm= || true
+      if [[ -f $log ]]; then
+        stat -c 'last_log_update=%y bytes=%s' "$log"
+        tail -n 30 "$log" | sed -E 's|[^[:space:]]+://[^[:space:]]+|[URL]|g'
+      fi
+    } > "$dest/active-$pid.txt"
+  done
+  echo '原任务保留，本次只交状态。' | tee "$dest/status.txt"
+else
+  mkdir "$job/results"
+  bash scripts/sm100/run_glm53_three.sh "$job/results" 2>&1 | tee "$job/results/run.log" || rc=$?
+  python3 scripts/sm100/glm53_receipt.py "$job/results" "$dest" "$rc"
+fi
 git add -- "$dest"
 git -c user.name="SM100 executor" -c user.email="sm100-executor@users.noreply.github.com" commit -m "[SM100] GLM-5.3 BS256 trace-2 formal execution (exit $rc)"
 git push origin HEAD:refs/heads/main
@@ -34,6 +66,10 @@ echo "回执已到 main：$(git rev-parse HEAD)；运行退出码 $rc"
 ~~~
 
 从另一终端用 `tail -f 私有目录/results/run.log` 查看进展。若 push 仅因另一个执行者先提交被拒，在本次 checkout 运行 `git pull --rebase origin main` 后再次 push。退出码非零时保留日志和首个失败现场；CPU 校验或离线 cubin 均不作为本轮性能结果。
+
+## 权重加载
+
+三臂在取得 GPU 前统一对真实 checkpoint 的分片发出一次系统页缓存预读请求，日志记录成功提交的分片数。vLLM 使用 mmap 和 EP 本地专家过滤；GC 初次组装权重沿用 checkpoint 的原始字节并缓存分片句柄。第 1000 步后 RR/ECO 直接通过八卡进程组搬运已打包的 routed 权重，写回图捕获的原地址；shared 权重继续复用。每臂的 result.json 记录各 rank 实际读到的 routed 专家 ID（预期 32/256）及 vLLM、GC 权重加载秒数。
 
 ## 运行口径与验收
 

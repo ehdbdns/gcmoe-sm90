@@ -17,30 +17,55 @@ test -x "$base"
 fbf6cbce2835c7002fcf62a0e9bcf57016323d25083f4f9d011ac30ccc1aac0c  model.safetensors.index.json
 DIGEST
 )
-"$base" - "$root" <<'PY'
-import shutil, sys
-# Two independent fixed-address 48 GiB per-rank KV boundary images, route
-# banks, small results and compressed Kineto artifacts.
-if shutil.disk_usage(sys.argv[1]).free < 800*(1<<30):
-    raise SystemExit("insufficient disk for two eight-rank KV snapshots; choose a private volume with 800 GiB free")
-PY
-git clone --quiet https://github.com/Bruce-Lee-LY/gc-moe.git "$root/upstream"
-git -C "$root/upstream" checkout --quiet --detach af5a7a750800954f52b9ff28cc55d945ead48da6
-git -C "$root/upstream" apply "$repo/scripts/sm100/bruce_sm100_eco.patch"
+echo "[prepare] KV snapshots retain their full logical size; zero slabs can use sparse extents"
+df -h "$root"
+echo "[prepare] unpacking pinned upstream GC source"
+echo "67105182741957269ed1f3a321a091ea78a5ee363ba7707eb814baac8048370d  scripts/sm100/bruce-af5a7a7.tar.gz" | sha256sum -c -
+mkdir "$root/upstream"
+tar -xzf scripts/sm100/bruce-af5a7a7.tar.gz -C "$root/upstream"
+(cd "$root/upstream" && git apply --no-index "$repo/scripts/sm100/bruce_sm100_eco.patch")
 cp -R source/gc_moe/eplb "$root/upstream/gc_moe/"
 cp source/gc_moe/eco/meta_sm{90,100}.py "$root/upstream/gc_moe/eco/"
-"$base" -m venv "$root/dsl"
-py="$root/dsl/bin/python"
-lib=$("$py" -c 'import sysconfig;print(sysconfig.get_path("purelib"))')
 blib=$("$base" -c 'import sysconfig;print(sysconfig.get_path("purelib"))')
-pkgs=(nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-core nvidia-cutlass-dsl-libs-cu12 nvidia-cutlass-dsl-libs-cu13)
-mkdir "$root/wheels"
-"$py" -m pip download --no-deps -d "$root/wheels" "${pkgs[@]/%/==4.8.1}"
-(cd "$root/wheels" && sha256sum -c "$repo/docs/sm100_megamoe/v41_native_phase_results/dsl-wheelhouse.sha256")
-"$py" -m pip install --no-deps --no-index --find-links "$root/wheels" "${pkgs[@]/%/==4.8.1}"
-printf "import site; site.addsitedir('%s')\n" "$blib" > "$lib/zz_glm_runtime.pth"
-cp docs/sm100_megamoe/v41_full_decode_pair_results/compat/sitecustomize.py "$lib/sitecustomize.py"
-export PATH="$root/dsl/bin:$blib/nvidia/cu13/bin:/usr/local/cuda/bin:$PATH"
+storage=$(dirname "$(dirname "$root")")
+py=''
+for prev in "$storage"/formal.*/results/dsl/bin/python; do
+  [[ -x $prev ]] || continue
+  prev_lib=$("$prev" -c 'import sysconfig;print(sysconfig.get_path("purelib"))' 2>/dev/null) || continue
+  cmp -s "$prev_lib/sitecustomize.py" docs/sm100_megamoe/v41_full_decode_pair_results/compat/sitecustomize.py || continue
+  grep -Fxq "import site; site.addsitedir('$blib')" "$prev_lib/zz_glm_runtime.pth" || continue
+  if "$prev" -c 'import torch, vllm, cutlass; from importlib.metadata import version; assert version("nvidia-cutlass-dsl")=="4.8.1" and vllm.__version__=="0.31.0"' >/dev/null 2>&1; then
+    py=$prev
+    lib=$prev_lib
+    echo "[prepare] using existing GLM CuTe environment $py"
+    break
+  fi
+done
+if [[ -z $py ]]; then
+  "$base" -m venv "$root/dsl"
+  py="$root/dsl/bin/python"
+  lib=$("$py" -c 'import sysconfig;print(sysconfig.get_path("purelib"))')
+  pkgs=(nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-core nvidia-cutlass-dsl-libs-cu12 nvidia-cutlass-dsl-libs-cu13)
+  manifest="$repo/docs/sm100_megamoe/v41_native_phase_results/dsl-wheelhouse.sha256"
+  wheels=""
+  for candidate in "${SM100_DSL_WHEELS:-}" "$(dirname "$(dirname "$root")")"/formal.*/results/wheels; do
+    if [[ -d $candidate ]] && (cd "$candidate" && sha256sum --status -c "$manifest"); then
+      wheels=$candidate
+      echo "[prepare] reusing verified wheels $candidate"
+      break
+    fi
+  done
+  if [[ -z $wheels ]]; then
+    wheels="$root/wheels"
+    mkdir "$wheels"
+    "$py" -m pip download --no-deps -d "$wheels" "${pkgs[@]/%/==4.8.1}"
+    (cd "$wheels" && sha256sum -c "$manifest")
+  fi
+  "$py" -m pip install --no-deps --no-index --find-links "$wheels" "${pkgs[@]/%/==4.8.1}"
+  printf "import site; site.addsitedir('%s')\n" "$blib" > "$lib/zz_glm_runtime.pth"
+  cp docs/sm100_megamoe/v41_full_decode_pair_results/compat/sitecustomize.py "$lib/sitecustomize.py"
+fi
+export PATH="$(dirname "$py"):$lib/nvidia/cu13/bin:$blib/nvidia/cu13/bin:/usr/local/cuda/bin:$PATH"
 if ! command -v nvcc >/dev/null; then
   "$py" -m pip install 'nvidia-cuda-nvcc>=13,<14'
   export PATH="$lib/nvidia/cu13/bin:$PATH"
@@ -100,20 +125,43 @@ if [[ ! -e $lock ]]; then (umask 022; set -C; : > "$lock") 2>/dev/null || test -
 exec 9<"$lock"
 acquire() {
   while true; do
-    flock 9
-    local procs util busy=0
+    if ! flock -n 9; then
+      echo "$(date -Is) waiting for shared group lock $lock"
+      sleep 60
+      continue
+    fi
+    local procs util handles="" busy=0
     procs=$(nvidia-smi -i "$grant" --query-compute-apps=pid --format=csv,noheader,nounits) || busy=1
     util=$(nvidia-smi -i "$grant" --query-gpu=utilization.gpu --format=csv,noheader,nounits) || busy=1
     [[ -z $procs ]] || busy=1
     [[ $(awk '$1=="0"{n++} END{print n+0}' <<< "$util") == 8 ]] || busy=1
-    if fuser "${devs[@]}" >/dev/null 2>&1; then busy=1; fi
+    if handles=$(fuser "${devs[@]}" 2>/dev/null); then busy=1; fi
     if ((busy == 0)); then return; fi
     flock -u 9
-    echo "$(date -Is) eight-GPU group busy, waiting"
+    echo "$(date -Is) waiting on eight GPUs: compute_pids=[$procs] utilization=[$util] device_handles=[$handles]"
     sleep 60
   done
 }
 for arm in vanilla rr eco; do
+  echo "$(date -Is) $arm checkpoint readahead"
+  "$base" - "$GLM_MODEL" <<'WARM'
+import errno, json, os, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+files = sorted(set(json.loads((root/"model.safetensors.index.json").read_text())["weight_map"].values()))
+queued = 0
+for name in files:
+    with (root/name).open("rb") as f:
+        try:
+            os.posix_fadvise(f.fileno(), 0, 0, os.POSIX_FADV_WILLNEED)
+        except OSError as e:
+            if e.errno not in (errno.ENOSYS, errno.EOPNOTSUPP, errno.EINVAL):
+                raise
+            print(f"filesystem declined readahead ({e}); proceeding with local expert mmap")
+            break
+        queued += 1
+print(f"queued {queued}/{len(files)} shards; vLLM EP weight filter enabled")
+WARM
   acquire
   export CUDA_VISIBLE_DEVICES="$grant"
   echo "$(date -Is) starting $arm $grant"
