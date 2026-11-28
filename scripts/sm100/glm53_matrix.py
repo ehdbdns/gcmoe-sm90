@@ -178,6 +178,10 @@ def arm_run(root, arm):
         "setup": rpc("glm_setup"),
         "prompt_sha256": hashlib.sha256((root / "prompts.json").read_bytes()).hexdigest(),
     }
+    if os.environ.get("GLM_LAUNCH_REFERENCE") and any(
+        [role[0] for role in worker["roles"]] != [2, 1, 4, 3] for worker in result["setup"]
+    ):
+        raise ValueError("shared-first ECO graph was not installed on every rank")
     tokens = {f"req{i}": [] for i in range(BS)}
     params = SamplingParams(
         temperature=0, max_tokens=2400, ignore_eos=True, output_kind=RequestOutputKind.DELTA

@@ -127,6 +127,13 @@ if ! "$py" -c 'from cuda.bindings import driver as cu; assert hasattr(cu.CUdevWo
 fi
 "$py" -c 'import gc_moe; from gc_moe.eco.meta_sm100 import build_eco_meta_sm100; from gc_moe.eco.measurement import snapshot'
 export GC_MOE_SM100_TRACE=2 GC_MOE_ECO_PLAN_DISPATCH=1 GC_MOE_SM100_TRACE_EVENTS=65536
+if [[ -n ${GLM_LAUNCH_REFERENCE:-} ]]; then
+  [[ ${GLM_ECO_ONLY:-0} == 1 ]] || { echo "launch comparison requires --eco-only" >&2; exit 2; }
+  "$py" scripts/sm100/glm53_launch_compare.py "$GLM_LAUNCH_REFERENCE"
+  export GC_MOE_SM100_SHARED_FIRST=1
+else
+  export GC_MOE_SM100_SHARED_FIRST=0
+fi
 unset GC_MOE_ECO_UNIT_CFG GC_MOE_ECO_OBJECTIVE GC_MOE_ECO_BLOCK_M GC_MOE_ECO_HELPER GC_MOE_DISPATCH_SMS
 unset GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY SM90_SIX_ARM SM90_EIGHT_ARM SM90_AUCTION_PAIR
 export GC_MOE_ECO_CACHE_DIR="$root/eco-cache" TRITON_CACHE_DIR="$root/triton" VLLM_CACHE_ROOT="$root/vllm-cache"
@@ -284,3 +291,6 @@ WARM
   retry=0
 done
 "$py" scripts/sm100/glm53_matrix.py report "$root"
+if [[ -n ${GLM_LAUNCH_REFERENCE:-} ]]; then
+  "$py" scripts/sm100/glm53_launch_compare.py "$GLM_LAUNCH_REFERENCE" "$root"
+fi

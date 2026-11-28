@@ -38,7 +38,7 @@ def collect(root, out, rc):
         "files": [],
     }
     for item in ("main.csv", "reference-main.csv", "placement.npy", "revision", "arch-proof.json", "deepgemm-proof.json",
-                 "resume.json", "resume-attempts.txt", "gpu-admission.csv"):
+                 "resume.json", "resume-attempts.txt", "gpu-admission.csv", "launch-comparison.json"):
         if (root / item).is_file():
             shutil.copy2(root / item, out / item)
     if (root / "resume.json").is_file():

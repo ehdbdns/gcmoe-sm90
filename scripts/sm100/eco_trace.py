@@ -149,6 +149,10 @@ def export(folder, prefix):
             finish = clocks[13]
             stamp(graph)
             stamp(finish)
+            if not graph <= clocks[1] <= finish:
+                raise ValueError(f"rank {rank} compute entry outside the MoE call")
+            overview.append(dict(ph="i", s="t", pid=rank, tid="compute", name="compute kernel entry",
+                                 ts=stamp(clocks[1]), args=common))
 
             def span(track, name, start, end, optional=False):
                 if optional and start == -1 and end == 0:

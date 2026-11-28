@@ -48,6 +48,10 @@ class TestTrace(unittest.TestCase):
                     e["name"] in ("count exchange", "pull token")]
             self.assertEqual(len(disp), 2)
             self.assertEqual(disp[0]["tid"], disp[1]["tid"])
+            entry, = [e for e in trace["traceEvents"] if e.get("pid") == 0 and e["name"] == "compute kernel entry"]
+            mma, = [e for e in trace["traceEvents"] if e.get("pid") == 0 and e["name"] == "shared expert L1"]
+            self.assertEqual(entry["ph"], "i")
+            self.assertAlmostEqual(mma["ts"] - entry["ts"], 0.1)
 
 
 if __name__ == "__main__":
