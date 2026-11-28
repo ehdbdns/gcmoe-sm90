@@ -20,8 +20,8 @@ def check(condition, message):
 NATIVE_SHA = "3c2d8e8556fa7ffddf26a1f51e979dec34d7f61e"
 
 
-def read_arm(root, arm, batch=256, steps=1000, kv_gib=None, extra=8, tuned=False):
-    path = root / f"arm{arm}"
+def read_arm(root, arm, batch=256, steps=1000, kv_gib=None, extra=8, tuned=False, *, folder=None):
+    path = folder if folder is not None else root / f"arm{arm}"
     run = json.loads((path / "run.json").read_text())
     check((run["steps"], run["layers"], run["batch"], run["stream"]) == (steps, 40, batch, 1), "window")
     check(run["rearranged"] == (arm >= 4), "placement treatment")

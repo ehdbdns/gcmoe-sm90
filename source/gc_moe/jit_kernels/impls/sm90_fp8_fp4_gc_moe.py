@@ -116,6 +116,10 @@ def _role_specs(config, layout, schedule, has_stats):
         print(f"[ep8] M={schedule.tile_m} roles={roles} launch_order=original", flush=True)
     if os.getenv("SM90_SIX_ARM") == "1":
         print(f"[six] GC M={schedule.tile_m} roles={roles}", flush=True)
+        if config.tokens == 256:
+            print(f"[shared-decode] tokens={config.tokens} routed_m={schedule.tile_m} "
+                  f"shared_m={shared.tile_m if shared else 0} l1_grid={schedule.shared_grid} "
+                  f"l2_grid={schedule.shared_l2_grid} roles={roles}", flush=True)
     specs = []
     for role in roles:
         if role == 6:

@@ -15,6 +15,7 @@ class SM90RoleConfig:
     shared_grid: int = 0
     shared_l2_grid: int = 0
     compute_sms: int = 0
+    shared_tile_m: int = 32
 
 
 @lru_cache(maxsize=256)
@@ -115,11 +116,26 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
 
     split_shared = bool(config.shared_experts and tile_m in (32, 64))
     shared_grid = 0
+    shared_tile_m = 32
+    shared_l2_grid = 0
     if split_shared:
-        # Upstream uses dense M32 even when routed work uses M64.
+        # Preserve upstream M32 scheduling unless whole M64 tiles can fill the
+        # compute partition. L1 launches one task per (token block, output tile).
         blocks = (combine_bound + 31) // 32
-        tasks = blocks * max(config.intermediate * config.shared_experts // 128, config.hidden // 256)
+        l1_tiles = config.intermediate * config.shared_experts // 128
+        tasks = blocks * max(l1_tiles, config.hidden // 256)
         limit = 2 * compute_sms if tile_m == 64 else routed_grid
+        if tile_m == 64:
+            shared_l2_grid = max(1, compute_sms // 4)
+        full_m64_tasks = config.tokens // 64 * l1_tiles
+        if (config.split_shared_m == 64 and tile_m == 64 and config.tokens % 64 == 0
+                and full_m64_tasks >= compute_sms):
+            shared_tile_m = 64
+            tasks = full_m64_tasks
+            # M64 uses one resident CTA/SM (242 registers/thread on H20).
+            # Keep L2's in-flight token rows at the M32 cap while routed runs.
+            limit = compute_sms
+            shared_l2_grid = max(1, shared_l2_grid // 2)
         shared_grid = min(limit, max(1, tasks))
 
     return SM90RoleConfig((dispatch_grid,
@@ -128,7 +144,8 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
                           threads=(128 if direct_scan else 256, 384 if pipelined else 256, 384),
                           smem=(dispatch_smem, compute_smem, 0), direct_route_scan=direct_scan,
                           compute_sms=compute_sms, shared_grid=shared_grid, split_shared=split_shared,
-                          shared_l2_grid=max(1, compute_sms // 4) if split_shared and tile_m == 64 else 0)
+                          shared_tile_m=shared_tile_m,
+                          shared_l2_grid=shared_l2_grid)
 
 
 def get_sm90_role_config(config, context):
@@ -159,9 +176,9 @@ def get_shared_role_config(schedule):
         shared_smem = (2 * stage_stride + 128 + 1023) // 1024 * 1024
         smem = (smem[0], shared_smem, smem[2])
     if schedule.split_shared:
-        tile_m = 32
-        stage = (17408 + tile_m * 132 + 1023) // 1024 * 1024
-        smem = (smem[0], 3 * stage + 1024 + tile_m * 1024 + 256, smem[2])
+        tile_m = schedule.shared_tile_m
+        # The original M32 reservation also fits two 46,080-byte M64 stages.
+        smem = (smem[0], 101632, smem[2])
     else:
         tile_m = schedule.tile_m
     return replace(schedule, tile_m=tile_m,

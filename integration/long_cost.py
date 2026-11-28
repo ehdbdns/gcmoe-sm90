@@ -210,6 +210,16 @@ def register_long_rpc(worker_class, get_buffer, modules):
             audit["batch_order"] = ref.batch_hash.hexdigest()
             path = Path(directory) / f"rank{rank}.npz"
             extra = {}
+            if os.getenv("SM90_SHARED_TILE_PAIR") == "1" and os.getenv("SM90_EIGHT_SHARED") == "1":
+                # The timed window is over. These are the last layer's live rows,
+                # and six complete steps still in the existing 256-epoch trace ring.
+                audit["final_shared_sha256"] = {
+                    name: digest(getattr(buf, name)[:tape.batch].view(torch.uint8))
+                    for name in ("shared_l2_acts", "shared_l2_acts_sf", "shared_y")
+                }
+                recent = tape.epochs[-6 * tape.layers:].long()
+                ring = buf.pull_tl.view(256, -1).index_select(0, recent.remainder(256))
+                extra["shared_stamps"] = ring[:, [0, 16, 17]].cpu().numpy()
             if hasattr(self, "_finish_replay_count"):
                 self._finish_replay_count()
                 del self._finish_replay_count

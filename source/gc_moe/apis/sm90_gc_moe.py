@@ -13,6 +13,13 @@ def _cost_mode():
     return int(mode)
 
 
+def _split_shared_m():
+    value = os.getenv("GC_MOE_SM90_SPLIT_SHARED_M", "32")
+    if value not in ("32", "64"):
+        raise ValueError("GC_MOE_SM90_SPLIT_SHARED_M must be 32 or 64")
+    return int(value)
+
+
 @dataclass(frozen=True)
 class ValidatedCall:
     ranks: int
@@ -48,6 +55,7 @@ class ValidatedCall:
     dispatch_partition_sms: int = 0
     eco_cost_mode: int = field(default_factory=_cost_mode)
     plan_dispatch: bool = field(default_factory=lambda: os.getenv("GC_MOE_SM90_PLAN_DISPATCH", "1") == "1")
+    split_shared_m: int = field(default_factory=_split_shared_m)
 
 
 def validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,

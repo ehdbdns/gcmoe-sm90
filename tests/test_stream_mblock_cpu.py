@@ -18,7 +18,7 @@ def main():
     conf = ValidatedCall(ranks=8, experts=384, capacity=2048, topk=6, hidden=5120,
                          intermediate=2304, tokens=256, bound=2048, clamp=10.,
                          fast_math=True, shared_experts=1, physical=448,
-                         eco_logical_experts=384)
+                         eco_logical_experts=384, split_shared_m=32)
     context = SimpleNamespace(dispatch_sms=6, compute_sms=72)
     layout_args = (8, 384, 2048, 6, 5120, 2304, 1, 448, True, True)
     forced = dict(GC_MOE_MB_CLAIM='1', GC_MOE_BLOCK_M_FORCE='64')
@@ -56,6 +56,28 @@ def main():
         else:
             assert by_role[5][1][4:] == by_role[1][1][4:] == ((),)
         assert by_role[4][1][3] == 144
+        for eco in (0, conf.eco_logical_experts):
+            original = replace(conf, eco_logical_experts=eco)
+            candidate = replace(original, split_shared_m=64)
+            old = {s[0]: s for _, s in _role_specs(
+                original, stream, get_sm90_role_config(original, context), True)}
+            new = _role_specs(candidate, stream, get_sm90_role_config(candidate, context), True)
+            assert list(old) == [s[0] for _, s in new]
+            for kernel, launch in new:
+                role = launch[0]
+                if role in (4, 8):
+                    assert kernel.max_m == 64 and kernel.smem == old[role][1]
+                if role == 4:
+                    assert launch == (*old[role][:3], 72, *old[role][4:])
+                elif role == 8:
+                    assert launch == (*old[role][:3], 9, *old[role][4:])
+                else:
+                    assert launch == old[role]
+            for tokens in (0, 32, 128, 255, 257):
+                assert get_sm90_role_config(replace(candidate, tokens=tokens), context).shared_tile_m == 32
+            assert not get_sm90_role_config(replace(candidate, shared_experts=0), context).split_shared
+        with patch.dict(os.environ, GC_MOE_SM90_SPLIT_SHARED_M='64'):
+            assert ValidatedCall(8, 384, 512, 6, 5120, 2304, 256, 512, 10., True).split_shared_m == 64
         with patch.dict(os.environ, {'GC_MOE_BLOCK_M_FORCE': '0'}):
             for bound, block_m in ((96, 16), (128, 32)):
                 other = replace(conf, bound=bound, eco_cost_mode=0, plan_dispatch=True)

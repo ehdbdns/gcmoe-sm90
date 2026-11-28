@@ -9,7 +9,13 @@ resume=0
 mega_only=0
 compact=0
 six=0
-unset SM90_PAIRED_SMALL SM90_SIX_ARM SM90_TUNED_EIGHT
+shared_pair=0
+unset SM90_PAIRED_SMALL SM90_SIX_ARM SM90_TUNED_EIGHT SM90_SHARED_TILE_PAIR
+if [[ ${1:-} == --shared-tile-pair ]]; then
+  shared_pair=1; six=1; shift
+  export SM90_SIX_ARM=1 SM90_TUNED_EIGHT=1 SM90_TUNED_EXTRA=4 SM90_TUNED_KV=10 SM90_SIX_STEPS=1000
+  export SM90_SHARED_TILE_PAIR=1
+fi
 if [[ ${1:-} == --tuned-eight ]]; then
   [[ ${SM90_TUNED_EXTRA:-} =~ ^(1|4)$ && ${SM90_TUNED_KV:-} =~ ^(10|7|5)$ ]] || exit 2
   export SM90_SIX_ARM=1 SM90_TUNED_EIGHT=1
@@ -32,6 +38,7 @@ if (( six )); then
   fi
 fi
 if (( compact )); then arms=(2 3 1 6 5); fi
+if (( shared_pair )); then arms=(0 2 2-m64 3); fi
 if [[ ${1:-} == --resume-mega ]]; then
   [[ $compact == 0 && $six == 0 ]]
   resume=1; mega_only=1; arms=(1 5); shift
@@ -40,9 +47,10 @@ if [[ ${1:-} == --resume-mega ]]; then
   cmp integration/sm90_mega_weights.py "$launcher_dir/../../integration/sm90_mega_weights.py"
 fi
 if [[ ${1:-} == --resume ]]; then resume=1; shift; fi
-[[ $# == 1 ]] || { echo "usage: run_eight.sh [--paired-bs32|--six-bs256] [--resume|--resume-mega] OUTPUT" >&2; exit 2; }
+[[ $# == 1 ]] || { echo "usage: run_eight.sh [--paired-bs32|--six-bs256|--tuned-eight|--shared-tile-pair] [--resume|--resume-mega] OUTPUT" >&2; exit 2; }
 out=$(realpath -m "$1")
 if (( resume )); then
+  test "$shared_pair" = "$(cat "$out/shared-pair" 2>/dev/null || echo 0)"
   test "$six" = "$(cat "$out/six-mode" 2>/dev/null || echo 0)"
   test "$compact" = "$(cat "$out/compact-mode" 2>/dev/null || echo 0)"
   if (( six )); then test "$(cat "$out/six-steps")" = "$SM90_SIX_STEPS"; fi
@@ -52,6 +60,7 @@ else
   echo "$sha" > "$out/measurement.sha"
   echo "$six" > "$out/six-mode"
   echo "$compact" > "$out/compact-mode"
+  if (( shared_pair )); then echo 1 > "$out/shared-pair"; fi
   if (( six )); then echo "$SM90_SIX_STEPS" > "$out/six-steps"; fi
 fi
 if [[ ${SM90_TUNED_EIGHT:-0} == 1 ]]; then
@@ -80,19 +89,23 @@ py="$GC_ENV/bin/python"
 input_manifest=docs/trace_executor_20261119/sm90_h20_bs256_mega_gc_eight_results/model_and_dataset.sha256
 sed "s|/mnt/dsv41/models/DeepSeek-V4.1-Flash|$MODEL|g" "$input_manifest" > "$out/input.sha256"
 sha256sum -c "$out/input.sha256" > "$out/input.sha256.log"
-echo "7c848494dbd01daa77ea80765888073cb63b85d7f74054fbcead404598ddf61e  $wheels/deep_gemm-2.8.2+7292e7b-cp310-cp310-linux_x86_64.whl" | sha256sum -c -
-if (( mega_only )); then
-  conversion=$(mktemp "$out/mega-conversion-XXXXXXXX.jsonl")
-  CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=4 "$py" scripts/sm90/check_mega_weights.py "$MODEL" > "$conversion"
-  test "$(wc -l < "$conversion")" -eq 3
-  cmp "$out/conversion.jsonl" "$conversion"
-else
-  CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=4 "$py" scripts/sm90/check_mega_weights.py "$MODEL" > "$out/conversion.jsonl"
+if (( ! shared_pair )); then
+  echo "7c848494dbd01daa77ea80765888073cb63b85d7f74054fbcead404598ddf61e  $wheels/deep_gemm-2.8.2+7292e7b-cp310-cp310-linux_x86_64.whl" | sha256sum -c -
+  if (( mega_only )); then
+    conversion=$(mktemp "$out/mega-conversion-XXXXXXXX.jsonl")
+    CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=4 "$py" scripts/sm90/check_mega_weights.py "$MODEL" > "$conversion"
+    test "$(wc -l < "$conversion")" -eq 3
+    cmp "$out/conversion.jsonl" "$conversion"
+  else
+    CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=4 "$py" scripts/sm90/check_mega_weights.py "$MODEL" > "$out/conversion.jsonl"
+  fi
 fi
 # A private-extension import failure only blocks the two routed Mega arms.
 CUDA_VISIBLE_DEVICES='' "$py" integration/sm90_deepgemm.py > "$out/attention-import.log" 2>&1
 mega_import=0
-CUDA_VISIBLE_DEVICES='' "$py" integration/sm90_deepgemm.py mega > "$out/mega-import.log" 2>&1 || mega_import=$?
+if (( ! shared_pair )); then
+  CUDA_VISIBLE_DEVICES='' "$py" integration/sm90_deepgemm.py mega > "$out/mega-import.log" 2>&1 || mega_import=$?
+fi
 if (( mega_only )); then
   # The six controls and publisher state belong to the original measurement checkout.
   for id in 2 3 4 6 7 8; do
@@ -101,10 +114,10 @@ if (( mega_only )); then
   done
   test -s "$out/replay/placement.json"
 fi
-if (( compact || six )); then
+if (( (compact || six) && ! shared_pair )); then
   cmp "$out/conversion.jsonl" docs/trace_executor_20261119/sm90_h20_bs256_mega_gc_eight_results/mega_retry/mega-conversion.jsonl
 fi
-if (( compact || mega_only || six )); then
+if (( (compact || mega_only || six) && ! shared_pair )); then
   test "$mega_import" = 0
   source "$launcher_dir/select_mega_compiler.sh"
 fi
@@ -129,6 +142,26 @@ if (( six )); then
   if [[ ${SM90_TUNED_EIGHT:-0} == 1 ]]; then export GC_MOE_KV_BYTES=$((SM90_TUNED_KV * 1024**3)); fi
   unset GC_REPEAT_BS512_PROMPT_SHA256 GC_KV_OVERHEAD GC_PREFILL_SLACK
   unset SM90_COLLECT_SE_ROUTES GC_STEP_BOUNDARY GC_COST_HOST_PROBE GC_BS256_TRACE_DIR
+fi
+if (( shared_pair && ! resume )) && [[ -n ${SM90_SHARED_REFERENCE:-} ]]; then
+  ref=$(realpath -e "$SM90_SHARED_REFERENCE")
+  test "$(cat "$ref/measurement.sha")" = 47e9b06328336e10584ef942a710aa332538327b
+  test "$(cat "$ref/tuned-kv")/$(cat "$ref/six-steps")" = 10/1000
+  test -f "$ref/arm0/complete"
+  (cd "$ref/arm0" && sha256sum --quiet -c artifacts.sha256)
+  mkdir "$out/replay"
+  # Consumers read the published banks and write only their own layout into out/replay.
+  for f in "$ref"/replay/*; do
+    [[ -f $f && $f != *-layout.json ]] || continue
+    ln -s "$f" "$out/replay/"
+  done
+  ln -s "$ref/kv" "$out/kv"
+  ln -s "$ref/arm0" "$out/arm0"
+  echo "$ref" > "$out/reference-path"
+fi
+if (( shared_pair )) && [[ -L "$out/arm0" || -L "$out/kv" ]]; then
+  test -s "$out/reference-path" && test -f "$out/arm0/complete" || exit 2
+  arms=(2 2-m64 3)
 fi
 if [[ ! -f "$out/arm$publisher/complete" ]]; then
   test "$(df -PB1 "$out" | awk 'END{print $4}')" -gt "$((compact ? 90000000000 : six ? 250000000000 : 405000000000))"
@@ -160,8 +193,13 @@ while ! idle; do flock -u 9; sleep 60; flock 9; done
 selection=$(cut -d, -f1 "$out/gpus.csv" | paste -sd, -)
 if [[ -z ${CUDA_VISIBLE_DEVICES:-} ]]; then export CUDA_VISIBLE_DEVICES="$selection"; fi
 # Preserve the scheduler-assigned device mask. The runtime gate verifies eight SM90 devices.
-for id in "${arms[@]}"; do
-  dst="$out/arm$id"
+for arm in "${arms[@]}"; do
+  id=${arm%%-*}
+  dst="$out/arm$arm"
+  if (( shared_pair )); then
+    export GC_MOE_SM90_SPLIT_SHARED_M=32
+    if [[ $arm == 2-m64 ]]; then export GC_MOE_SM90_SPLIT_SHARED_M=64; fi
+  fi
   if [[ ${SM90_TUNED_EIGHT:-0} == 1 && $SM90_TUNED_KV == 10 && $id == 1 && ! -e $dst ]]; then
     "$py" "$launcher_dir/tuned_eight.py" reuse "$out" > "$out/native-reuse.log"
   fi
@@ -173,7 +211,7 @@ for id in "${arms[@]}"; do
   if [[ -d "$dst" ]]; then
     prior=$(mktemp -d "$out/previous-arm$id-XXXXXXXX")
     mv "$dst" "$prior/"
-    layout="$GC_MOE_FIXED_DIR/$id-layout.json"
+    layout="$GC_MOE_FIXED_DIR/$arm-layout.json"
     if [[ -f $layout ]]; then mv "$layout" "$prior/"; fi
   fi
   mkdir "$dst"
@@ -194,7 +232,7 @@ for id in "${arms[@]}"; do
   case $id in 1|5) export SM90_EIGHT_BACKEND=mega ;; *) export SM90_EIGHT_BACKEND=gc ;; esac
   case $id in 0|2|4|7) export SM90_EIGHT_SHARED=1 ;; *) export SM90_EIGHT_SHARED=0 ;; esac
   if (( compact )); then export SM90_EIGHT_SHARED=0; fi
-  export SM90_EIGHT_ARM=$id DG_PRINT_CONFIGS=1
+  export SM90_EIGHT_ARM=$arm DG_PRINT_CONFIGS=1
   while ! idle; do flock -u 9; sleep 60; flock 9; done
   code=0
   arm_started=$SECONDS
@@ -217,10 +255,11 @@ for id in "${arms[@]}"; do
   if (( (compact || six) && id == publisher && code != 0 )); then exit "$code"; fi
   if [[ $code == 0 ]]; then
     test "$(cat "$dst/execution.sha")" = "$sha"
-    cp "$GC_MOE_FIXED_DIR/$id-layout.json" "$dst/installed-layout.json"
+    cp "$GC_MOE_FIXED_DIR/$arm-layout.json" "$dst/installed-layout.json"
     (cd "$dst" && sha256sum run.json rank{0..7}.npz installed-layout.json execution.sha > artifacts.sha256)
     touch "$dst/complete"
   fi
 done
 flock -u 9
+if (( shared_pair )); then exec "$py" scripts/sm90/report_shared_tiles.py "$out"; fi
 "$py" scripts/sm90/report_eight.py "$out"
