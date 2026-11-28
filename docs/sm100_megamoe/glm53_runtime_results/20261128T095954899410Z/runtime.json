@@ -1,0 +1,753 @@
+{
+  "status": "cpu_verified",
+  "interpreters": [
+    {
+      "path": "/opt/aiext/bin/python",
+      "usable": false,
+      "packages": {
+        "torch": null,
+        "vllm": null,
+        "transformers": null,
+        "safetensors": null,
+        "deep-gemm": null,
+        "nvidia-cutlass-dsl": null
+      },
+      "error": "ModuleNotFoundError: No module named 'torch'"
+    },
+    {
+      "path": "/opt/aiext/bin/python3",
+      "usable": false,
+      "packages": {
+        "torch": null,
+        "vllm": null,
+        "transformers": null,
+        "safetensors": null,
+        "deep-gemm": null,
+        "nvidia-cutlass-dsl": null
+      },
+      "error": "ModuleNotFoundError: No module named 'torch'"
+    },
+    {
+      "path": "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/bin/python",
+      "usable": true,
+      "packages": {
+        "torch": "2.13.0",
+        "vllm": "0.31.0",
+        "transformers": "5.17.0",
+        "safetensors": "0.8.0",
+        "deep-gemm": null,
+        "nvidia-cutlass-dsl": "4.7.1"
+      },
+      "error": null
+    }
+  ],
+  "model": "/mnt/hf3fs/3fs/models/GLM-5.3-FP4Moe-FP8ue8m0",
+  "gpu_arms": 0,
+  "revision": "c48bc1cf54ad11fdbde29b604683d993cf3b2148",
+  "full_model_loader_tensors": {
+    "lm_head.weight": [
+      "BF16",
+      [
+        154880,
+        6144
+      ]
+    ],
+    "model.embed_tokens.weight": [
+      "BF16",
+      [
+        154880,
+        6144
+      ]
+    ],
+    "model.layers.0.input_layernorm.weight": [
+      "BF16",
+      [
+        6144
+      ]
+    ],
+    "model.layers.0.mlp.down_proj.weight": [
+      "F8_E4M3",
+      [
+        6144,
+        12288
+      ]
+    ],
+    "model.layers.0.mlp.down_proj.scale": [
+      "F8_E8M0",
+      [
+        48,
+        96
+      ]
+    ],
+    "model.layers.0.mlp.gate_proj.weight": [
+      "F8_E4M3",
+      [
+        12288,
+        6144
+      ]
+    ],
+    "model.layers.0.mlp.gate_proj.scale": [
+      "F8_E8M0",
+      [
+        96,
+        48
+      ]
+    ],
+    "model.layers.0.mlp.up_proj.weight": [
+      "F8_E4M3",
+      [
+        12288,
+        6144
+      ]
+    ],
+    "model.layers.0.mlp.up_proj.scale": [
+      "F8_E8M0",
+      [
+        96,
+        48
+      ]
+    ],
+    "model.layers.0.post_attention_layernorm.weight": [
+      "BF16",
+      [
+        6144
+      ]
+    ],
+    "model.layers.0.self_attn.indexer.k_norm.bias": [
+      "BF16",
+      [
+        128
+      ]
+    ],
+    "model.layers.0.self_attn.indexer.k_norm.weight": [
+      "BF16",
+      [
+        128
+      ]
+    ],
+    "model.layers.0.self_attn.indexer.weights_proj.weight": [
+      "BF16",
+      [
+        32,
+        6144
+      ]
+    ],
+    "model.layers.0.self_attn.indexer.wk.weight": [
+      "F8_E4M3",
+      [
+        128,
+        6144
+      ]
+    ],
+    "model.layers.0.self_attn.indexer.wk.scale": [
+      "F8_E8M0",
+      [
+        1,
+        48
+      ]
+    ],
+    "model.layers.0.self_attn.indexer.wq_b.weight": [
+      "F8_E4M3",
+      [
+        4096,
+        2048
+      ]
+    ],
+    "model.layers.0.self_attn.indexer.wq_b.scale": [
+      "F8_E8M0",
+      [
+        32,
+        16
+      ]
+    ],
+    "model.layers.0.self_attn.kv_a_layernorm.weight": [
+      "BF16",
+      [
+        512
+      ]
+    ],
+    "model.layers.0.self_attn.kv_a_proj_with_mqa.weight": [
+      "F8_E4M3",
+      [
+        576,
+        6144
+      ]
+    ],
+    "model.layers.0.self_attn.kv_a_proj_with_mqa.scale": [
+      "F8_E8M0",
+      [
+        5,
+        48
+      ]
+    ],
+    "model.layers.0.self_attn.kv_b_proj.weight": [
+      "F8_E4M3",
+      [
+        28672,
+        512
+      ]
+    ],
+    "model.layers.0.self_attn.kv_b_proj.scale": [
+      "F8_E8M0",
+      [
+        224,
+        4
+      ]
+    ],
+    "model.layers.0.self_attn.o_proj.weight": [
+      "F8_E4M3",
+      [
+        6144,
+        16384
+      ]
+    ],
+    "model.layers.0.self_attn.o_proj.scale": [
+      "F8_E8M0",
+      [
+        48,
+        128
+      ]
+    ],
+    "model.layers.0.self_attn.q_a_layernorm.weight": [
+      "BF16",
+      [
+        2048
+      ]
+    ],
+    "model.layers.0.self_attn.q_a_proj.weight": [
+      "F8_E4M3",
+      [
+        2048,
+        6144
+      ]
+    ],
+    "model.layers.0.self_attn.q_a_proj.scale": [
+      "F8_E8M0",
+      [
+        16,
+        48
+      ]
+    ],
+    "model.layers.0.self_attn.q_b_proj.weight": [
+      "F8_E4M3",
+      [
+        16384,
+        2048
+      ]
+    ],
+    "model.layers.0.self_attn.q_b_proj.scale": [
+      "F8_E8M0",
+      [
+        128,
+        16
+      ]
+    ],
+    "model.layers.3.mlp.gate.e_score_correction_bias": [
+      "F32",
+      [
+        256
+      ]
+    ],
+    "model.layers.3.mlp.gate.weight": [
+      "BF16",
+      [
+        256,
+        6144
+      ]
+    ],
+    "model.layers.3.mlp.shared_experts.down_proj.weight": [
+      "F8_E4M3",
+      [
+        6144,
+        2048
+      ]
+    ],
+    "model.layers.3.mlp.shared_experts.down_proj.scale": [
+      "F8_E8M0",
+      [
+        48,
+        16
+      ]
+    ],
+    "model.layers.3.mlp.shared_experts.gate_proj.weight": [
+      "F8_E4M3",
+      [
+        2048,
+        6144
+      ]
+    ],
+    "model.layers.3.mlp.shared_experts.gate_proj.scale": [
+      "F8_E8M0",
+      [
+        16,
+        48
+      ]
+    ],
+    "model.layers.3.mlp.shared_experts.up_proj.weight": [
+      "F8_E4M3",
+      [
+        2048,
+        6144
+      ]
+    ],
+    "model.layers.3.mlp.shared_experts.up_proj.scale": [
+      "F8_E8M0",
+      [
+        16,
+        48
+      ]
+    ],
+    "model.layers.3.post_attention_layernorm.weight": [
+      "BF16",
+      [
+        6144
+      ]
+    ],
+    "model.layers.3.self_attn.kv_a_layernorm.weight": [
+      "BF16",
+      [
+        512
+      ]
+    ],
+    "model.layers.3.self_attn.kv_a_proj_with_mqa.weight": [
+      "F8_E4M3",
+      [
+        576,
+        6144
+      ]
+    ],
+    "model.layers.3.self_attn.kv_a_proj_with_mqa.scale": [
+      "F8_E8M0",
+      [
+        5,
+        48
+      ]
+    ],
+    "model.layers.3.self_attn.kv_b_proj.weight": [
+      "F8_E4M3",
+      [
+        28672,
+        512
+      ]
+    ],
+    "model.layers.3.self_attn.kv_b_proj.scale": [
+      "F8_E8M0",
+      [
+        224,
+        4
+      ]
+    ],
+    "model.layers.3.self_attn.o_proj.weight": [
+      "F8_E4M3",
+      [
+        6144,
+        16384
+      ]
+    ],
+    "model.layers.3.self_attn.o_proj.scale": [
+      "F8_E8M0",
+      [
+        48,
+        128
+      ]
+    ],
+    "model.layers.3.self_attn.q_a_layernorm.weight": [
+      "BF16",
+      [
+        2048
+      ]
+    ],
+    "model.layers.3.self_attn.q_a_proj.weight": [
+      "F8_E4M3",
+      [
+        2048,
+        6144
+      ]
+    ],
+    "model.layers.3.self_attn.q_a_proj.scale": [
+      "F8_E8M0",
+      [
+        16,
+        48
+      ]
+    ],
+    "model.layers.3.self_attn.q_b_proj.weight": [
+      "F8_E4M3",
+      [
+        16384,
+        2048
+      ]
+    ],
+    "model.layers.3.self_attn.q_b_proj.scale": [
+      "F8_E8M0",
+      [
+        128,
+        16
+      ]
+    ],
+    "model.layers.3.input_layernorm.weight": [
+      "BF16",
+      [
+        6144
+      ]
+    ],
+    "model.layers.6.input_layernorm.weight": [
+      "BF16",
+      [
+        6144
+      ]
+    ],
+    "model.layers.6.mlp.gate.e_score_correction_bias": [
+      "F32",
+      [
+        256
+      ]
+    ],
+    "model.layers.6.mlp.gate.weight": [
+      "BF16",
+      [
+        256,
+        6144
+      ]
+    ],
+    "model.layers.6.mlp.shared_experts.down_proj.weight": [
+      "F8_E4M3",
+      [
+        6144,
+        2048
+      ]
+    ],
+    "model.layers.6.mlp.shared_experts.down_proj.scale": [
+      "F8_E8M0",
+      [
+        48,
+        16
+      ]
+    ],
+    "model.layers.6.mlp.shared_experts.gate_proj.weight": [
+      "F8_E4M3",
+      [
+        2048,
+        6144
+      ]
+    ],
+    "model.layers.6.mlp.shared_experts.gate_proj.scale": [
+      "F8_E8M0",
+      [
+        16,
+        48
+      ]
+    ],
+    "model.layers.6.mlp.shared_experts.up_proj.weight": [
+      "F8_E4M3",
+      [
+        2048,
+        6144
+      ]
+    ],
+    "model.layers.6.mlp.shared_experts.up_proj.scale": [
+      "F8_E8M0",
+      [
+        16,
+        48
+      ]
+    ],
+    "model.layers.6.post_attention_layernorm.weight": [
+      "BF16",
+      [
+        6144
+      ]
+    ],
+    "model.layers.6.self_attn.indexer.k_norm.bias": [
+      "BF16",
+      [
+        128
+      ]
+    ],
+    "model.layers.6.self_attn.indexer.k_norm.weight": [
+      "BF16",
+      [
+        128
+      ]
+    ],
+    "model.layers.6.self_attn.indexer.weights_proj.weight": [
+      "BF16",
+      [
+        32,
+        6144
+      ]
+    ],
+    "model.layers.6.self_attn.indexer.wk.weight": [
+      "F8_E4M3",
+      [
+        128,
+        6144
+      ]
+    ],
+    "model.layers.6.self_attn.indexer.wk.scale": [
+      "F8_E8M0",
+      [
+        1,
+        48
+      ]
+    ],
+    "model.layers.6.self_attn.indexer.wq_b.weight": [
+      "F8_E4M3",
+      [
+        4096,
+        2048
+      ]
+    ],
+    "model.layers.6.self_attn.indexer.wq_b.scale": [
+      "F8_E8M0",
+      [
+        32,
+        16
+      ]
+    ],
+    "model.layers.6.self_attn.kv_a_layernorm.weight": [
+      "BF16",
+      [
+        512
+      ]
+    ],
+    "model.layers.6.self_attn.kv_a_proj_with_mqa.weight": [
+      "F8_E4M3",
+      [
+        576,
+        6144
+      ]
+    ],
+    "model.layers.6.self_attn.kv_a_proj_with_mqa.scale": [
+      "F8_E8M0",
+      [
+        5,
+        48
+      ]
+    ],
+    "model.layers.6.self_attn.kv_b_proj.weight": [
+      "F8_E4M3",
+      [
+        28672,
+        512
+      ]
+    ],
+    "model.layers.6.self_attn.kv_b_proj.scale": [
+      "F8_E8M0",
+      [
+        224,
+        4
+      ]
+    ],
+    "model.layers.6.self_attn.o_proj.weight": [
+      "F8_E4M3",
+      [
+        6144,
+        16384
+      ]
+    ],
+    "model.layers.6.self_attn.o_proj.scale": [
+      "F8_E8M0",
+      [
+        48,
+        128
+      ]
+    ],
+    "model.layers.6.self_attn.q_a_layernorm.weight": [
+      "BF16",
+      [
+        2048
+      ]
+    ],
+    "model.layers.6.self_attn.q_a_proj.weight": [
+      "F8_E4M3",
+      [
+        2048,
+        6144
+      ]
+    ],
+    "model.layers.6.self_attn.q_a_proj.scale": [
+      "F8_E8M0",
+      [
+        16,
+        48
+      ]
+    ],
+    "model.layers.6.self_attn.q_b_proj.weight": [
+      "F8_E4M3",
+      [
+        16384,
+        2048
+      ]
+    ],
+    "model.layers.6.self_attn.q_b_proj.scale": [
+      "F8_E8M0",
+      [
+        128,
+        16
+      ]
+    ],
+    "model.norm.weight": [
+      "BF16",
+      [
+        6144
+      ]
+    ]
+  },
+  "private_workspace": "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva",
+  "runtime": {
+    "python": "3.12.7 (main, Feb 25 2025, 16:19:05) [GCC 10.2.1 20200825 (Alibaba 10.2.1-3.8 2.32)]",
+    "executable": "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/bin/python",
+    "packages": {
+      "torch": "2.13.0",
+      "vllm": "0.31.0",
+      "transformers": "5.17.0",
+      "safetensors": "0.8.0",
+      "deep-gemm": null,
+      "nvidia-cutlass-dsl": "4.7.1"
+    },
+    "sources": {
+      "model_executor/models/registry.py": {
+        "sha256": "7f1d56e2f4c24ff7a949b0d4e796d6af70fa85a2b97c224652949f8d993dcc22",
+        "matches": [
+          [
+            121,
+            "\"GlmMoeDsaForCausalLM\": (\"vllm.models.deepseek_v32\", \"GlmMoeDsaForCausalLM\"),"
+          ],
+          [
+            122,
+            "\"Glm5NextForCausalLM\": (\"vllm.models.glm5next\", \"Glm5NextForCausalLM\"),"
+          ],
+          [
+            428,
+            "\"Glm5NextForConditionalGeneration\": ("
+          ],
+          [
+            430,
+            "\"Glm5NextForConditionalGeneration\","
+          ],
+          [
+            693,
+            "\"Glm5NextMTPModel\": (\"vllm.models.glm5next\", \"Glm5NextMTP\"),"
+          ]
+        ]
+      },
+      "models/deepseek_v32/__init__.py": {
+        "sha256": "c7e4385cfa6269196a4508f09b7ea06c17c867522ead78a45225d8959c9c2888",
+        "matches": [
+          [
+            21,
+            "from .nvidia.model import DeepseekV32ForCausalLM as GlmMoeDsaForCausalLM"
+          ],
+          [
+            25,
+            "from .amd.model import DeepseekV32ForCausalLM as GlmMoeDsaForCausalLM"
+          ],
+          [
+            33,
+            "from vllm.model_executor.models.deepseek_v2 import GlmMoeDsaForCausalLM"
+          ],
+          [
+            38,
+            "\"GlmMoeDsaForCausalLM\","
+          ]
+        ]
+      },
+      "models/deepseek_v32/nvidia/model.py": {
+        "sha256": "e53c068dc43981c20bfd83384764b57234a7e3c5e5235b988cdecebc1b5788e4",
+        "matches": [
+          [
+            98,
+            "self.mlp = DeepseekV2MoE("
+          ],
+          [
+            107,
+            "self.mlp = DeepseekV2MLP("
+          ]
+        ]
+      },
+      "model_executor/models/deepseek_v2.py": {
+        "sha256": "1a9082973a62a5f1c66d1607f0a8c9645816a537bae91f24fd2004585d815393",
+        "matches": [
+          [
+            291,
+            "class DeepseekV2MoE(nn.Module):"
+          ],
+          [
+            374,
+            "self.experts = FusedMoEFactory("
+          ],
+          [
+            1329,
+            "self.mlp = DeepseekV2MoE("
+          ],
+          [
+            1338,
+            "self.mlp = DeepseekV2MLP("
+          ],
+          [
+            2008,
+            "class GlmMoeDsaForCausalLM(DeepseekV2ForCausalLM):"
+          ]
+        ]
+      },
+      "model_executor/layers/quantization/fp8.py": {
+        "sha256": "24d0885dc6425909090b36d3ff731b82460436881ce5bac1e06c77393f192387",
+        "matches": [
+          [
+            464,
+            "class Fp8MoEMethod(FusedMoEMethodBase):"
+          ]
+        ]
+      },
+      "model_executor/layers/quantization/mxfp4.py": {
+        "sha256": "111fd1fb271573af7543acf7d3caefdcf71e0435989911a3f74d70585753faea",
+        "matches": [
+          [
+            49,
+            "class Mxfp4Config(QuantizationConfig):"
+          ],
+          [
+            478,
+            "class Mxfp4MoEMethod(FusedMoEMethodBase):"
+          ]
+        ]
+      }
+    },
+    "registry": {
+      "ChatGLMModel": "('chatglm', 'ChatGLMForCausalLM')",
+      "ChatGLMForConditionalGeneration": "('chatglm', 'ChatGLMForCausalLM')",
+      "GlmForCausalLM": "('glm', 'GlmForCausalLM')",
+      "Glm4ForCausalLM": "('glm4', 'Glm4ForCausalLM')",
+      "Glm4MoeForCausalLM": "('glm4_moe', 'Glm4MoeForCausalLM')",
+      "Glm4MoeLiteForCausalLM": "('glm4_moe_lite', 'Glm4MoeLiteForCausalLM')",
+      "GlmMoeDsaForCausalLM": "('vllm.models.deepseek_v32', 'GlmMoeDsaForCausalLM')",
+      "Glm5NextForCausalLM": "('vllm.models.glm5next', 'Glm5NextForCausalLM')",
+      "GlmAsrForConditionalGeneration": "('glmasr', 'GlmAsrForConditionalGeneration')",
+      "GLM4VForCausalLM": "('glm4v', 'GLM4VForCausalLM')",
+      "Glm4vForConditionalGeneration": "('glm4_1v', 'Glm4vForConditionalGeneration')",
+      "Glm4vMoeForConditionalGeneration": "('glm4_1v', 'Glm4vMoeForConditionalGeneration')",
+      "GlmOcrForConditionalGeneration": "('glm_ocr', 'GlmOcrForConditionalGeneration')",
+      "Glm5NextForConditionalGeneration": "('vllm.models.glm5next', 'Glm5NextForConditionalGeneration')",
+      "MiDashengLMModel": "('midashenglm', 'MiDashengLMModel')",
+      "Glm4MoeMTPModel": "('glm4_moe_mtp', 'Glm4MoeMTP')",
+      "Glm4MoeLiteMTPModel": "('glm4_moe_lite_mtp', 'Glm4MoeLiteMTP')",
+      "GlmOcrMTPModel": "('glm_ocr_mtp', 'GlmOcrMTP')",
+      "Glm5NextMTPModel": "('vllm.models.glm5next', 'Glm5NextMTP')"
+    },
+    "torch_cuda_build": "13.0",
+    "usable": true,
+    "vllm_source": "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib64/python3.12/site-packages/vllm/__init__.py",
+    "parsed_fp8_config": {
+      "store_dtype": null,
+      "expert_dtype": null,
+      "is_scale_e8m0": null,
+      "weight_block_size": [
+        128,
+        128
+      ]
+    }
+  },
+  "python": "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/bin/python",
+  "checked_fields": 54
+}
