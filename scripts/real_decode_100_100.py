@@ -828,7 +828,7 @@ def main():
         if not recording_tokens:
             fixed = json.loads((Path(fixed_dir) / 'tokens.json').read_text())
         prompt_hash = hashlib.sha256(json.dumps(prompts, separators=(',', ':')).encode()).hexdigest()
-        if os.getenv("GC_MOE_EP8_LINEAR") == "1":
+        if os.getenv("GC_MOE_EP8_LINEAR") == "1" and not os.getenv("GC_MOE_SOURCE_BATCH"):
             if nseq < 256:
                 group = f"main24_cost_results/bs{nseq}"
             elif nseq == 256:
