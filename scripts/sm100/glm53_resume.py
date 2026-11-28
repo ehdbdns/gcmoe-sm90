@@ -46,7 +46,10 @@ def stage(source, root):
     tokens = json.loads((source / "tokens.json").read_text())["tokens"]
     if set(tokens) != {f"req{i}" for i in range(256)}:
         raise ValueError("incomplete native feedback")
-    suffix = np.asarray([tokens[f"req{i}"][-1000:] for i in range(256)]).T
+    # glm_end saves native_history[request, decode_step] in both windows.
+    trajectory = np.asarray([tokens[f"req{i}"][-2000:] for i in range(256)])
+    if trajectory.shape != (256, 2000):
+        raise ValueError("incomplete full-batch reference trajectory")
     refs = ["prompts.json", "tokens.json", "model"]
     for phase in ("stats", "measure"):
         refs.append(f"kv-{phase}")
@@ -67,9 +70,9 @@ def stage(source, root):
                     or sum(manifest["layout"]["sizes"]) != before["kv_bytes"]
                     or prefix.with_suffix(".bin").stat().st_size != before["kv_bytes"]):
                 raise ValueError(f"incomplete or mismatched KV reference: {prefix}")
-            if phase == "measure":
-                with np.load(source / f"vanilla/measure-rank{r}.npz") as data:
-                    np.testing.assert_array_equal(data["native"], suffix)
+            with np.load(source / f"vanilla/{phase}-rank{r}.npz") as data:
+                expected = trajectory[:, :1000] if phase == "stats" else trajectory[:, 1000:]
+                np.testing.assert_array_equal(data["native"], expected)
     for name in refs:
         (root / name).symlink_to((source / name).resolve(strict=True))
     for row in available:
