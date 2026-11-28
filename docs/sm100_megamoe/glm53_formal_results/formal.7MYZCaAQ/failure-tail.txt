@@ -1,0 +1,30 @@
+[prepare] verified runtime /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/bin/python
+config.json: OK
+model.safetensors.index.json: OK
+[prepare] KV snapshots retain their full logical size; zero slabs can use sparse extents
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/md0         14T  9.2T  4.1T  70% /data0
+[prepare] unpacking pinned upstream GC source
+scripts/sm100/bruce-af5a7a7.tar.gz: OK
+[prepare] using existing GLM CuTe environment /data0/home/admin/workspace/glm53-work/formal.20261128192017/results/dsl/bin/python
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2025 NVIDIA Corporation
+Built on Wed_Jul_16_07:30:01_PM_PDT_2025
+Cuda compilation tools, release 13.0, V13.0.48
+Build cuda_13.0.r13.0/compiler.36260728_0
+[prepare] DeepGEMM nvcc=/usr/local/cuda/bin/nvcc GC ptxas=/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/nvidia/cu13/bin/ptxas
+ptxas: NVIDIA (R) Ptx optimizing assembler
+Copyright (c) 2005-2026 NVIDIA Corporation
+Built on Mon_Oct_12_19:25:48_PDT_2026
+Cuda compilation tools, release 13.5, V13.5.37
+Build cuda_13.5.r13.5/compiler.39125733_0
+Traceback (most recent call last):
+  File "/data0/home/admin/workspace/glm53-work/formal.7MYZCaAQ/repo/scripts/sm100/glm53_price.py", line 150, in <module>
+    report = samples(args.root) if args.action == "sample" else full(args.root, args.output, args.action == "historical")
+                                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/formal.7MYZCaAQ/repo/scripts/sm100/glm53_price.py", line 131, in full
+    held_weights = fit(x[:, :800], y[:, :800])
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/formal.7MYZCaAQ/repo/scripts/sm100/glm53_price.py", line 26, in fit
+    from scipy.optimize import least_squares
+ModuleNotFoundError: No module named 'scipy'
