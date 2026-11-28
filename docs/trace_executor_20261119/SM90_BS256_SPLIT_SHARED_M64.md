@@ -1,5 +1,7 @@
 # SM90 执行任务 · H20 EP8 · BS256 原生 GC 的 fused shared 与 unfused shared
 
+**当前 SM90 排期已切换到上游 H20 非 split 三臂补测。** 已启动的本专项保留当前臂的落盘结果，新任务及回执位置见[非 split 三臂任务书](SM90_BS256_UNSPLIT_THREE.md)。
+
 测量提交 `9b163a36292e4edadb23ba04d549580ff0dc3049`。现场使用上一轮八臂的同一台 H20、同一模型与本地权重路径。目标是分别回答两个问题。M64 能否缩短 M32 为 shared 付出的时间？改后完整 FFN 能否追上 vLLM unfused，整步表现如何？
 
 ## 上轮的差距在哪里
