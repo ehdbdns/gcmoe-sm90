@@ -1,5 +1,9 @@
 # SM100 新执行者任务书 · GLM-5.3 EP8 三臂
 
+**当前 SM100 排期**　原生臂已完成，RR 在加载权重时 OOM。执行者请直接使用[仅续跑 RR 和 ECO 的任务书](SM100_GLM53_RESUME_RR_ECO.md)。
+
+<details><summary>首次三臂启动说明（历史）</summary>
+
 你接手的是节点 `e01-cn-il24rbk1805` 上的正式实验。最新回执 `032eb64` 为 **0/3**。八张卡都执行了 `sm_103f` 机器码并返回 `0x103`。原生臂在权重加载后的 DeepGEMM UE8M0 尺度转换处编译失败，RR 和 ECO 尚未启动。直接使用下方新版执行包，从原生臂开始整组测量。你只需要这份任务书、该节点的 Bash 登录权限、指定八卡的使用授权以及可向本仓库提交回执的 GitHub 身份。可以从空目录和新的 Linux 账号开始。
 
 ## 本次交付
@@ -113,3 +117,5 @@ bash repo/scripts/sm100/glm53_execute.sh "$job"
 job='/替换为本次私有目录/formal.XXXXXXXX'
 ( glm53_auth && python3 "$job/repo/scripts/sm100/glm53_publish.py" "$job/receipt/$(basename "$job")" )
 ~~~
+
+</details>
