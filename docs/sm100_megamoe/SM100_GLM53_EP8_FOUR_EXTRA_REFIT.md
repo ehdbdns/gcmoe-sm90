@@ -1,6 +1,6 @@
 # SM100 · GLM-5.3 EP8 · 每卡 32 个独立流、4 个冗余槽、shared 优先
 
-在原来的八张设备上执行三臂整模 decode。比较原生 GC、逐层 EPLB + RR、同一放置的 EPLB + ECO。模型为 GLM-5.3 FP4 MoE / FP8 UE8M0。站点设备名为 L20D，上次实测 CUDA capability 10.3，并通过了 sm_103f 原生指令探针。本轮代码版本为 `2fd9fba8f37604bfba24ff6e6e486f5078af31f4`。
+在原来的八张设备上执行三臂整模 decode。比较原生 GC、逐层 EPLB + RR、同一放置的 EPLB + ECO。模型为 GLM-5.3 FP4 MoE / FP8 UE8M0。站点设备名为 L20D，上次实测 CUDA capability 10.3，并通过了 sm_103f 原生指令探针。本轮代码版本为 `79514e6f0c78efd711ccd0de1a72e03d412e8d42`。
 
 ## 1. 拟合依据和本轮价格
 
@@ -20,6 +20,18 @@
 
 公开样本中 2,412 个非空槽观测有 2,260 个只接收一个 M 块。将 wa 固定为 0 或 1、在各折重新拟合 wb，两组留层 MAE 都为 0.31633 个百分点。允许 wa 自由拟合后为 0.21772。三折独立拟合的 wa 分别约为 134、55、62。完整历史窗口在相同的前 800 步拟合、后 200 步检验上也分别报告 wa=0、wa=1 和自由拟合。
 
+完整历史复核已随 `formal.vV3Fq293` 发布。三臂合计 225,000 次层调用、180 万条 rank 观测。下表用每臂前 800 步训练自由系数，再用相同的后 200 步评价各公式。此前冻结的 66、74 在三臂的留出窗口均逊于上游价格。它在本轮仍作为待测候选，用整层 MoE 实测评估。
+
+| 价格或约束 | 后 200 步的 routed 占比 MAE（百分点） |
+|---|---:|
+| wa 固定为 0，重拟合 wb | 0.17393 |
+| wa 固定为 1，重拟合 wb | 0.17393 |
+| 三层样本冻结的 T + 66M + 74A | 0.16117 |
+| 上游 T + 249M + 140A | 0.12424 |
+| 前 800 步自由拟合 T + 4101.91M + 1460.62A | 0.11525 |
+
+固定 wa 的两行用回执的三份 NPZ 和同一拟合脚本在 CPU 上复算。自由拟合后 wa/wb 约为 0.356。这组系数针对占比拟合；直接取整后，旧数据中原生臂 49 条、RR 臂 1 条 rank 观测超过当前单跳拍卖排序字段的 18 位上限 262143。本轮继续执行已登记的三个臂，历史复核无需额外占卡。[全窗口逐 rank 数组与分数](glm53_formal_results/formal.vV3Fq293/historical-price/)
+
 ## 2. 三臂配置和公平性
 
 | 顺序 | 臂 | 每卡物理槽 | 分发 | CUDA 子图节点提交顺序 |
@@ -37,7 +49,7 @@
 
 在原节点 `e01-cn-il24rbk1805` 使用站点授权账号、原八卡和原 rank 顺序。先核对调度器预约。上一个执行者仍在运行时等它退卡；八卡中任一张在用就等待，不占用部分空闲卡。保留站点分配的设备掩码。执行器在每臂前取得协作锁并连续两次检查 GPU 进程、句柄、利用率和显存，结束该臂即释放 GPU 锁。权重、旧实验和其他用户作业均保留。
 
-上一轮启动在历史 CPU 拟合时遇到缺少 SciPy，完成 0 个 GPU 臂，首错归档于 `formal.7MYZCaAQ`。使用下面命令新建 job；启动器先查找可用的 CPU 拟合解释器，需要时在作业私有目录安装固定版本的 NumPy 和 SciPy。
+从本页最新版本复制下面的完整命令，新建一个 job 顺序执行三臂。前次两个重试均使用 `4516d6e`，在原生臂捕获 CUDA Graph 后、正式窗口前退出，已完成 0/3 臂。该版本将现场 RPC 返回的角色三元组与 JSON 列表直接比较。新版逐字段核对实际数值，并在校验前将八个 rank 的 `setup.json` 存入对应臂和回执。此前缺少 SciPy 的 CPU 依赖问题也已修复，启动器按需在作业私有目录准备。已有失败包和目录保留用于核查。
 
 默认上次完整原件目录为 `/data0/home/admin/workspace/glm53-work/formal.QLfEZmKt/results`。若站点已经迁移原件，通过 `GLM_PRICE_REFERENCE` 指向原件。脚本核对已发布的文件哈希。使用足以容纳本次模型参考、KV 快照和三个臂结果的私有工作盘。八卡 CUDA 进程之外的准备、历史复核和归档均在 CPU 上运行。执行下面整段命令，记录打印的 job 路径。
 
@@ -63,7 +75,7 @@ job=$(mktemp -d "$GLM_WORK_ROOT/formal.XXXXXXXX")
 echo "本次任务 $job"
 mkdir "$job/repo"
 cd "$job"
-blob=9d0147c47f2457af4a3790ed9de14ee3bccd7403
+blob=f4cc18f45a62daa12798faa060a0e677adbf02ce
 printf 'Authorization: Bearer %s\n' "$GH_TOKEN" |
   curl -fsS --connect-timeout 10 --max-time 90 --retry 3 -H @- \
     -H 'Accept: application/vnd.github+json' \
@@ -74,12 +86,12 @@ obj = json.loads(pathlib.Path("bundle.json").read_text())
 if obj["encoding"] != "base64" or obj["sha"] != sys.argv[1]:
     raise SystemExit("GitHub blob mismatch")
 payload = base64.b64decode(obj["content"])
-if hashlib.sha256(payload).hexdigest() != "125ab3d8e708954f0ffc0391421c0b90e28a338439a2a15594d8714ea0aba8fd":
+if hashlib.sha256(payload).hexdigest() != "7dd3713837fa4b84dcd018f781424cd62047611501e41370d1583a0dc7b2d599":
     raise SystemExit("executor archive SHA256 mismatch")
 pathlib.Path("executor.tar.gz").write_bytes(payload)
 PY
 tar xzf executor.tar.gz -C repo
-echo 2fd9fba8f37604bfba24ff6e6e486f5078af31f4 > repo/SOURCE_REVISION
+echo 79514e6f0c78efd711ccd0de1a72e03d412e8d42 > repo/SOURCE_REVISION
 bash repo/scripts/sm100/glm53_execute.sh "$job" --refit4 "$old"
 )
 ~~~
