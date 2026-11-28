@@ -1,0 +1,100 @@
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+
+Exception raised from ~AllocationRef at /__w/pytorch/pytorch/torch/csrc/distributed/c10d/symm_mem/CUDASymmetricMemory.cu:53 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x9d (0x7f6a7cd71bfd in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0xc4e9 (0x7f6a7f4fd4e9 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10_cuda.so)
+frame #2: c10d::symmetric_memory::AllocationRef::~AllocationRef() + 0x9c (0x7f69cc5bad9c in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10::intrusive_ptr<c10d::symmetric_memory::AllocationRef, c10::detail::intrusive_target_default_null_type<c10d::symmetric_memory::AllocationRef> >::reset_not_null_(c10d::symmetric_memory::AllocationRef*) + 0x7e (0x7f69cc5c1afe in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: c10d::symmetric_memory::CUDAPeerAllocInfo::~CUDAPeerAllocInfo() + 0x7d (0x7f69cc5c1e5d in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #5: c10d::symmetric_memory::Block::~Block() + 0x39 (0x7f69cc5c1c89 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: c10d::symmetric_memory::CUDASymmetricMemoryAllocator::free(void*) + 0xdd (0x7f69cc5bb5dd in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #7: <unknown function> + 0x3935c (0x7f6a7cd0135c in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #8: <unknown function> + 0x86ae4 (0x7f6a7cd4eae4 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #9: c10::TensorImpl::~TensorImpl() + 0x9 (0x7f6a7cd49219 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #10: <unknown function> + 0x8752b5 (0x7f69f98752b5 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_python.so)
+frame #11: <unknown function> + 0x875341 (0x7f69f9875341 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_python.so)
+<omitting python frames>
+frame #33: <unknown function> + 0x42350 (0x7f6ae4b76350 in /lib64/libc.so.6)
+frame #34: __libc_start_main + 0x80 (0x7f6ae4b76400 in /lib64/libc.so.6)
+frame #35: _start + 0x2e (0x55abc640207e in VLLM::Worker_TP1_EP1)
+
+terminate called after throwing an instance of 'c10::AcceleratorError'
+  what():  CUDA error: unspecified launch failure
+Search for `cudaErrorLaunchFailure' in [URL] for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+
+Exception raised from ~AllocationRef at /__w/pytorch/pytorch/torch/csrc/distributed/c10d/symm_mem/CUDASymmetricMemory.cu:53 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x9d (0x7f631ff71bfd in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0xc4e9 (0x7f632214a4e9 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10_cuda.so)
+frame #2: c10d::symmetric_memory::AllocationRef::~AllocationRef() + 0x9c (0x7f626f7bad9c in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10::intrusive_ptr<c10d::symmetric_memory::AllocationRef, c10::detail::intrusive_target_default_null_type<c10d::symmetric_memory::AllocationRef> >::reset_not_null_(c10d::symmetric_memory::AllocationRef*) + 0x7e (0x7f626f7c1afe in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: c10d::symmetric_memory::CUDAPeerAllocInfo::~CUDAPeerAllocInfo() + 0x7d (0x7f626f7c1e5d in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #5: c10d::symmetric_memory::Block::~Block() + 0x39 (0x7f626f7c1c89 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: c10d::symmetric_memory::CUDASymmetricMemoryAllocator::free(void*) + 0xdd (0x7f626f7bb5dd in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #7: <unknown function> + 0x3935c (0x7f631ff0135c in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #8: <unknown function> + 0x86ae4 (0x7f631ff4eae4 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #9: c10::TensorImpl::~TensorImpl() + 0x9 (0x7f631ff49219 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #10: <unknown function> + 0x8752b5 (0x7f629ca752b5 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_python.so)
+frame #11: <unknown function> + 0x875341 (0x7f629ca75341 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_python.so)
+<omitting python frames>
+frame #33: <unknown function> + 0x42350 (0x7f6387c5a350 in /lib64/libc.so.6)
+frame #34: __libc_start_main + 0x80 (0x7f6387c5a400 in /lib64/libc.so.6)
+frame #35: _start + 0x2e (0x561635f9407e in VLLM::Worker_TP4_EP4)
+
+terminate called after throwing an instance of 'c10::AcceleratorError'
+  what():  CUDA error: unspecified launch failure
+Search for `cudaErrorLaunchFailure' in [URL] for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+
+Exception raised from ~AllocationRef at /__w/pytorch/pytorch/torch/csrc/distributed/c10d/symm_mem/CUDASymmetricMemory.cu:53 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x9d (0x7f05f0f71bfd in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0xc4e9 (0x7f05f35fd4e9 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10_cuda.so)
+frame #2: c10d::symmetric_memory::AllocationRef::~AllocationRef() + 0x9c (0x7f05407bad9c in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10::intrusive_ptr<c10d::symmetric_memory::AllocationRef, c10::detail::intrusive_target_default_null_type<c10d::symmetric_memory::AllocationRef> >::reset_not_null_(c10d::symmetric_memory::AllocationRef*) + 0x7e (0x7f05407c1afe in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: c10d::symmetric_memory::CUDAPeerAllocInfo::~CUDAPeerAllocInfo() + 0x7d (0x7f05407c1e5d in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #5: c10d::symmetric_memory::Block::~Block() + 0x39 (0x7f05407c1c89 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: c10d::symmetric_memory::CUDASymmetricMemoryAllocator::free(void*) + 0xdd (0x7f05407bb5dd in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #7: <unknown function> + 0x3935c (0x7f05f0f0135c in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #8: <unknown function> + 0x86ae4 (0x7f05f0f4eae4 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #9: c10::TensorImpl::~TensorImpl() + 0x9 (0x7f05f0f49219 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #10: <unknown function> + 0x8752b5 (0x7f056da752b5 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_python.so)
+frame #11: <unknown function> + 0x875341 (0x7f056da75341 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_python.so)
+<omitting python frames>
+frame #33: <unknown function> + 0x42350 (0x7f0658c5a350 in /lib64/libc.so.6)
+frame #34: __libc_start_main + 0x80 (0x7f0658c5a400 in /lib64/libc.so.6)
+frame #35: _start + 0x2e (0x559fb7b2507e in VLLM::Worker_TP2_EP2)
+
+terminate called after throwing an instance of 'c10::AcceleratorError'
+  what():  CUDA error: unspecified launch failure
+Search for `cudaErrorLaunchFailure' in [URL] for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+
+Exception raised from ~AllocationRef at /__w/pytorch/pytorch/torch/csrc/distributed/c10d/symm_mem/CUDASymmetricMemory.cu:53 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x9d (0x7fc65f971bfd in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0xc4e9 (0x7fc661ffd4e9 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10_cuda.so)
+frame #2: c10d::symmetric_memory::AllocationRef::~AllocationRef() + 0x9c (0x7fc5af1bad9c in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10::intrusive_ptr<c10d::symmetric_memory::AllocationRef, c10::detail::intrusive_target_default_null_type<c10d::symmetric_memory::AllocationRef> >::reset_not_null_(c10d::symmetric_memory::AllocationRef*) + 0x7e (0x7fc5af1c1afe in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: c10d::symmetric_memory::CUDAPeerAllocInfo::~CUDAPeerAllocInfo() + 0x7d (0x7fc5af1c1e5d in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #5: c10d::symmetric_memory::Block::~Block() + 0x39 (0x7fc5af1c1c89 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: c10d::symmetric_memory::CUDASymmetricMemoryAllocator::free(void*) + 0xdd (0x7fc5af1bb5dd in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #7: <unknown function> + 0x3935c (0x7fc65f90135c in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #8: <unknown function> + 0x86ae4 (0x7fc65f94eae4 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #9: c10::TensorImpl::~TensorImpl() + 0x9 (0x7fc65f949219 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #10: <unknown function> + 0x8752b5 (0x7fc5dc4752b5 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_python.so)
+frame #11: <unknown function> + 0x875341 (0x7fc5dc475341 in /data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/torch/lib/libtorch_python.so)
+<omitting python frames>
+frame #33: <unknown function> + 0x42350 (0x7fc6c7776350 in /lib64/libc.so.6)
+frame #34: __libc_start_main + 0x80 (0x7fc6c7776400 in /lib64/libc.so.6)
+frame #35: _start + 0x2e (0x5625b0c0807e in VLLM::Worker_TP3_EP3)
+
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 2 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 4 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+/data0/home/admin/workspace/glm53-work/formal.VHnr9l8N/repo/scripts/sm100/run_glm53_three.sh: line 282: 2759449 Terminated              "$py" -u scripts/sm100/glm53_matrix.py "$arm" "$root" 2>&1
+     2759450 Done                    | tee "$log"
+2026-11-28T21:53:14+08:00 released eco
