@@ -182,6 +182,25 @@ def arm_run(root, arm):
         [role[0] for role in worker["roles"]] != [2, 1, 4, 3] for worker in result["setup"]
     ):
         raise ValueError("shared-first ECO graph was not installed on every rank")
+    if os.getenv("GLM_REFIT4") == "1":
+        from glm53_price import NEW, PUBLIC
+        old = json.loads((PUBLIC / "receipt.json").read_text())
+        # Match the assigned UUID/order and official prompt cohort before timing.
+        reference = Path(os.environ["GLM_PRICE_REFERENCE"])
+        if (reference / "revision").read_text().strip() != old["revision"]:
+            raise ValueError("wrong previous cohort")
+        native = json.loads((reference / "vanilla/result.json").read_text())
+        if result["prompt_sha256"] != native["prompt_sha256"]:
+            raise ValueError("prompt cohort changed")
+        expected = ([[2, 1, 136], [1, 0, 11], [4, 0, 1], [3, 1, 64]] if arm == "eco"
+                    else [[2, 1, 136], [1, 0, 12], [3, 1, 64]])
+        for r, worker in enumerate(result["setup"]):
+            if (worker["rank"] != r or worker["gpu"] != native["setup"][r]["gpu"]
+                    or worker["slots"] != (32 if arm == "vanilla" else 36)
+                    or worker["block_m"] != 16 or worker["trace_level"] != 2
+                    or worker["roles"] != expected
+                    or worker["eco_unit"] != ([16, *NEW, 1, 6, 0] if arm == "eco" else None)):
+                raise ValueError(f"{arm} rank{r}: incorrect shared-first graph, device, price or slot count")
     tokens = {f"req{i}": [] for i in range(BS)}
     params = SamplingParams(
         temperature=0, max_tokens=2400, ignore_eos=True, output_kind=RequestOutputKind.DELTA
@@ -230,6 +249,13 @@ def reduce(root, arms=ARMS, filename="main.csv"):
         data = json.loads((root / arm / "result.json").read_text())
         paired = data["prompt_sha256"] == native["prompt_sha256"]
         for phase in ("stats", "measure"):
+            if os.getenv("GLM_REFIT4") == "1":
+                owners = [v["source_requests"] for v in data[phase]]
+                if (len(owners) != 8 or any(len(s) != 32 for s in owners)
+                        or sorted(i for s in owners for i in s) != list(range(256))
+                        or owners != [v["source_requests"] for v in native["stats"]]
+                        or any(v["source_steps"] != 1000 for v in data[phase])):
+                    raise ValueError(f"{arm}: source assignment differs in {phase}")
             for r, recv in enumerate(data[phase]):
                 ref = native[phase][r]
                 if recv["boundary"] != ref["boundary"] or recv["batch_order"] != ref["batch_order"]:
@@ -283,6 +309,8 @@ def reduce(root, arms=ARMS, filename="main.csv"):
             "peak_active": a.max(-1).mean(),
             "m_ir": (m.max(-1) / m.mean(-1)).mean(),
         }
+        if os.getenv("GLM_REFIT4") == "1":
+            row.update(bs=32, streams_per_source_rank=32, global_streams=BS, shared_first=True)
         if arm == "eco":
             score = clocks[:, :, :, 19]
             routed = np.where(t > 0, clocks[:, :, :, 7] - clocks[:, :, :, 4], 0)
@@ -319,6 +347,8 @@ def reduce(root, arms=ARMS, filename="main.csv"):
         writer = csv.DictWriter(f, list(dict.fromkeys(k for row in summaries for k in row)))
         writer.writeheader()
         writer.writerows(summaries)
+    if os.getenv("GLM_REFIT4") == "1" and not all(r["full_native_match"] for r in summaries):
+        raise ValueError("raw gates or greedy outputs differ; see main.csv and per-rank evidence")
     return summaries
 
 

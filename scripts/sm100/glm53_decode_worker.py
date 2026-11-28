@@ -302,7 +302,7 @@ class GlmWorker:
             "stock_load_seconds": s.stock_load_seconds,
             "stock_expert_ids": s.stock_expert_ids,
             "gc_load_seconds": s.gc_load_seconds,
-            "eco_unit": eco_unit_config(8, s.bm, 64) if ARM == "eco" else None,
+            "eco_unit": eco_unit_config(8, s.bm, (s.slots - 32) * 8) if ARM == "eco" else None,
         }
 
     def glm_begin(self, phase):
@@ -321,6 +321,11 @@ class GlmWorker:
         if ARM == "eco":
             for state in s.maps.values():
                 state[3].zero_()
+        if os.getenv("GLM_REFIT4") == "1":
+            self.reference.source_batch = 32
+            self.reference.source_rank = s.rank
+            self.reference.source_steps = 0
+            self.reference.audit_source = True
         self.phase = phase
         self.start_positions = self.reference.positions.clone()
         self.prefill_diff = 0
@@ -407,7 +412,14 @@ class GlmWorker:
             bm=s.bm,
             native=native.cpu().numpy(),
         )
+        ownership = {}
+        if os.getenv("GLM_REFIT4") == "1":
+            self.reference.audit_source = False
+            if self.reference.source_steps != STEPS or len(self.reference.source_members or ()) != 32:
+                raise ValueError("incomplete independent source requests")
+            ownership.update(source_requests=list(self.reference.source_members), source_steps=self.reference.source_steps)
         return {
+            **ownership,
             "boundary": self.boundary,
             "batch_order": self.reference.batch_hash.hexdigest(),
             "full_replays": s.full_replays,

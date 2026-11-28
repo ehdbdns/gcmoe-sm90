@@ -4,7 +4,15 @@ set -euo pipefail
 umask 077
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 job=$(realpath "${1:?pass the formal.XXXXXXXX path created during bootstrap}")
-unset GLM_ECO_ONLY
+unset GLM_ECO_ONLY GLM_REFIT4
+if [[ ${2:-} == --refit4 ]]; then
+  [[ $# == 3 ]] || { echo "expected --refit4 previous-three-arm-results" >&2; exit 2; }
+  export GLM_REFIT4=1
+  GLM_PRICE_REFERENCE=$(realpath -e "$3")
+  export GLM_PRICE_REFERENCE
+  unset GLM_RESUME_FROM GLM_LAUNCH_REFERENCE
+  set -- "$1"
+fi
 if [[ $# == 3 && ( $2 == --resume || $2 == --eco-only ) ]]; then
   GLM_RESUME_FROM=$(realpath -e "$3")
   export GLM_RESUME_FROM

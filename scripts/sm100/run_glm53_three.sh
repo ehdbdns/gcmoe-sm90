@@ -136,6 +136,10 @@ else
 fi
 unset GC_MOE_ECO_UNIT_CFG GC_MOE_ECO_OBJECTIVE GC_MOE_ECO_BLOCK_M GC_MOE_ECO_HELPER GC_MOE_DISPATCH_SMS
 unset GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY SM90_SIX_ARM SM90_EIGHT_ARM SM90_AUCTION_PAIR
+if [[ ${GLM_REFIT4:-0} == 1 ]]; then
+  export GC_MOE_SM100_SHARED_FIRST=1 GC_MOE_ECO_UNIT_CFG=66,74,1,6,0
+  "$py" scripts/sm100/glm53_price.py historical "${GLM_PRICE_REFERENCE:?}" --output "$root/historical-price"
+fi
 export GC_MOE_ECO_CACHE_DIR="$root/eco-cache" TRITON_CACHE_DIR="$root/triton" VLLM_CACHE_ROOT="$root/vllm-cache"
 export DG_JIT_CACHE_DIR="$VLLM_CACHE_ROOT/deep_gemm"
 export HF_HUB_OFFLINE=1 TORCHINDUCTOR_CACHE_DIR="$root/inductor" PYTHONHASHSEED=0
@@ -195,6 +199,16 @@ print(",".join(native))
 GPU_ORDER
   )
 fi
+if [[ ${GLM_REFIT4:-0} == 1 ]]; then
+  grant=$("$py" - "$GLM_PRICE_REFERENCE/vanilla/result.json" "$grant" <<'ORDER'
+import json, sys
+expected = ["GPU-" + r["gpu"].removeprefix("GPU-") for r in json.load(open(sys.argv[1]))["setup"]]
+if len(set(expected)) != 8 or sorted(expected) != sorted(sys.argv[2].split(",")):
+    raise SystemExit("need the same eight authorized GPU UUIDs as the historical GLM cohort")
+print(",".join(expected))
+ORDER
+  )
+fi
 command -v fuser >/dev/null
 lock=/tmp/gcmoe-sm100-gpu-group.lock
 if [[ ! -e $lock ]]; then (umask 022; set -C; : > "$lock") 2>/dev/null || test -e "$lock"; fi
@@ -223,6 +237,7 @@ acquire() {
   done
 }
 extra=8
+if [[ ${GLM_REFIT4:-0} == 1 ]]; then extra=4; fi
 pos=0
 retry=0
 while (( pos < ${#arms[@]} )); do
@@ -258,11 +273,13 @@ WARM
   export CUDA_VISIBLE_DEVICES=''
   flock -u 9
   echo "$(date -Is) released $arm"
-  if [[ -n ${GLM_RESUME_FROM:-} ]]; then
-    echo "$(date -Is) arm=$arm extra=$extra retry=$retry exit=$code" >> "$root/resume-attempts.txt"
+  if [[ -n ${GLM_RESUME_FROM:-} || ${GLM_REFIT4:-0} == 1 ]]; then
+    actual_extra=$extra
+    if [[ $arm == vanilla ]]; then actual_extra=0; fi
+    echo "$(date -Is) arm=$arm extra=$actual_extra retry=$retry exit=$code" >> "$root/resume-attempts.txt"
   fi
   if (( code == 0 )); then
-    if [[ $arm == vanilla ]]; then "$py" scripts/sm100/glm53_matrix.py plan "$root"; fi
+    if [[ $arm == vanilla ]]; then "$py" scripts/sm100/glm53_matrix.py plan "$root" --extra "$extra"; fi
     pos=$((pos + 1))
     retry=0
     continue
@@ -291,6 +308,9 @@ WARM
   retry=0
 done
 "$py" scripts/sm100/glm53_matrix.py report "$root"
+if [[ ${GLM_REFIT4:-0} == 1 ]]; then
+  "$py" scripts/sm100/glm53_price.py new "$root" --output "$root/new-price"
+fi
 if [[ -n ${GLM_LAUNCH_REFERENCE:-} ]]; then
   "$py" scripts/sm100/glm53_launch_compare.py "$GLM_LAUNCH_REFERENCE" "$root"
 fi

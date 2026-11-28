@@ -41,6 +41,9 @@ def collect(root, out, rc):
                  "resume.json", "resume-attempts.txt", "gpu-admission.csv", "launch-comparison.json"):
         if (root / item).is_file():
             shutil.copy2(root / item, out / item)
+    for name in ("historical-price", "new-price"):
+        if (root / name / "scores.json").exists():
+            shutil.copytree(root / name, out / name)
     if (root / "resume.json").is_file():
         previous = json.loads((root / "resume.json").read_text()).get("rr_source")
         if previous:
@@ -77,7 +80,8 @@ def collect(root, out, rc):
                         dst.unlink()
             receipt["files"].append(row)
     if rc:
-        first_errors(root / "eco-extra8-try0.log", out / "eco-errors.txt")
+        for log in root.glob("*-extra*-try*.log"):
+            first_errors(log, out / (log.stem + "-errors.txt"))
         path = root / "run.log"
         if path.exists():
             with path.open("rb") as f:

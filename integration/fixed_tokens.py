@@ -25,6 +25,7 @@ class ReferenceTokens:
         self.native = torch.full_like(self.table, -1)
         self.batch_hash = hashlib.sha256()
         self.device = device
+        self.source_batch = int(os.getenv("GC_MOE_SOURCE_BATCH", "0"))
         self.audit_source = False
         self.source_members = None
 
@@ -37,7 +38,7 @@ class ReferenceTokens:
         indices = [self.keys[key] for key in req_ids]
         self.batch_hash.update(array('i', [len(indices), *indices]).tobytes())
         if self.audit_source:
-            b = int(os.environ["GC_MOE_SOURCE_BATCH"])
+            b = self.source_batch
             if len(indices) != 8 * b or len(set(indices)) != 8 * b:
                 raise ValueError("source ownership requires eight disjoint full request slices")
             members = tuple(indices[self.source_rank * b:(self.source_rank + 1) * b])
