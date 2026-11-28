@@ -1,4 +1,4 @@
-"""Stage the common BS256 input bank and audit the two full-model ECO runs."""
+"""Stage a common input bank and audit the two full-model ECO runs for one batch size."""
 import argparse
 import hashlib
 from pathlib import Path
@@ -13,13 +13,15 @@ from main20_report import (LAYERS, RANKS, STEPS, arm_data, auction_metrics, ep8_
 from compare_ep8_linear import workload
 
 
-def stage(bank, group):
+def stage(bank, group, bs=256):
     # Only link immutable input files. All generated KV, layouts and captures
     # belong to this new job. An absent bank is recorded by ECO in its own run.
     archives = ROOT / "docs/trace_executor_20261119"
     names = ["tokens.json", *(f"{phase}-rank{r}.pt" for phase in ("stats", "measure") for r in range(RANKS))]
-    for archive in ("sm90_ep8_linear_four_6bs_results", "sm90_shared_first_wa1_results"):
-        history = archives / archive / "delivery-256/bs256"
+    require(group.name == f"bs{bs}", "route bank requested for a different batch size")
+    for archive in ("sm90_ep8_linear_four_6bs_results", "sm90_shared_first_wa1_results",
+                    "sm90_bs512_bs1024_full_model_four_results"):
+        history = archives / archive / f"delivery-{bs}" / f"bs{bs}"
         path_file = history / "state-path.txt"
         if not path_file.is_file():
             continue
@@ -50,8 +52,8 @@ def logical_rows(counts, layout, layer):
     return np.add.reduceat(q[:, order], first, axis=1), np.add.reduceat(((q + 63) // 64)[:, order], first, axis=1)
 
 
-def report(delivery):
-    group = delivery / "bs256"
+def report(delivery, bs=256):
+    group = delivery / f"bs{bs}"
     sha = (delivery / "measurement.sha").read_text().strip()
     table, auctions, layers = [], [], []
     timings, baseline_counts, baseline_controls, baseline_workload = [], None, None, None
@@ -59,7 +61,7 @@ def report(delivery):
         folder = group / label
         run = load(folder / "run.json")
         control, _, native, _, counts, spans, auction, _ = arm_data(
-            folder, 256, "eco", sha, with_linear=True, linear_ep8=True)
+            folder, bs, "eco", sha, with_linear=True, linear_ep8=True)
         require(ep8_launch_policy(folder, True) == "original", "unexpected shared/plan launch order")
         common = control["config"]
         require(common.pop("GC_MOE_ECO_FINE_AUCTION") == str(flag), "wrong auction switch")
@@ -105,11 +107,14 @@ def report(delivery):
                                small_accepts=int(small[layer::LAYERS].sum())))
         summary = metrics(counts, spans)
         summary.pop("moe_ms_per_step")
-        table.append(dict(arm=label, bs=256, moe_us=float(timing.mean()),
+        routed_peak, routed_mean = routed.max(1), routed.mean(1)
+        table.append(dict(arm=label, bs=bs, moe_us=float(timing.mean()),
                           change_pct=100 * (timing.mean() / timings[0].mean() - 1),
                           **summary, peak_active_slots=float(np.count_nonzero(counts, axis=2).max(1).mean()),
                           peak_price=float(price.max(1).mean()), routed_mae_pp=float(errors.mean()),
-                          routed_peak_over_mean_pct=float(100 * (routed.max(1) / routed.mean(1) - 1).mean()),
+                          routed_mean_rank_us=float(routed_mean.mean()), routed_max_rank_us=float(routed_peak.mean()),
+                          routed_gap_us=float((routed_peak - routed_mean).mean()),
+                          routed_peak_over_mean_pct=float(100 * (routed_peak / routed_mean - 1).mean()),
                           graph_peak_over_mean_pct=float(100 * (graph.max(1) / graph.mean(1) - 1).mean()),
                           auction_max_rank_us=float(auction_us.mean())))
         auctions.append(dict(arm=label, **auction_metrics(auction), small_accepts=int(small.sum()),
@@ -128,9 +133,12 @@ if __name__ == "__main__":
     prepare = sub.add_parser("stage")
     prepare.add_argument("bank", type=Path)
     prepare.add_argument("group", type=Path)
-    sub.add_parser("report").add_argument("delivery", type=Path)
+    analyze = sub.add_parser("report")
+    analyze.add_argument("delivery", type=Path)
+    for command in (prepare, analyze):
+        command.add_argument("--bs", type=int, choices=(256, 512, 1024), default=256)
     args = parser.parse_args()
     if args.command == "stage":
-        stage(args.bank, args.group)
+        stage(args.bank, args.group, args.bs)
     else:
-        report(args.delivery)
+        report(args.delivery, args.bs)

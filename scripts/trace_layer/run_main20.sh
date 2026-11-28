@@ -87,9 +87,9 @@ PY
   fi
   if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then [[ $four == 1 && ${GC_MOE_EP8_LINEAR:-0} == 1 ]] || exit 2; arms=(vanilla rr); fi
   if [[ ${SM90_AUCTION_PAIR:-0} == 1 ]]; then
-    [[ $four == 1 && ${GC_MOE_EP8_LINEAR:-0} == 1 && $bs == 256 ]] || exit 2
+    [[ $four == 1 && ${GC_MOE_EP8_LINEAR:-0} == 1 && $bs =~ ^(256|512|1024)$ ]] || exit 2
     arms=(eco eco_small)
-    "$py" scripts/sm90/auction_pair.py stage "$GC_MOE_FIXED_DIR" "$group"
+    "$py" scripts/sm90/auction_pair.py stage "$GC_MOE_FIXED_DIR" "$group" --bs "$bs"
     export SM90_AUCTION_REPLAY
     SM90_AUCTION_REPLAY=$(cat "$group/reference-mode.txt")
     export GC_MOE_SM90_SPLIT_SHARED=1 GC_MOE_SM90_SPLIT_SHARED_M=32
@@ -144,7 +144,7 @@ PY
   if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then
     test -s "$group/rr/installed-layout.json"
   elif [[ ${SM90_AUCTION_PAIR:-0} == 1 ]]; then
-    "$py" scripts/sm90/auction_pair.py report "$out"
+    "$py" scripts/sm90/auction_pair.py report "$out" --bs "$bs"
   elif [[ $wa_pair == 1 ]]; then
     "$py" scripts/trace_layer/linear_wa_report.py "$out"
   elif [[ ${GC_COST_HOST_PROBE:-0} == 1 ]]; then

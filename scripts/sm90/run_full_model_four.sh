@@ -10,14 +10,15 @@ else
   if [[ ${1:-} == --linear-ep8 ]]; then shift; fi
   export GC_MOE_EP8_LINEAR=1 GC_PREFILL_MARGIN=256
   batches=(32 64 128 256 512 1024)
-  if [[ ${1:-} == --auction-bs256 ]]; then
-    shift; batches=(256); export SM90_AUCTION_PAIR=1
+  if [[ ${1:-} == --auction-bs256 || ${1:-} == --auction-bs512-1024 ]]; then
+    if [[ $1 == --auction-bs256 ]]; then batches=(256); else batches=(512 1024); fi
+    shift; export SM90_AUCTION_PAIR=1
   elif [[ ${1:-} == --ir-reference ]]; then
     [[ ${2:-} =~ ^(32|64|128|256|512|1024)$ ]] || exit 2
     batches=("$2"); export SM90_IR_REFERENCE=1; shift 2
   fi
 fi
-[[ $# == 1 && $1 != --* ]] || { echo "usage: run_full_model_four.sh [--linear-ep8|--fine-bs512-1024|--ir-reference BS|--auction-bs256] JOB_DIRECTORY" >&2; exit 2; }
+[[ $# == 1 && $1 != --* ]] || { echo "usage: run_full_model_four.sh [--linear-ep8|--fine-bs512-1024|--ir-reference BS|--auction-bs256|--auction-bs512-1024] JOB_DIRECTORY" >&2; exit 2; }
 cd "$(git rev-parse --show-toplevel)"
 job=$(realpath -m "$1")
 mkdir -p "$job"
