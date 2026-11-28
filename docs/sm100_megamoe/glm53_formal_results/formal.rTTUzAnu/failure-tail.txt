@@ -1,0 +1,100 @@
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 674, in __init__
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     self.worker.init_device()
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/worker/worker_base.py", line 343, in init_device
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     self.worker.init_device()  # type: ignore
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     ^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 490, in init_device
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     self.requested_memory = request_memory(init_snapshot, self.cache_config)
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/worker/utils.py", line 548, in request_memory
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     raise ValueError(
+(Worker pid=82546) ERROR 11-28 21:18:30 [multiproc_executor.py:948] ValueError: Free memory on device cuda:3 (176.2/267.69 GiB) on startup is less than desired GPU memory utilization (0.92, 246.27 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948] WorkerProc failed to start.
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948] Traceback (most recent call last):
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 915, in worker_main
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     worker = WorkerProc(*args, **kwargs)
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 674, in __init__
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     self.worker.init_device()
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/worker/worker_base.py", line 343, in init_device
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     self.worker.init_device()  # type: ignore
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     ^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 490, in init_device
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     self.requested_memory = request_memory(init_snapshot, self.cache_config)
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/worker/utils.py", line 548, in request_memory
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     raise ValueError(
+(Worker pid=82541) ERROR 11-28 21:18:30 [multiproc_executor.py:948] ValueError: Free memory on device cuda:0 (179.24/267.69 GiB) on startup is less than desired GPU memory utilization (0.92, 246.27 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948] WorkerProc failed to start.
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948] Traceback (most recent call last):
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 915, in worker_main
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     worker = WorkerProc(*args, **kwargs)
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 674, in __init__
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     self.worker.init_device()
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/worker/worker_base.py", line 343, in init_device
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     self.worker.init_device()  # type: ignore
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     ^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 490, in init_device
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     self.requested_memory = request_memory(init_snapshot, self.cache_config)
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/worker/utils.py", line 548, in request_memory
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948]     raise ValueError(
+(Worker pid=82542) ERROR 11-28 21:18:30 [multiproc_executor.py:948] ValueError: Free memory on device cuda:1 (179.23/267.69 GiB) on startup is less than desired GPU memory utilization (0.92, 246.27 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.
+[rank0]:[W1128 21:18:31.294730858 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see [URL] (function operator())
+(MainProcess pid=37524) WARNING 11-28 21:18:35 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=1
+Traceback (most recent call last):
+  File "/data0/home/admin/workspace/glm53-work/formal.rTTUzAnu/repo/scripts/sm100/glm53_matrix.py", line 332, in <module>
+    arm_run(root, args.action)
+  File "/data0/home/admin/workspace/glm53-work/formal.rTTUzAnu/repo/scripts/sm100/glm53_matrix.py", line 137, in arm_run
+    llm = LLM(
+          ^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/entrypoints/llm.py", line 344, in __init__
+    self.llm_engine = LLMEngine.from_engine_args(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 185, in from_engine_args
+    return cls(
+           ^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 111, in __init__
+    self.engine_core = EngineCoreClient.make_client(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 133, in make_client
+    return InprocClient(vllm_config, executor_class, log_stats)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 363, in __init__
+    self.engine_core = EngineCore(
+                       ^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 140, in __init__
+    self.model_executor = executor_class(vllm_config)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 116, in __init__
+    super().__init__(vllm_config)
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/abstract.py", line 113, in __init__
+    self._init_executor()
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 214, in _init_executor
+    self.workers = WorkerProc.wait_for_ready(unready_workers)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 810, in wait_for_ready
+    raise e from None
+Exception: WorkerProc initialization failed due to an exception in a background process. See stack trace for root cause.
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+2026-11-28T21:18:39+08:00 released rr
