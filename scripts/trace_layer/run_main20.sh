@@ -26,7 +26,11 @@ case ${GC_MOE_MATRIX_SIZE:-20} in
       export GC_MOE_SM90_PLAN_DISPATCH=1
     elif [[ $four == 1 ]]; then
       if [[ ${GC_MOE_EP8_LINEAR:-0} == 1 ]]; then
-        [[ ${GC_MAIN24_SINGLE_BS:-} =~ ^(32|64|128|256|512|1024)$ ]] || exit 2
+        if [[ -n ${GC_MOE_SOURCE_BATCH:-} ]]; then
+          [[ $GC_MOE_SOURCE_BATCH =~ ^(8|16|32|64|128|256)$ && $((8*GC_MOE_SOURCE_BATCH)) == "$GC_MAIN24_SINGLE_BS" ]] || exit 2
+        else
+          [[ ${GC_MAIN24_SINGLE_BS:-} =~ ^(32|64|128|256|512|1024)$ ]] || exit 2
+        fi
         report_args+=(--linear-ep8)
       else
         [[ ${GC_MAIN24_SINGLE_BS:-} =~ ^(512|1024)$ ]] || exit 2
@@ -77,7 +81,7 @@ for bs in "${batches[@]}"; do
   mkdir "$GC_MOE_FIXED_DIR" "$GC_MOE_STRICT_STATE_DIR"
   "$py" - "$state" "$bs" <<'PY'
 import os, shutil, sys
-required = 2*8*int(os.environ["GC_MOE_KV_BYTES"]) + 2*8*40000*int(sys.argv[2])*6*12 + 4*1024**3
+required = 2*8*int(os.environ["GC_MOE_KV_BYTES"]) + 2*8*40000*int(os.getenv("GC_MOE_SOURCE_BATCH") or sys.argv[2])*6*12 + 4*1024**3
 if shutil.disk_usage(sys.argv[1]).free < required:
     raise SystemExit(f"Need {required / 1024**3:.1f} free GiB on the checkpoint filesystem")
 PY

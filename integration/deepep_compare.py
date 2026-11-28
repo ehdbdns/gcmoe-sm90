@@ -824,7 +824,17 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                       f"last40={collections.Counter(_TRACE['n'][-40:])}", flush=True)
                 if len(_TRACE['n']) > 400:
                     _TRACE['n'].clear()
-        self._run_into(output, packed, hidden_states, topk_weights, topk_ids, tokens)
+        local = int(os.getenv("GC_MOE_SOURCE_BATCH", "0"))
+        if local and tokens == local * 8:
+            from vllm.distributed import get_tp_group
+            from source_batch import run_local_moe
+            def run_rows(target, hidden, weights, ids):
+                self._run_into(target, packed, hidden, weights, ids, local)
+            run_local_moe(get_tp_group(), int(self._get_buffer().rank_idx), local,
+                          output, hidden_states, topk_weights, topk_ids, run_rows)
+        else:
+            self._run_into(output, packed, hidden_states, topk_weights, topk_ids, tokens,
+                           record_source=not local)
         if os.environ.get('GC_MOE_LAUNCH_TRACE') == '1':
             import torch.distributed as _d
             print(f'[apply] exit rank={_d.get_rank()} tokens={tokens}', flush=True)
@@ -835,7 +845,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         return self._run_into(output, self._packed[id(layer)], x, topk_weights,
                               topk_ids, x.shape[0])
 
-    def _run_into(self, output, packed, x, topk_weights, topk_ids, tokens):
+    def _run_into(self, output, packed, x, topk_weights, topk_ids, tokens, record_source=True):
         gc = self._gc
         buf = self._get_buffer()
         cap = buf.num_max_tokens_per_rank
@@ -870,7 +880,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
             _t1 = torch.cuda.Event(enable_timing=True)
             _t0.record()
         tape = getattr(buf, 'fixed_routes', None)
-        use_tape = tape is not None and tokens == tape.batch and (self._eplb is not None or buf.layout.matrix)
+        use_tape = record_source and tape is not None and tokens == tape.batch and (self._eplb is not None or buf.layout.matrix)
         if use_tape:
             topk_ids, topk_weights = tape.select(topk_ids, topk_weights, _LAYER_ROW[id(packed[0][0])],
                                                  buf.route_ordinal[:tokens])
@@ -1027,6 +1037,8 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         hidden = self.moe_config.hidden_dim
         topk = self.moe_config.experts_per_token
         sizes = sorted({int(x) for x in (capture_sizes or []) if 1 <= int(x) <= buf.num_max_tokens_per_rank})
+        if os.getenv("GC_MOE_SOURCE_BATCH"):
+            sizes.append(int(os.environ["GC_MOE_SOURCE_BATCH"]))
         if not sizes:
             sizes = [1]
         # One extra larger size so the warm-up covers prefill-ish batches too.
@@ -1201,6 +1213,8 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
         which selects the largest geometry; sweep it to trade geometry against
         the batch range you actually serve.
         """
+        if tokens == int(os.getenv("GC_MOE_SOURCE_BATCH", "0")):
+            return tokens
         if self._fixed_bound is None:
             cap = buf.num_max_tokens_per_rank
             requested = int(os.environ.get('GC_MOE_BOUND', '0')) or cap
@@ -1476,7 +1490,7 @@ class GCMoEExperts(mk.FusedMoEExpertsModular):
                     tape_type = LongRouteTape
                 else:
                     tape_type = RouteTape
-                tape_args = {'batch': int(os.environ['GC_MOE_MATRIX_BS'])} if buf.layout.matrix else {}
+                tape_args = {'batch': int(os.getenv('GC_MOE_SOURCE_BATCH') or os.environ['GC_MOE_MATRIX_BS'])} if buf.layout.matrix else {}
                 if buf.layout.long_cost and os.getenv('SM90_SIX_ARM') == '1':
                     tape_args['steps'] = buf.layout.eplb_window
                 buf.fixed_routes = tape_type(buf.buffer.device, buf.num_topk, buf.profile_slot_counts.shape[1],
@@ -1888,6 +1902,8 @@ def _block_m(buf) -> int:
                 break
         if capped:
             bound = capped
+        if os.getenv("GC_MOE_SOURCE_BATCH"):
+            bound = int(os.environ["GC_MOE_SOURCE_BATCH"])
         cfg = ValidatedCall(ranks=buf.group.size(), experts=buf.num_experts,
                             capacity=buf.num_max_tokens_per_rank,
                             topk=buf.num_topk, hidden=buf.hidden,

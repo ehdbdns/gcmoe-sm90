@@ -125,6 +125,9 @@ def prepare_matrix(worker, buf, modules, ref):
             expected = {"mode": 2, "slack": 11469}
         elif os.getenv("GC_MOE_EP8_LINEAR") == "1" or os.getenv("SM90_TUNED_EIGHT") == "1":
             expected = {"mode": 0, "slack": 91 if os.getenv("SM90_SHARED_FIRST_WA1") == "1" else 92}
+        if os.getenv("GC_MOE_SOURCE_BATCH"):
+            from source_batch import routed_m
+            expected = {"mode": 0, "slack": 27 + routed_m(tape.batch)}
         if plan_price != expected:
             raise ValueError(f"prepared ECO price {plan_price} differs from assigned {expected}")
     controls = runner_boundary(worker.model_runner, ref)

@@ -109,7 +109,9 @@ def test_worker_export(root):
         num_experts=1,
         fixed_routes=tape,
         eco=True,
-        layout=SimpleNamespace(matrix=True),
+        layout=SimpleNamespace(matrix=True, auction_granularity_audit=True),
+        auction_small=torch.arange(calls),
+        auction_ns=torch.arange(calls) + 10,
         replay_stream_mode=torch.tensor(1),
         header=torch.tensor([calls + 1]),
         auction_counts=auction,
@@ -139,6 +141,8 @@ def test_worker_export(root):
     assert result["warm_native"] == "warm"
     with np.load(root / "rank0.npz") as raw:
         np.testing.assert_array_equal(raw["auction"], auction[epochs.long() % calls])
+        for key in ("auction_small", "auction_ns"):
+            np.testing.assert_array_equal(raw[key], getattr(buf, key)[epochs.long() % calls])
         assert raw["native"].tolist() == [[7], [8]]
 
 

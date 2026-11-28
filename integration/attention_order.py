@@ -1,8 +1,10 @@
 """Order the selected physical KV slots at the vLLM FlashMLA decode boundary."""
 import hashlib
+import os
 from functools import wraps
 
 import numpy as np
+
 import torch
 import triton
 import triton.language as tl
@@ -48,7 +50,7 @@ def order_extra(indices, lengths, buf, layer):
     if rows == 0 or width == 0:
         return result
     tape = getattr(buf, 'fixed_routes', None)
-    audit = tape is not None and rows == tape.batch
+    audit = tape is not None and rows == (tape.batch * 8 if os.getenv("GC_MOE_SOURCE_BATCH") else tape.batch)
     if audit:
         banks = getattr(tape, 'order_banks', None)
         if banks is None:

@@ -119,6 +119,12 @@ if [[ $variant == --study-main20 ]]; then
     *) exit 2 ;;
   esac
 fi
+if [[ -n ${GC_MOE_SOURCE_BATCH:-} ]]; then
+  [[ $variant == --study-main20 && $((GC_MOE_SOURCE_BATCH * 8)) == "$GC_MOE_MATRIX_BS" ]] || exit 2
+  export GC_MOE_BLOCK_M_FORCE=0 GC_MOE_ECO_WA=1 GC_MOE_ECO_COSTFN=0
+  export GC_MOE_SM90_SPLIT_SHARED=1 GC_MOE_SM90_SPLIT_SHARED_M=32 GC_MOE_ECO_FINE_AUCTION=0
+  if [[ $GC_MOE_MATRIX_ARM == eco ]]; then export GC_MOE_ECO_FINE_AUCTION=1; fi
+fi
 if [[ -n ${GC_BS256_TRACE_DIR:-} ]]; then
   [[ $variant == --study-main20 && $GC_MOE_MATRIX_BS == 256 && $GC_MOE_MATRIX_ARM =~ ^(rr|eco)$ ]] || exit 2
   export GC_MOE_FINE_TRACE=1 GC_MOE_FINE_FLOOR=1 GC_MOE_FINE_EPOCHS=1 GC_MOE_FINE_RECS=4194304 GC_MOE_FINE_MIN_EPOCH=0

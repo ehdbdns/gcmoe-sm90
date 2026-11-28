@@ -144,6 +144,9 @@ def register_long_rpc(worker_class, get_buffer, modules):
         if phase == "measure" and (hasattr(buf, "ffn_counter") or os.getenv("GC_MOE_EP8_LINEAR") == "1"):
             from sm90_eight import count_graph_replays
             self._finish_replay_count = count_graph_replays(buf)
+        if os.getenv("GC_MOE_SOURCE_BATCH"):
+            ref = self._gc_reference_tokens
+            ref.source_rank, ref.source_steps, ref.audit_source = rank, 0, True
         tape.start_phase(phase, rank)
         if phase == "measure":
             reset_order(tape, self.model_runner.model.modules(), DeepseekV4FlashMLAAttention)
@@ -185,6 +188,15 @@ def register_long_rpc(worker_class, get_buffer, modules):
         ):
             raise ValueError("incomplete ordered stream window")
         audit.update(rank=rank, compressed_layers=sorted(map(int, modes)))
+        if os.getenv("GC_MOE_SOURCE_BATCH"):
+            ref = self._gc_reference_tokens
+            ref.audit_source = False
+            if ref.source_steps != tape.steps or len(ref.source_members or ()) != tape.batch:
+                raise ValueError("incomplete per-source decode window")
+            from gc_moe.jit_kernels.impls.sm90_fp8_fp4_gc_moe import prepared_routed_m
+            audit["routed_block_m"] = prepared_routed_m(buf.layout, tape.batch)
+            audit.update(source_requests=list(ref.source_members), source_steps=ref.source_steps,
+                         source_route_shape=list(tape.ids.shape))
         counts = tape.counts.cpu().numpy()
         audit["total_rows_by_layer"] = counts.reshape(tape.steps, tape.layers, -1).sum(axis=(0, 2)).tolist()
         if buf.layout.matrix:

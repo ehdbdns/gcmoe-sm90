@@ -25,6 +25,8 @@ class ReferenceTokens:
         self.native = torch.full_like(self.table, -1)
         self.batch_hash = hashlib.sha256()
         self.device = device
+        self.audit_source = False
+        self.source_members = None
 
     def feed(self, req_ids, output, num_sampled):
         sampled = output.sampled_token_ids
@@ -34,6 +36,16 @@ class ReferenceTokens:
         # position until the first token is actually accepted.
         indices = [self.keys[key] for key in req_ids]
         self.batch_hash.update(array('i', [len(indices), *indices]).tobytes())
+        if self.audit_source:
+            b = int(os.environ["GC_MOE_SOURCE_BATCH"])
+            if len(indices) != 8 * b or len(set(indices)) != 8 * b:
+                raise ValueError("source ownership requires eight disjoint full request slices")
+            members = tuple(indices[self.source_rank * b:(self.source_rank + 1) * b])
+            if self.source_members is None:
+                self.source_members = members
+            elif members != self.source_members:
+                raise ValueError("decode request ownership/order changed during the experiment")
+            self.source_steps += 1
         rows = torch.tensor(indices, device=self.device)
         pos = self.positions.index_select(0, rows)
         self.native[rows, pos] = sampled[:, 0].long()
@@ -123,7 +135,10 @@ def install(runner, directory, capacity=None):
         else:
             returned = original(hidden_states, input_batch, grammar_output)
         output, num_sampled, num_rejected = returned
-        reference.batch_hash.update(input_batch.query_start_loc_np[:input_batch.num_reqs+1].tobytes())
+        offsets = input_batch.query_start_loc_np[:input_batch.num_reqs + 1]
+        if reference.audit_source and (offsets[0] != 0 or not ((offsets[1:] - offsets[:-1]) == 1).all()):
+            raise ValueError("source batch contains padding or multiple input tokens for a request")
+        reference.batch_hash.update(offsets.tobytes())
         if trace_hidden:
             # logits_indices picks the last hidden row for each mixed-prefill
             # request. Drop chunk rows which have no accepted sample.

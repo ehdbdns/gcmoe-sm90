@@ -156,6 +156,21 @@ def load_prompts(n, lo, hi, *, prefix_tokens=None):
 
 
 def select_decode_prompts(n, lo, hi):
+    if os.getenv("GC_MOE_SOURCE_BATCH"):
+        # The request identity is independent of prompt content. Prefer distinct real
+        # prompts, then distinct prefixes of those same records when the corpus is small.
+        records = [p for path in DATASET.split(",") for p in _read_prompts(path.strip(), lo, hi)]
+        bank = {}
+        for trim in range(hi - lo + 1):
+            for p in records:
+                if len(p) - trim >= lo:
+                    key = tuple(p[:len(p) - trim])
+                    bank.setdefault(key, None)
+            if len(bank) >= n:
+                break
+        if len(bank) < n:
+            raise ValueError(f"only {len(bank)} distinct eligible prompts for {n} streams")
+        return [list(p) for p in _stride_sample(sorted(bank, key=len), n)]
     if os.getenv('SM90_SIX_ARM') == '1':
         if n != 256 or lo != 256:
             raise ValueError('six-arm run requires BS256 and real 256-token prefixes')
@@ -185,7 +200,7 @@ def _compilation_config():
         return None
     config = {'cudagraph_mode': getattr(CUDAGraphMode, mode)}
     batch = int(os.environ.get('GC_MOE_MATRIX_BS', '0'))
-    if os.environ.get('GC_MOE_MATRIX_ARM') and (batch > 256 or os.getenv('SM90_PAIRED_SMALL') == '1' or os.getenv('SM90_SIX_ARM') == '1'):
+    if os.environ.get('GC_MOE_MATRIX_ARM') and (batch > 256 or os.getenv('GC_MOE_SOURCE_BATCH') or os.getenv('SM90_PAIRED_SMALL') == '1' or os.getenv('SM90_SIX_ARM') == '1'):
         # Pure decode has exactly this shape. Avoid retaining dozens of
         # capture pools or falling back to eager above the default graph cap.
         config.update(cudagraph_capture_sizes=[batch], max_cudagraph_capture_size=batch)
@@ -668,7 +683,7 @@ def main():
                         ap.error(f'{matrix}: incorrect active-slot weight')
                 expected_mode = '0' if matrix in ('eco_linear', 'eco_linear_wa1') else '2'
                 if os.getenv('GC_MOE_EP8_LINEAR') == '1':
-                    expected_wa = '1' if os.getenv('SM90_SHARED_FIRST_WA1') == '1' else '2'
+                    expected_wa = '1' if os.getenv('GC_MOE_SOURCE_BATCH') or os.getenv('SM90_SHARED_FIRST_WA1') == '1' else '2'
                     if matrix not in ('vanilla', 'random', 'rr', 'eco') or os.getenv('GC_MOE_ECO_WA') != expected_wa:
                         ap.error('invalid linear EP8 arm or active-slot weight')
                     expected_mode = '2' if os.getenv('SM90_FINE_WA1_REFERENCE') and matrix == 'eco' else '0'
@@ -749,6 +764,8 @@ def main():
         if required_tokens <= kv_pool:
             break
         prompts = select_decode_prompts(nseq, a.prefill_lo, a.prefill_hi)
+    if os.getenv("GC_MOE_SOURCE_BATCH") and required_tokens > kv_pool:
+        raise ValueError(f"fixed distinct streams require {required_tokens} KV tokens, configured limit {kv_pool}")
     max_len = max(len(p) for p in prompts)
     print(f'[data] {nseq} prompts ({a.seqs_per_rank}/rank x {ranks}), '
           f'len {min(map(len,prompts))}..{max_len}', flush=True)
@@ -850,14 +867,16 @@ def main():
 
         if not isinstance(engine.engine_core, InprocClient):
             raise RuntimeError('aligned capture requires driver-stepped EngineCore')
-    if six_arm:
+    if six_arm or os.getenv("GC_MOE_SOURCE_BATCH"):
         cache = engine.engine_core.engine_core.vllm_config.cache_config
         capacity = cache.kv_cache_size_tokens
         concurrency = cache.kv_cache_max_concurrency
         print(f'[six-capacity] tokens={capacity} required={required_tokens} concurrency={concurrency} batch={nseq}', flush=True)
         if capacity is None or concurrency is None:
             raise ValueError('vLLM did not report initialized KV capacity')
-        if capacity < required_tokens or concurrency < nseq:
+        # This estimate charges every request for max_model_len. With the
+        # heterogeneous main-table prompts the full-decode counters decide admission.
+        if six_arm and (capacity < required_tokens or concurrency < nseq):
             raise ValueError('[six-capacity] insufficient KV for the fixed batch')
     # [TOKEN-BUDGET] `max_tokens` must cover EVERY decode step any stream will
     # ever be asked to produce, and chunked prefill makes that more than
@@ -1132,7 +1151,7 @@ def main():
                       prefill_steps=prefill_steps, steps=a.measure_steps, layers=aligned_layers, batch=nseq,
                       stream=int(os.environ['GC_MOE_SM90_STREAM_M_BLOCKS']), controls=fixed_controls,
                       cost=int(os.environ['GC_MOE_ECO_COSTFN']), rearranged=rearranged)
-        if six_arm:
+        if six_arm or os.getenv("GC_MOE_SOURCE_BATCH"):
             result['kv_capacity'] = dict(tokens=capacity, required=required_tokens, concurrency=concurrency)
         with Path(a.output).open('x') as f:
             json.dump(result, f)

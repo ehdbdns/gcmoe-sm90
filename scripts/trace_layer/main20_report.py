@@ -12,6 +12,8 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "source/gc_moe/eco"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "integration"))
+from source_batch import routed_m
 from h20_valid_cost import slot_cost
 from long_cost_report import by_rank, require
 
@@ -41,9 +43,9 @@ def write_rows(path, rows):
         w.writerows(rows)
 
 
-def metrics(counts, spans, *, steps=None):
+def metrics(counts, spans, *, steps=None, block_m=64):
     rows = counts.sum(-1)
-    blocks = ((counts + 63) // 64).sum(-1)
+    blocks = ((counts + block_m - 1) // block_m).sum(-1)
     peak = spans[:, :, 0].max(1)
     return dict(
         moe_ms_per_step=float(peak.reshape(STEPS if steps is None else steps, LAYERS).sum(1).mean() / 1000),
@@ -55,9 +57,9 @@ def metrics(counts, spans, *, steps=None):
     )
 
 
-def linear_peak_metrics(counts, spans, linear_score):
+def linear_peak_metrics(counts, spans, linear_score, block_m=64):
     active = np.count_nonzero(counts, axis=2)
-    mblocks = ((counts + 63) // 64).sum(2)
+    mblocks = ((counts + block_m - 1) // block_m).sum(2)
     peaks = dict(peak_rank_active_slots=float(active.max(1).mean()))
     # Ties count once per call if any slowest rank satisfies the same condition.
     mb = mblocks == mblocks.max(1, keepdims=True)
@@ -72,12 +74,12 @@ def linear_peak_metrics(counts, spans, linear_score):
     return peaks
 
 
-def ep8_launch_policy(directory, eco):
+def ep8_launch_policy(directory, eco, block_m=64):
     log = (directory / "runner.log").read_text()
     original = (5, 7, 1, 4, 8, 2, 3) if eco else (1, 4, 8, 2, 3)
     shared_first = (4, 5, 7, 1, 8, 2, 3) if eco else (4, 1, 8, 2, 3)
-    current = f"[ep8] M=64 roles={original} launch_order=original" in log
-    historical = f"[ep8] M=64 roles={shared_first} shared_launch=((4, 2, 0, 1),)"
+    current = f"[ep8] M={block_m} roles={original} launch_order=original" in log
+    historical = f"[ep8] M={block_m} roles={shared_first} shared_launch=((4, 2, 0, 1),)"
     require(current != (historical in log), f"{directory}: missing or mixed launch orders")
     if current:
         return "original"
@@ -87,9 +89,15 @@ def ep8_launch_policy(directory, eco):
 def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_wa=2, ep8_mode=0):
     run = load(directory / "run.json")
     eco = arm.startswith("eco")
+    local = int(run["controls"].get("GC_MOE_SOURCE_BATCH", "0"))
+    block_m = routed_m(local) if local else 64
+    if local:
+        require(linear_ep8 and bs == local * RANKS, "global and source batch disagree")
+        ep8_wa = 1
+    source_rows = (local or bs) * 6 * RANKS
     wa = ep8_wa if linear_ep8 else int(arm == "eco_linear_wa1")
     mode = ep8_mode if linear_ep8 else (0 if arm in ("eco_linear", "eco_linear_wa1") else 2)
-    expected_price = dict(mode=mode, slack=90 + wa if mode == 0 else 11469) if eco else None
+    expected_price = dict(mode=mode, slack=block_m + 26 + wa if mode == 0 else 11469) if eco else None
     require(
         run["batch"] == bs
         and run["steps"] == STEPS
@@ -110,6 +118,8 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
         GC_MOE_SLOT_PLACEMENT="random" if arm == "random" else "identity",
         GC_MOE_EPLB_NO_REARRANGE=str(int(arm in ("vanilla", "random"))),
     )
+    if local:
+        treatment["GC_MOE_ECO_FINE_AUCTION"] = str(int(eco))
     for key, value in treatment.items():
         require(config.pop(key) == value, f"{arm}: wrong {key}")
     fixed = dict(
@@ -118,7 +128,7 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
         GC_MOE_ECO_NULL_PLAN="0",
         GC_MOE_ECO_NOSPLIT="0",
         GC_MOE_MB_CLAIM="1",
-        GC_MOE_BLOCK_M_FORCE="64",
+        GC_MOE_BLOCK_M_FORCE="0" if local else "64",
         GC_MOE_ECO_PER_LAYER="1",
         GC_MOE_ECOPLB_PER_LAYER="1",
         GC_MOE_ORDER_EXTRA="1",
@@ -152,7 +162,9 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
         runtime=(directory / "runtime.log").read_text(),
     )
     if linear_ep8:
-        control["shared_first"] = ep8_launch_policy(directory, eco) != "original"
+        control["shared_first"] = ep8_launch_policy(directory, eco, block_m) != "original"
+        if local:
+            require(not control["shared_first"], "unexpected launch order")
     installed_hash = hashlib.sha256(
         json.dumps(load(directory / "installed-layout.json"), separators=(",", ":")).encode()
     ).hexdigest()
@@ -163,7 +175,10 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
         first = initial[0]["epoch"]
         control[phase] = []
         physical_totals = np.array([r["total_rows_by_layer"] for r in audit])
-        require(np.all(physical_totals.sum(0) == STEPS * bs * 6 * RANKS), "incomplete physical rows")
+        require(np.all(physical_totals.sum(0) == STEPS * source_rows), "incomplete physical rows")
+        if local:
+            owners = [r["source_requests"] for r in audit]
+            require(sorted(i for requests in owners for i in requests) == list(range(bs)), "duplicate or missing request")
         for row, start in zip(audit, initial):
             require(row["calls"] == calls and row["first_epoch"] == start["epoch"] == first, "missing epochs")
             if with_linear and arm == "rr":
@@ -171,6 +186,10 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
             control[phase].append(
                 {k: row[k] for k in ("rank", "first_epoch", "ids", "weights", "demand", "compressed_layers")}
             )
+            if local:
+                require(row["source_steps"] == STEPS and len(row["source_requests"]) == local and
+                        row["routed_block_m"] == block_m and row["source_route_shape"] == [calls, local, 6], "invalid per-rank source evidence")
+                control[phase][-1]["source_requests"] = row["source_requests"]
             if config.get("GC_MOE_MATRIX_PREFIX_CHECK") == "1":
                 require(row["ordinal_calls_verified"] == calls, "incomplete ordinal audit")
                 if phase == "stats":
@@ -249,7 +268,7 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
                 and np.all((t[~active] == -1) & (u[~active] == 0)),
                 "bad timing boundary",
             )
-            linear_price = q.sum(1) + 26 * ((q + 63) // 64).sum(1)
+            linear_price = q.sum(1) + 26 * ((q + block_m - 1) // block_m).sum(1)
             if wa:
                 linear_price += wa * np.count_nonzero(q, axis=1)
             prices = [linear_price]
@@ -283,7 +302,7 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
                 require("auction" not in data, "auction counters without ECO")
     counts = np.stack(occupancies, axis=1)
     values = np.stack(observers, axis=1)
-    require(np.all(counts.sum(axis=(1, 2)) == bs * 6 * RANKS), "routes lost")
+    require(np.all(counts.sum(axis=(1, 2)) == source_rows), "routes lost")
     return (
         control,
         placement.pop(),
@@ -342,11 +361,13 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
     if four_arms:
         arms = ("vanilla", "random", "rr", "eco")
     group = root / f"bs{bs}"
+    local = int(load(group / "vanilla" / "run.json")["controls"].get("GC_MOE_SOURCE_BATCH", 0)) if four_arms else 0
+    block_m = routed_m(local) if local else 64
     with np.load(group / "stats-demand.npz") as data:
         history = data["logical"]
     demand_hash = hashlib.sha256(np.ascontiguousarray(history)).hexdigest()
     require(
-        history.shape == (STEPS, LAYERS, 384) and np.all(history.sum(-1) == bs * 6 * RANKS),
+        history.shape == (STEPS, LAYERS, 384) and np.all(history.sum(-1) == (local or bs) * 6 * RANKS),
         "incomplete EPLB history",
     )
     for arm in arms:
@@ -357,7 +378,7 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
             for key in ("GC_MOE_STABLE_PREFILL_TOPK", "GC_MOE_STABLE_DECODE_TOPK", "GC_MOE_ORDER_PREFILL", "GC_MOE_MATRIX_PREFIX_CHECK", "GC_MOE_NO_PREFETCH"):
                 require(control["config"].get(key) == "1", f"disabled control: {key}")
             require(control["config"].get("CUDAGRAPH_MODE") == "FULL_DECODE_ONLY", "wrong graph mode")
-            if bs in (512, 1024):
+            if not local and bs in (512, 1024):
                 previous = (Path(__file__).resolve().parents[2] / "docs/trace_executor_20261119" /
                             "sm90_collect_once_replay_results" / f"bs{bs}" / "collection/capture.json")
                 require(control["prompt"] == load(previous)["prompt_sha256"], "prompt batch differs from replay study")
@@ -424,7 +445,7 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
                 arm=arm,
                 e2e_ms_per_step=host,
                 vs_vanilla_pct=100 * (host / reference_host - 1),
-                **metrics(counts, spans),
+                **metrics(counts, spans, block_m=block_m),
                 routed_mae_pp=float(err[:, :, 1].mean()),
                 routed_max_pp=float(err[:, :, 1].max()),
                 graph_mae_pp=float(err[:, :, 0].mean()),
@@ -437,7 +458,7 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
             )
         )
         if linear_ep8:
-            rows[-1].update(linear_peak_metrics(counts, spans, prices[:, :, 0]))
+            rows[-1].update(linear_peak_metrics(counts, spans, prices[:, :, 0], block_m))
         if fine_only or four_arms:
             rows[-1]["moe_change_pct_vs_vanilla"] = 100 * (rows[-1]["moe_ms_per_step"] / rows[0]["moe_ms_per_step"] - 1)
         if with_linear and not linear_ep8:
@@ -470,6 +491,9 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
                 del row["graph_mae_pp"]
                 if not arm.startswith("eco"):
                     row["predicted_pct"] = row["routed_mae_pp"] = None
+        if local:
+            for row in rank_errors:
+                row.update(bs=local, global_streams=bs, routed_block_m=block_m)
         write_rows(group / arm / "rank_shares.csv", rank_errors)
         outcomes[arm] = (native, warm, rows[-1])
         peaks = spans[:, :, 0].max(1).reshape(STEPS, LAYERS)
@@ -486,7 +510,18 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
             )
         if auction is not None:
             auctions.append(dict(bs=bs, arm=arm, **auction_metrics(auction)))
-            write_auction_detail(group / arm, bs, arm, auction)
+            if local:
+                small = None
+                for rank in range(RANKS):
+                    with np.load(group / arm / f"rank{rank}.npz") as data:
+                        current = data["auction_small"].reshape(-1)
+                        require(current.shape == (STEPS * LAYERS,) and np.all((current >= 0) & (current <= auction[:, 2])),
+                                "invalid small-bid receipts")
+                        if small is not None:
+                            require(np.array_equal(current, small), "replicated small-bid counters disagree")
+                        small = current
+                auctions[-1]["small_accepted"] = int(small.sum())
+            write_auction_detail(group / arm, local or bs, arm, auction)
     if four_arms:
         rr_ms = outcomes["rr"][2]["moe_ms_per_step"]
         for row in rows:
@@ -535,6 +570,9 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
             del row["graph_mae_pp"]
             if row["arm"] != "eco":
                 row["routed_mae_pp"] = None
+    if local:
+        for row in (*rows, *layers, *auctions, *pairs):
+            row.update(bs=local, global_streams=bs, routed_block_m=block_m)
     return rows, layers, auctions, pairs
 
 

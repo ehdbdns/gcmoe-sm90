@@ -224,6 +224,19 @@ def test_small_token_auction():
         accepted += device.small_moves
     assert accepted > 0
 
+    # At M8 a one-token bid must survive the legacy full/tail kind encoding.
+    for m in (8, 16, 32, 64):
+        planner = UnitPlanner([0, 1, 0, 2], 2, 3, block_m=m, wb=26, wa=1, rounds=1)
+        worker = ScalarPlan(planner, 2)
+        worker.fine_auction = True
+        previous, small = None, 0
+        for _ in range(100):
+            demand = rng.integers(1, 3 * m, size=3).tolist()
+            worker.quotas(planner, demand, previous)
+            small += worker.small_moves
+            previous = worker.warm_quota, demand
+        assert small > 0, m
+
 
 if __name__ == '__main__':
     test_small_token_auction()

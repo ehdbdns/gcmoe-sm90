@@ -265,8 +265,8 @@ class SM90GCMoERoleKernel:
         self.fine_auction = bool(role == 5 and getattr(config, "eco_fine_auction", False))
         self.auction_granularity_audit = layout.auction_granularity_audit
         if self.fine_auction and (self.eco_costfn or self.eco_blocks_only
-                                  or self.eco_tokens_only or self.max_m != 64):
-            raise ValueError("fine auction requires the linear token + block + active price and M64")
+                                  or self.eco_tokens_only or self.max_m not in (8, 16, 32, 64)):
+            raise ValueError("fine auction requires the linear token + block + active price and a supported routed M")
         self.eco_valid_cost = config.eco_cost_mode == 2
         if self.eco_valid_cost:
             geometry = (self.max_m, self.hidden, self.intermediate, schedule.threads[1])
@@ -991,7 +991,7 @@ class SM90GCMoERoleKernel:
                 qb = self._eco_s(slab, self.eco_quota_off, other)
                 recv = self._eco_s(slab, self.eco_T_off, other // width)
                 for level in cutlass.range_constexpr(3):
-                    amount = Uint32(8 << level)
+                    amount = Uint32((self.max_m // 8) << level)
                     if amount <= qa and amount != whole:
                         relief, charge, fits = self._eco_transfer_cost(qa, qb, amount)
                         v = recv + charge
@@ -1001,7 +1001,7 @@ class SM90GCMoERoleKernel:
                             if (hit == Uint32(0) or score < peak or
                                     (score == peak and (v < value or (v == value and other < dst)))):
                                 hit, dst, value, inc, shed, kind, peak = (
-                                    Uint32(1), other, v, charge, relief, amount, score)
+                                    Uint32(1), other, v, charge, relief, amount + Uint32(1), score)
         return hit, dst, value, inc, shed, kind
 
     @cute.jit
@@ -1010,7 +1010,8 @@ class SM90GCMoERoleKernel:
         # quotas in deterministic accept order before changing either ledger.
         width = Uint32(self.physical // self.ranks)
         e = self._eco_s(slab, self.eco_phy_off, src)
-        amount = kind
+        # Values 0 and 1 encode the original full block and tail bids.
+        amount = kind - Uint32(1)
         if kind <= Uint32(1):
             amount = self._eco_s(slab, self.eco_rem_off, e) if kind == Uint32(1) else Uint32(self.max_m)
         qa = self._eco_s(slab, self.eco_quota_off, src)

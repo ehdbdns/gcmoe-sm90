@@ -26,6 +26,7 @@ from ..heuristics.sm90_gc_moe import (
 class _Prepared:
     binaries: tuple[RoleBinary, ...]
     plan_slack: int | None = None
+    routed_m: int = 0
 
 
 _CACHE: dict[tuple, _Prepared] = {}
@@ -88,9 +89,10 @@ _POINTER_TYPES = (Uint8, Uint64, BFloat16, Uint8, Uint8, Float32,
 
 
 def _role_specs(config, layout, schedule, has_stats):
+    stream_m8 = bool(os.getenv("GC_MOE_SOURCE_BATCH")) and config.bound in (8, 16) and schedule.tile_m == 8
     if layout.stream_blocks and (
-            os.environ.get('GC_MOE_MB_CLAIM') != '1' or 0 < config.bound < 32
-            or schedule.threads[1] != 384 or schedule.tile_m < 16
+            os.environ.get('GC_MOE_MB_CLAIM') != '1' or (0 < config.bound < 32 and not stream_m8)
+            or schedule.threads[1] != 384 or (schedule.tile_m < 16 and not stream_m8)
             or (config.sm_reuse and (config.sm_reuse != 1 or schedule.tile_m != 64
                                      or not config.eco_logical_experts))):
         raise ValueError('SM90 M-block streaming requires MB-CLAIM, the 384-thread '
@@ -112,7 +114,7 @@ def _role_specs(config, layout, schedule, has_stats):
         roles = roles[:-1] + (6,) + roles[-1:]
     if eco and config.plan_dispatch:
         roles = (5, 7) + tuple(role for role in roles if role != 5)
-    if os.getenv("GC_MOE_EP8_LINEAR") == "1" and config.tokens == int(os.environ["GC_MOE_MATRIX_BS"]):
+    if os.getenv("GC_MOE_EP8_LINEAR") == "1" and config.tokens == int(os.getenv("GC_MOE_SOURCE_BATCH") or os.environ["GC_MOE_MATRIX_BS"]):
         print(f"[ep8] M={schedule.tile_m} roles={roles} launch_order=original", flush=True)
     if os.getenv("SM90_SIX_ARM") == "1":
         print(f"[six] GC M={schedule.tile_m} roles={roles}", flush=True)
@@ -179,7 +181,7 @@ def _role_specs(config, layout, schedule, has_stats):
             role_schedule = replace(shared, grids=(shared.grids[0], schedule.shared_l2_grid, shared.grids[2]))
         kernel = SM90GCMoERoleKernel(role_config, layout, role, role_schedule, has_stats,
                                     routed_n_factor=routed.n_factor if role == 2 else 1)
-        wait_for = (4,) if config.shared_experts and role == 2 and schedule.tile_m >= 32 else ()
+        wait_for = (4,) if config.shared_experts and role == 2 and (schedule.split_shared or schedule.tile_m >= 32) else ()
         if role == 1 and eco and config.plan_dispatch:
             wait_for = (7,)
         launch_after = ()
@@ -252,6 +254,15 @@ def prepared_split_geometry(layout, tokens):
     return {role: (grid, threads) for role, grid, threads in variants.pop()}
 
 
+def prepared_routed_m(layout, tokens):
+    with COMPILE_LOCK:
+        heights = {variant.routed_m for (cfg, cached_layout, *_), variant in _CACHE.items()
+                   if cfg.tokens == tokens and cached_layout == layout}
+    if len(heights) != 1:
+        raise ValueError(f"ambiguous prepared routed block height for {tokens} source rows: {heights}")
+    return heights.pop()
+
+
 def prepared_matrix_price(layout, tokens):
     """Report the mode and actual role-5 constexpr prepared for this measured batch."""
     with COMPILE_LOCK:
@@ -288,7 +299,7 @@ def prepare_role_binaries(config, y, w1, w2, buffer, stats=None, context=None,
                 specs = _role_specs(config, buffer.layout, schedule, stats is not None)
                 binaries = _get_or_compile_binaries(_binary_key(identity, specs), identity, specs)
                 slack = next((kernel.eco_slack for kernel, launch in specs if launch[0] == 5), None)
-                prepared = _Prepared(binaries, slack)
+                prepared = _Prepared(binaries, slack, schedule.tile_m)
                 _CACHE[key] = prepared
     addresses = [buffer.buffer.data_ptr(), buffer.peer_table.data_ptr(), y.data_ptr(),
                  *(t.data_ptr() for t in (*w1, *w2)), 0 if stats is None else stats.data_ptr(),

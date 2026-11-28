@@ -1,4 +1,5 @@
 """SM90 eight-arm model adapters. Enabled only by the eight-arm launcher."""
+import os
 from functools import wraps
 
 import torch
@@ -121,7 +122,7 @@ def count_graph_replays(buf):
     @wraps(original)
     def counted(manager, desc):
         result = original(manager, desc)
-        if desc.num_tokens == buf.fixed_routes.batch:
+        if desc.num_tokens == (buf.fixed_routes.batch * 8 if os.getenv("GC_MOE_SOURCE_BATCH") else buf.fixed_routes.batch):
             buf.full_replays += 1
         return result
 

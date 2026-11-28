@@ -87,7 +87,7 @@ class SM90GCBufferLayout:
         matrix = bool(os.environ.get('GC_MOE_MATRIX_ARM'))
         object.__setattr__(self, 'matrix', matrix)
         object.__setattr__(self, 'auction_granularity_audit', matrix and self.eco and
-                           os.getenv('SM90_AUCTION_PAIR') == '1')
+                           bool(os.getenv('SM90_AUCTION_PAIR') == '1' or os.getenv('GC_MOE_SOURCE_BATCH')))
         collect_history = (
             matrix or (os.environ.get('GC_MOE_EPLB') == '1' and os.environ.get('GC_MOE_EPLB_NO_REARRANGE') != '1'
                        and os.environ.get('GC_MOE_SLOT_PLACEMENT') != 'random'))
@@ -147,7 +147,7 @@ class SM90GCBufferLayout:
         object.__setattr__(self, 'stream_blocks', stream_blocks)
         # Streaming supports M >= 16. Across local slots there are at most
         # ranks * capacity * topk routes plus one partial block per slot.
-        min_block_m = 16 if stream_blocks else 8
+        min_block_m = 16 if stream_blocks and not os.getenv("GC_MOE_SOURCE_BATCH") else 8
         batches = max(local * 64, (rows * topk + min_block_m - 1) // min_block_m + local)
         reserve('active_expert', (batches,), 'int32', 4)
         reserve('active_ready', (batches,), 'int32', 4)

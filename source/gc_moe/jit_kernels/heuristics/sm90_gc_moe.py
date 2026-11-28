@@ -1,6 +1,7 @@
 """SM90 role geometry and shared-memory budgets for resident compute CTAs."""
 from dataclasses import dataclass, replace
 from functools import lru_cache
+import os
 
 
 @dataclass(frozen=True)
@@ -21,12 +22,14 @@ class SM90RoleConfig:
 @lru_cache(maxsize=256)
 def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
     small_pipelined = 0 < config.bound <= 2
-    pipelined = small_pipelined or config.bound == 0 or config.bound >= 32
+    # Keep the upstream M8 selection and use the existing 384-thread stream consumer.
+    stream_m8 = bool(os.getenv("GC_MOE_SOURCE_BATCH")) and config.bound in (8, 16)
+    pipelined = stream_m8 or small_pipelined or config.bound == 0 or config.bound >= 32
     # Common public bound controls geometry only. Every received row is still
     # processed by the kernel's complete M-chunk loop, including skewed loads.
     expected_rows = (config.bound or config.capacity) * config.ranks * config.topk / config.experts
     if pipelined:
-        tile_m = 8 if small_pipelined else (16 if expected_rows <= 12 else (32 if expected_rows <= 24 else 64))
+        tile_m = 8 if (small_pipelined or stream_m8) else (16 if expected_rows <= 12 else (32 if expected_rows <= 24 else 64))
     else:
         tile_m = 8 if config.bound <= 16 else 16
     # [T4-BMSCAN] Force the M-block height so the block_m scan can be measured
@@ -116,7 +119,7 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
 
     # Without the split, role 4 inherits the routed M, grid and memory budget,
     # as in the upstream H20 legacy schedule, and executes both shared phases.
-    split_shared = bool(config.shared_experts and config.split_shared and tile_m in (32, 64))
+    split_shared = bool(config.shared_experts and config.split_shared and (tile_m in (32, 64) or os.getenv("GC_MOE_SOURCE_BATCH")))
     shared_grid = 0
     shared_tile_m = 32
     shared_l2_grid = 0
