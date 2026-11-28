@@ -4,8 +4,9 @@ set -euo pipefail
 umask 077
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 job=$(realpath "${1:?pass the formal.XXXXXXXX path created during bootstrap}")
-unset GLM_ECO_ONLY GLM_REFIT4
-if [[ ${2:-} == --refit4 ]]; then
+unset GLM_ECO_ONLY GLM_REFIT4 GLM_SLOT_BUDGETS GLM_ARM_LABEL
+if [[ ${2:-} == --refit4 || ${2:-} == --slot-budgets ]]; then
+  if [[ $2 == --slot-budgets ]]; then export GLM_SLOT_BUDGETS=1; fi
   [[ $# == 3 ]] || { echo "expected --refit4 previous-three-arm-results" >&2; exit 2; }
   export GLM_REFIT4=1
   GLM_PRICE_REFERENCE=$(realpath -e "$3")
@@ -30,6 +31,7 @@ results="$job/results"
 dest="$job/receipt/$(basename "$job")"
 test -r "$repo/SOURCE_REVISION"
 mkdir "$results"
+if [[ ${GLM_SLOT_BUDGETS:-0} == 1 ]]; then echo '["vanilla","rr","eco8","eco12"]' > "$results/scheduled-arms.json"; fi
 # Serialize this task even while preparing on CPU, including across login accounts.
 lock=/tmp/gcmoe-glm53-bs256-execution.lock
 if [[ ! -e $lock ]]; then (umask 022; set -C; : > "$lock") 2>/dev/null || test -e "$lock"; fi

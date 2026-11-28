@@ -12,6 +12,7 @@ from glm53_weights import GlmWeights
 
 ROOT = Path(os.environ["GLM_RUN"])
 ARM = os.environ["GLM_ARM"]
+LABEL = os.getenv("GLM_ARM_LABEL", ARM)
 MODEL = Path(os.environ["GLM_MODEL"])
 LAYERS = tuple(range(3, 78))
 SAMPLE = (8, 20, 32)
@@ -46,7 +47,7 @@ def slot_tables(row):
     row, _ = reorder_single_copy_first(row, 8)
     ids = [np.flatnonzero(row == e) for e in range(256)]
     counts = np.array(list(map(len, ids)), dtype=np.int32)
-    inverse = np.zeros((256, 65), dtype=np.int32)
+    inverse = np.zeros((256, max(65, len(row) - 256 + 1)), dtype=np.int32)
     for i, slots in enumerate(ids):
         inverse[i, : len(slots)] = slots
     return row, inverse, counts
@@ -61,9 +62,14 @@ class Decode:
 
         self.group = get_tp_group().device_group
         self.rank = dist.get_rank(self.group)
-        self.plan = None if ARM == "vanilla" else np.load(ROOT / "placement.npy", allow_pickle=False)
+        from glm53_matrix import SLOT_BUDGETS, placement_file
+
+        slot_budgets = os.getenv("GLM_SLOT_BUDGETS") == "1"
+        extra = SLOT_BUDGETS[LABEL] if slot_budgets else None
+        self.plan = None if ARM == "vanilla" else np.load(placement_file(ROOT, extra), allow_pickle=False)
         self.slots = 32 if self.plan is None else self.plan.shape[1] // 8
-        if self.plan is not None and self.plan.shape not in ((75, 320), (75, 288)):
+        shapes = ((75, 8 * (32 + extra)),) if slot_budgets else ((75, 320), (75, 288))
+        if self.plan is not None and self.plan.shape not in shapes:
             raise ValueError("invalid GLM EPLB capacity")
         p = self.slots * 8
         if dist.get_world_size(self.group) != 8 or torch.cuda.get_device_capability()[0] != 10:
@@ -359,7 +365,7 @@ class GlmWorker:
         if start:
             self.window = ProfileWindow()
         else:
-            folder = ROOT / ARM / "perfetto"
+            folder = ROOT / LABEL / "perfetto"
             ticks = self.window.finish(folder / f"step0002-rank{s.rank}.kineto.json")
             for layer, sample in s.samples.items():
                 if not torch.equal(sample["counts"], s.recv[1, layer - 3]) or not torch.equal(
@@ -381,7 +387,7 @@ class GlmWorker:
             raise ValueError(f"missing calls: steps={s.pos.item()} full_replays={s.full_replays}")
         phase = self.phase
         self.phase = None
-        folder = ROOT / ARM
+        folder = ROOT / LABEL
         ids, gates = s.ids[:-1].cpu(), s.gates[:-1].cpu()
         if ARM == "vanilla":
             torch.save((ids, gates), ROOT / f"{phase}-reference-{s.rank}.pt")

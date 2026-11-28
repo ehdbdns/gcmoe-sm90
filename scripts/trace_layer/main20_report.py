@@ -13,7 +13,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "source/gc_moe/eco"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "integration"))
-from source_batch import routed_m
+from source_batch import SLOT_BUDGETS, routed_m
 from h20_valid_cost import slot_cost
 from long_cost_report import by_rank, require
 
@@ -86,7 +86,7 @@ def ep8_launch_policy(directory, eco, block_m=64):
     return "independent_plan" if historical + " independent_plan=True" in log else "shared_first"
 
 
-def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_wa=2, ep8_mode=0):
+def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_wa=2, ep8_mode=0, slot_budgets=False):
     run = load(directory / "run.json")
     eco = arm.startswith("eco")
     local = int(run["controls"].get("GC_MOE_SOURCE_BATCH", "0"))
@@ -110,7 +110,7 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
     require((directory / "execution.sha").read_text().strip() == sha, "revision mismatch")
     config = run["controls"].copy()
     treatment = dict(
-        GC_MOE_MATRIX_ARM=arm,
+        GC_MOE_MATRIX_ARM="eco" if slot_budgets and eco else arm,
         GC_MOE_ECO_COSTFN=str(mode),
         GC_MOE_EPLB=str(int(arm != "vanilla")),
         GC_MOE_ECO=str(int(eco)),
@@ -118,6 +118,8 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
         GC_MOE_SLOT_PLACEMENT="random" if arm == "random" else "identity",
         GC_MOE_EPLB_NO_REARRANGE=str(int(arm in ("vanilla", "random"))),
     )
+    if slot_budgets:
+        treatment["GC_MOE_EPLB_EXTRA_PER_RANK"] = str(SLOT_BUDGETS[arm])
     if local:
         treatment["GC_MOE_ECO_FINE_AUCTION"] = str(int(eco))
     for key, value in treatment.items():
@@ -140,7 +142,9 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
     )
     if linear_ep8:
         fixed.update(GC_MOE_EP8_LINEAR="1", GC_MOE_KV_BYTES=str(20 * 1024**3), GC_MOE_NO_PREFETCH="1",
-                     GC_MOE_EPLB_EXTRA_PER_RANK="8", GC_MOE_EPLB_RANDOM_SEED="0")
+                     GC_MOE_EPLB_RANDOM_SEED="0")
+        if not slot_budgets:
+            fixed["GC_MOE_EPLB_EXTRA_PER_RANK"] = "8"
     if with_linear:
         fixed.update(
             GC_MOE_MATRIX_SIZE="24",
@@ -248,7 +252,7 @@ def arm_data(directory, bs, arm, sha, with_linear=False, linear_ep8=False, ep8_w
             clocks = data["clocks"]
             greedy = data["native"]
             require(
-                q.shape == (calls, 48 if arm == "vanilla" else 56) and q.dtype.kind == "i" and (q >= 0).all(),
+                q.shape == (calls, 48 + (SLOT_BUDGETS[arm] if slot_budgets else 8 * (arm != "vanilla"))) and q.dtype.kind == "i" and (q >= 0).all(),
                 "invalid slot counters",
             )
             require(
@@ -347,7 +351,7 @@ def write_auction_detail(directory, bs, arm, auction):
             w.writerow([*divmod(i, LAYERS), *values])
 
 
-def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=False, linear_ep8=False):
+def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=False, linear_ep8=False, slot_budgets=False):
     arms = ARMS24 if with_linear and not fine_only else ARMS
     rows = []
     layers = []
@@ -360,8 +364,12 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
     eco_auction = None
     if four_arms:
         arms = ("vanilla", "random", "rr", "eco")
+    if slot_budgets:
+        require(four_arms and linear_ep8, "slot matrix requires per-rank linear EP8")
+        arms = tuple(SLOT_BUDGETS)
     group = root / f"bs{bs}"
     local = int(load(group / "vanilla" / "run.json")["controls"].get("GC_MOE_SOURCE_BATCH", 0)) if four_arms else 0
+    require(not slot_budgets or local * 8 == bs, "missing local source size")
     block_m = routed_m(local) if local else 64
     with np.load(group / "stats-demand.npz") as data:
         history = data["logical"]
@@ -372,7 +380,7 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
     )
     for arm in arms:
         control, placement, native, warm, counts, v, auction, host = arm_data(
-            group / arm, bs, arm, sha, with_linear, linear_ep8
+            group / arm, bs, arm, sha, with_linear, linear_ep8, slot_budgets=slot_budgets
         )
         if four_arms:
             for key in ("GC_MOE_STABLE_PREFILL_TOPK", "GC_MOE_STABLE_DECODE_TOPK", "GC_MOE_ORDER_PREFILL", "GC_MOE_MATRIX_PREFIX_CHECK", "GC_MOE_NO_PREFETCH"):
@@ -395,7 +403,7 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
             reference_host = host
         require(reference == control, f"{bs}/{arm}: common workload or configuration differs")
         installed = np.asarray(load(group / arm / "installed-layout.json"))
-        physical = 384 if arm == "vanilla" else 448
+        physical = 384 + (8 * SLOT_BUDGETS[arm] if slot_budgets else 64 * (arm != "vanilla"))
         require(
             installed.shape == (LAYERS, physical) and np.all((installed >= 0) & (installed < 384)),
             "invalid installed map",
@@ -405,9 +413,11 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
             require(np.all(installed == np.arange(384)), "native placement is not identity")
         if arm == "rr":
             adaptive = placement
-            upstream = np.asarray(load(group / "placement.json"))
+            upstream = np.asarray(load(group / ("placement-rr.json" if slot_budgets else "placement.json")))
             require(np.array_equal(installed, upstream), "RR differs from the policy map")
         if arm.startswith("eco"):
+            if slot_budgets:
+                upstream = np.asarray(load(group / f"placement-{arm}.json"))
             width = physical // RANKS
             require(
                 np.array_equal(
@@ -416,9 +426,10 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
                 ),
                 "installed ECO rank membership differs from upstream",
             )
-            if eco_layout is None:
-                eco_layout = installed
-            require(np.array_equal(installed, eco_layout), "installed ECO slot order differs")
+            if not slot_budgets:
+                if eco_layout is None:
+                    eco_layout = installed
+                require(np.array_equal(installed, eco_layout), "installed ECO slot order differs")
             if arm == "eco":
                 eco_allocation = hashlib.sha256(np.ascontiguousarray(counts)).digest()
                 eco_auction = auction
@@ -428,7 +439,7 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
                     and np.array_equal(auction, eco_auction),
                     "SM-reuse changed ECO placement, quotas or auction",
                 )
-        if arm.startswith("eco"):
+        if arm.startswith("eco") and not slot_budgets:
             require(placement == adaptive, "EPLB rank membership differs")
         spans = v[:, :, :2]
         require(np.all(spans.sum(1) > 0), "empty layer spans")
@@ -524,11 +535,12 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
             write_auction_detail(group / arm, local or bs, arm, auction)
     if four_arms:
         rr_ms = outcomes["rr"][2]["moe_ms_per_step"]
+        auction_by_arm = {a["arm"]: a for a in auctions}
         for row in rows:
             row["moe_us_per_layer"] = row["moe_ms_per_step"] * 1000 / LAYERS
             row["moe_change_pct_vs_rr"] = 100 * (row["moe_ms_per_step"] / rr_ms - 1)
-            row["auction_accepted_mean"] = auctions[0]["accepted_per_layer_call"] if row["arm"] == "eco" else None
-            row["auction_accepted_total"] = auctions[0]["accepted"] if row["arm"] == "eco" else None
+            row["auction_accepted_mean"] = auction_by_arm.get(row["arm"], {}).get("accepted_per_layer_call")
+            row["auction_accepted_total"] = auction_by_arm.get(row["arm"], {}).get("accepted")
     pairs = []
     for a, b in combinations(arms, 2):
         n0, w0, r0 = outcomes[a]
@@ -563,20 +575,22 @@ def analyze_group(root, bs, sha, with_linear=False, fine_only=False, four_arms=F
                    "routed_mae_pp", "auction_accepted_mean", "peak_rank_active_slots")
         peak_columns = [k for k in rows[0] if "_slow_at_" in k or k == "price_peak_tied_calls"]
         for row in rows:
-            if row["arm"] != "eco":
+            if not row["arm"].startswith("eco"):
                 row["routed_mae_pp"] = None
         rows = [{k: row[k] for k in (*columns, *peak_columns)} for row in rows]
         for row in layers:
             del row["graph_mae_pp"]
-            if row["arm"] != "eco":
+            if not row["arm"].startswith("eco"):
                 row["routed_mae_pp"] = None
     if local:
         for row in (*rows, *layers, *auctions, *pairs):
             row.update(bs=local, global_streams=bs, routed_block_m=block_m)
+            if slot_budgets and "arm" in row:
+                row["extra_slots_per_rank"] = SLOT_BUDGETS[row["arm"]]
     return rows, layers, auctions, pairs
 
 
-def report(root, batches, with_linear=None, fine_only=False, four_arms=False, linear_ep8=False):
+def report(root, batches, with_linear=None, fine_only=False, four_arms=False, linear_ep8=False, slot_budgets=False):
     if with_linear is None:
         source = load(root / f"bs{batches[0]}" / "vanilla" / "run.json")
         fine_only = fine_only or source["controls"].get("GC_MOE_MAIN_FINE_ONLY") == "1"
@@ -587,7 +601,7 @@ def report(root, batches, with_linear=None, fine_only=False, four_arms=False, li
     auctions = []
     pairs = []
     for bs in batches:
-        a, b, c, d = analyze_group(root, bs, sha, with_linear, fine_only, four_arms, linear_ep8)
+        a, b, c, d = analyze_group(root, bs, sha, with_linear, fine_only, four_arms, linear_ep8, slot_budgets)
         rows.extend(a)
         layers.extend(b)
         auctions.extend(c)
@@ -598,7 +612,8 @@ def report(root, batches, with_linear=None, fine_only=False, four_arms=False, li
     write_rows(out / "auction.csv", auctions)
     write_rows(out / "pairs.csv", pairs)
     if four_arms:
-        require(len(rows) == 4 * len(batches) and len(pairs) == 6 * len(batches)
+        count = len(SLOT_BUDGETS) if slot_budgets else 4
+        require(len(rows) == count * len(batches) and len(pairs) == count*(count-1)//2 * len(batches)
                 and all(p["strict_pair_comparable"] for p in pairs), "four-arm workload parity failed")
     elif fine_only:
         require(len(rows) == 5 and len(pairs) == 10 and all(p["strict_pair_comparable"] for p in pairs),
@@ -622,7 +637,8 @@ if __name__ == "__main__":
     p.add_argument("--fine-only", action="store_true", help="five BS256 arms with full main24 audits")
     p.add_argument("--four-arms", action="store_true", help="full-model vanilla/random/rr/fine ECO with strict pair audits")
     p.add_argument("--linear-ep8", action="store_true", help="audit the shared-first four-arm linear EP8 study")
+    p.add_argument("--slot-budgets", action="store_true", help="audit the five per-rank H20 arms")
     args = p.parse_args()
     four = args.four_arms or args.linear_ep8
     report(args.root, [args.bs] if args.bs else BATCHES, True if four else args.with_linear,
-           args.fine_only, four, args.linear_ep8)
+           args.fine_only, four, args.linear_ep8, args.slot_budgets)

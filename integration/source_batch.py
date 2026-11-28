@@ -1,4 +1,5 @@
 """H20 legacy upstream M selection for the six audited per-source workloads."""
+SLOT_BUDGETS = {"vanilla": 0, "random": 8, "rr": 1, "eco8": 8, "eco12": 12}
 SIZES = (8, 16, 32, 64, 128, 256)
 
 

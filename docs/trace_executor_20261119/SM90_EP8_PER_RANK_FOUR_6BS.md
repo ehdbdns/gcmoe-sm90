@@ -1,5 +1,7 @@
 # SM90 · 8×H20 · 每个源 rank 独立请求的六档整模四臂复测
 
+后续执行使用[SM90 六档五臂任务书](SM90_EP8_PER_RANK_FIVE_6BS.md)。本页记录历史 24 臂配置。
+
 跑 DeepSeek-V4.1-Flash 的 24 个正式实验。**BS 表示每个源 rank 在一个纯 decode 步交给 MoE 的独立请求数**。一个请求在该步提供一个输入 token，产生一个输出 token，经过每层时选 6 个 routed 专家。以 BS8 为例，8 个 rank 各拥有 8 个不同请求，整步生成 64 个 token，每个 MoE 层应收到 384 个 routed 行。单个目的 rank 的接收量由路由和放置决定。
 
 | 主表 BS（每源 rank） | 全局独立流／每步生成 token | 每源每层 top-6 路由行 | 全局每层实际接收行 | routed M | ECO 小额候选（token） | ECO slack |

@@ -107,6 +107,8 @@ def prepare_matrix(worker, buf, modules, ref):
         import json
 
         label = os.getenv("SM90_EIGHT_ARM", os.environ["GC_MOE_MATRIX_ARM"])
+        if os.getenv("SM90_SLOT_MATRIX") == "1":
+            label = os.environ["SM90_SLOT_ARM"]
         if os.getenv("SM90_AUCTION_PAIR") == "1" and os.environ["GC_MOE_ECO_FINE_AUCTION"] == "1":
             label = "eco_small"
         path = Path(os.environ["GC_MOE_FIXED_DIR"]) / (label + "-layout.json")

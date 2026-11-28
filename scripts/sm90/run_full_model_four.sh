@@ -2,7 +2,7 @@
 # Full-model four-arm groups on the shared H20 node.
 set -eo pipefail
 source_sharded=0
-unset GC_MOE_SOURCE_BATCH
+unset GC_MOE_SOURCE_BATCH SM90_SLOT_MATRIX SM90_SLOT_ARM
 unset SM90_AUCTION_PAIR SM90_AUCTION_REPLAY GC_MOE_ECO_FINE_AUCTION
 unset SM90_SHARED_PLAN_OVERLAP SM90_SHARED_FIRST_WA1 SM90_WA1_PROFILE_DIR SM90_FINE_WA1_REFERENCE GC_MOE_EP8_LINEAR SM90_LINEAR_WA_PAIR SM90_SIX_ARM SM90_IR_REFERENCE
 if [[ ${1:-} == --fine-bs512-1024 ]]; then
@@ -12,7 +12,8 @@ else
   if [[ ${1:-} == --linear-ep8 ]]; then shift; fi
   export GC_MOE_EP8_LINEAR=1 GC_PREFILL_MARGIN=256
   batches=(32 64 128 256 512 1024)
-  if [[ ${1:-} == --per-rank ]]; then
+  if [[ ${1:-} == --per-rank || ${1:-} == --per-rank-slots ]]; then
+    if [[ $1 == --per-rank-slots ]]; then export SM90_SLOT_MATRIX=1; fi
     source_sharded=1
     batches=(64 128 256 512 1024 2048)
     shift
@@ -24,7 +25,7 @@ else
     batches=("$2"); export SM90_IR_REFERENCE=1; shift 2
   fi
 fi
-[[ $# == 1 && $1 != --* ]] || { echo "usage: run_full_model_four.sh [--per-rank|--linear-ep8|--fine-bs512-1024|--ir-reference BS|--auction-bs256|--auction-bs512-1024] JOB_DIRECTORY" >&2; exit 2; }
+[[ $# == 1 && $1 != --* ]] || { echo "usage: run_full_model_four.sh [--per-rank-slots|--per-rank|--linear-ep8|--fine-bs512-1024|--ir-reference BS|--auction-bs256|--auction-bs512-1024] JOB_DIRECTORY" >&2; exit 2; }
 cd "$(git rev-parse --show-toplevel)"
 job=$(realpath -m "$1")
 mkdir -p "$job"
@@ -44,9 +45,11 @@ else
   test ! -e "$job/auction-pair"
 fi
 if [[ -f $job/measurement.sha ]]; then
+  [[ $(cat "$job/slot-matrix" 2>/dev/null || echo 0) == "${SM90_SLOT_MATRIX:-0}" ]] || exit 2
   [[ $(cat "$job/per-rank" 2>/dev/null || echo 0) == "$source_sharded" ]] || exit 2
 fi
 echo "$source_sharded" > "$job/per-rank"
+echo "${SM90_SLOT_MATRIX:-0}" > "$job/slot-matrix"
 sha=$(git rev-parse HEAD)
 if [[ -f "$job/measurement.sha" ]]; then
   [[ $(cat "$job/measurement.sha") == "$sha" ]] || exit 2
@@ -126,9 +129,10 @@ done
 if (( failed )); then exit "$failed"; fi
 if [[ ${SM90_IR_REFERENCE:-0} == 1 || ${SM90_AUCTION_PAIR:-0} == 1 ]]; then exit 0; fi
 python3 - "$job" "$source_sharded" "${batches[@]}" <<'PY'
-import csv, pathlib, sys
+import csv, os, pathlib, sys
 job = pathlib.Path(sys.argv[1])
-for name, count in [('main_table', 4), ('pairs', 6), ('auction', 1), ('layers', 160)]:
+arms = 5 if os.getenv('SM90_SLOT_MATRIX') == '1' else 4
+for name, count in [('main_table', arms), ('pairs', arms*(arms-1)//2), ('auction', arms-3), ('layers', 40*arms)]:
     merged = []
     for bs in map(int, sys.argv[3:]):
         with (job/f'delivery-{bs}'/f'bs{bs}'/f'{name}.csv').open() as f:

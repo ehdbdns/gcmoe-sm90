@@ -1760,12 +1760,14 @@ def rearrange_now() -> bool:
     # For matrix arms compute the policy independently from the complete
     # history and verify the maps. The inverse preserves upstream copy order.
     inverse = None
+    if fixed_dir:
+        from pathlib import Path
+        layout_name = (f"placement-{os.environ['SM90_SLOT_ARM']}.json"
+                       if os.getenv('SM90_SLOT_MATRIX') == '1' else 'placement.json')
+        layout_path = Path(fixed_dir) / layout_name
     if buf.rank_idx == 0:
         import json
-        from pathlib import Path
         from fixed_workload import auction_pair_baseline, recording_reference
-        if fixed_dir:
-            layout_path = Path(fixed_dir) / 'placement.json'
         if fixed_dir and not matrix and not recording_reference() and _eco_enabled():
             new_plan = torch.tensor(json.loads(layout_path.read_text()), dtype=torch.int32, device=stats.device)
         else:
@@ -1773,7 +1775,7 @@ def rearrange_now() -> bool:
             publish_wa_layout = (os.getenv('SM90_LINEAR_WA_PAIR') == '1'
                                  and os.getenv('GC_MOE_MATRIX_ARM') == 'eco_linear')
             if fixed_dir and (not matrix or os.environ['GC_MOE_MATRIX_ARM'] == 'rr'
-                              or publish_wa_layout or auction_pair_baseline()):
+                              or os.getenv("SM90_SLOT_MATRIX") == "1" or publish_wa_layout or auction_pair_baseline()):
                 layout = new_plan.tolist()
                 if os.getenv("SM90_EIGHT_ARM") and layout_path.exists():
                     if layout != json.loads(layout_path.read_text()):
@@ -1795,9 +1797,8 @@ def rearrange_now() -> bool:
     dist.broadcast(new_plan, src=0, group=dist.group.WORLD)
     if matrix and os.environ['GC_MOE_MATRIX_ARM'] != 'rr':
         import json
-        from pathlib import Path
-        if new_plan.tolist() != json.loads((Path(fixed_dir) / 'placement.json').read_text()):
-            raise ValueError('the EPLB arms produced different placements')
+        if new_plan.tolist() != json.loads(layout_path.read_text()):
+            raise ValueError(f'EPLB placement differs from {layout_path.name}')
     # [T17-PERLAYER] [layers, physical]; for the merged arm this is the single
     # row broadcast to every layer so the rest of the code is shared.
     target_layers = new_plan.cpu().tolist()

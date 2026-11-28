@@ -48,6 +48,11 @@ case ${GC_MOE_MATRIX_SIZE:-20} in
   *) exit 2 ;;
 esac
 arms+=(eco)
+if [[ ${SM90_SLOT_MATRIX:-0} == 1 ]]; then
+  [[ $four == 1 && -n ${GC_MOE_SOURCE_BATCH:-} && ${GC_MOE_EP8_LINEAR:-0} == 1 ]] || exit 2
+  arms=(vanilla random rr eco8 eco12)
+  report_args+=(--slot-budgets)
+fi
 if [[ $wa_pair == 1 ]]; then arms=(vanilla eco_linear eco_linear_wa1); fi
 if [[ $four == 1 || $wa_pair == 1 ]]; then
   [[ ${GC_MOE_MATRIX_SIZE:-20} == 24 ]] || exit 2
@@ -100,6 +105,10 @@ PY
   fi
   for arm in "${arms[@]}"; do
     export GC_MOE_MATRIX_ARM="$arm"
+    if [[ ${SM90_SLOT_MATRIX:-0} == 1 ]]; then
+      export SM90_SLOT_ARM=$arm
+      if [[ $arm == eco* ]]; then export GC_MOE_MATRIX_ARM=eco; fi
+    fi
     if [[ ${SM90_AUCTION_PAIR:-0} == 1 ]]; then
       export GC_MOE_MATRIX_ARM=eco GC_MOE_ECO_FINE_AUCTION=0
       if [[ $arm == eco_small ]]; then export GC_MOE_ECO_FINE_AUCTION=1; fi
@@ -142,9 +151,11 @@ PY
       cp "$GC_MOE_STRICT_STATE_DIR"/rank{0..7}.json "$group/checkpoint/"
       cp "$GC_MOE_FIXED_DIR/stats-demand.npz" "$group/"
     fi
-    if [[ $arm == rr || ( $wa_pair == 1 && $arm == eco_linear ) ]]; then cp "$GC_MOE_FIXED_DIR/placement.json" "$group/"; fi
+    if [[ ${SM90_SLOT_MATRIX:-0} == 1 ]]; then
+      if [[ $arm == rr || $arm == eco* ]]; then cp "$GC_MOE_FIXED_DIR/placement-$arm.json" "$group/"; fi
+    elif [[ $arm == rr || ( $wa_pair == 1 && $arm == eco_linear ) ]]; then cp "$GC_MOE_FIXED_DIR/placement.json" "$group/"; fi
   done
-  (cd "$GC_MOE_FIXED_DIR" && sha256sum stats-rank*.pt measure-rank*.pt stats-demand.npz tokens.json placement.json *-layout.json) > "$group/workload.sha256"
+  (cd "$GC_MOE_FIXED_DIR" && sha256sum stats-rank*.pt measure-rank*.pt stats-demand.npz tokens.json placement*.json *-layout.json) > "$group/workload.sha256"
   if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then
     test -s "$group/rr/installed-layout.json"
   elif [[ ${SM90_AUCTION_PAIR:-0} == 1 ]]; then

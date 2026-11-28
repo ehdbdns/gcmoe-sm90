@@ -13,6 +13,13 @@ import numpy as np
 ARMS = ("vanilla", "rr", "eco")
 LAYERS = (8, 20, 32)
 BS = 256
+SLOT_BUDGETS = {"vanilla": 0, "rr": 1, "eco8": 8, "eco12": 12}
+
+
+def placement_file(root, extra):
+    if os.getenv("GLM_SLOT_BUDGETS") == "1":
+        return root / f"placement-extra{extra}.npy"
+    return root / "placement.npy"
 
 
 def prepare(root, model):
@@ -97,7 +104,7 @@ def plan(root, extra=8):
     for j in range(75):
         placed, _, _ = rebalance_experts_global(logical[:, j : j + 1], 8 * slots, slots)
         rows.append(reorder_single_copy_first(placed[0].numpy(), 8)[0])
-    np.save(root / "placement.npy", np.stack(rows))
+    np.save(placement_file(root, extra), np.stack(rows))
 
 
 def load(root, arm, phase, rank, key):
@@ -108,7 +115,8 @@ def load(root, arm, phase, rank, key):
 def validate_refit_setup(arm, setup, native_setup):
     from glm53_price import NEW
 
-    eco = arm == "eco"
+    eco = arm.startswith("eco")
+    slots = 32 + SLOT_BUDGETS[arm] if os.getenv("GLM_SLOT_BUDGETS") == "1" else (32 if arm == "vanilla" else 36)
     roles = [[2, 1, 136], [1, 0, 11 if eco else 12]]
     if eco:
         roles.append([4, 0, 1])
@@ -116,7 +124,7 @@ def validate_refit_setup(arm, setup, native_setup):
     if len(setup) != 8 or len(native_setup) != 8:
         raise ValueError(f"{arm}: expected eight current and eight reference ranks")
     for rank, (worker, reference) in enumerate(zip(setup, native_setup)):
-        expected = dict(rank=rank, gpu=reference["gpu"], slots=32 if arm == "vanilla" else 36,
+        expected = dict(rank=rank, gpu=reference["gpu"], slots=slots,
                         block_m=16, trace_level=2, dispatch_sms=12, compute_sms=136, roles=roles,
                         eco_unit=[16, *NEW, 1, 6, 0] if eco else None)
         for field, want in expected.items():
@@ -150,7 +158,8 @@ def arm_run(root, arm):
         if actual != expected:
             raise ValueError(f"GPU rank order differs from the completed vanilla arm: {actual}")
     os.environ.update(
-        GLM_ARM=arm,
+        GLM_ARM="eco" if arm.startswith("eco") else arm,
+        GLM_ARM_LABEL=arm,
         GLM_RUN=str(root),
         GC_MOE_MATRIX_ARM="vanilla" if arm == "vanilla" else "consumer",
         GC_MOE_MATRIX_BS=str(BS),
@@ -259,11 +268,18 @@ def arm_run(root, arm):
 
 
 def reduce(root, arms=ARMS, filename="main.csv"):
-    plan_rows = np.load(root / "placement.npy")
+    slot_budgets = os.getenv("GLM_SLOT_BUDGETS") == "1"
     native = json.loads((root / "vanilla/result.json").read_text())
     summaries = []
     for arm in arms:
         data = json.loads((root / arm / "result.json").read_text())
+        if slot_budgets and data["arm"] != arm:
+            raise ValueError(f"{arm}: wrong result label")
+        if arm != "vanilla":
+            extra = SLOT_BUDGETS[arm] if slot_budgets else None
+            plan_rows = np.load(placement_file(root, extra), allow_pickle=False)
+            if slot_budgets and plan_rows.shape != (75, 8 * (32 + extra)):
+                raise ValueError(f"{arm}: wrong policy capacity")
         paired = data["prompt_sha256"] == native["prompt_sha256"]
         for phase in ("stats", "measure"):
             if os.getenv("GLM_REFIT4") == "1":
@@ -307,7 +323,7 @@ def reduce(root, arms=ARMS, filename="main.csv"):
         m = ((counts + bm - 1) // bm).sum(-1)
         a = (counts > 0).sum(-1)
         start = clocks[:, :, :, 0].copy()
-        for k in [1, 15] if arm == "eco" else [1]:
+        for k in [1, 15] if arm.startswith("eco") else [1]:
             start = np.minimum(start, clocks[:, :, :, k])
         span = clocks[:, :, :, 13] - start
         if not np.all(t.sum(-1) == BS * 8) or np.any(start <= 0) or np.any(span <= 0):
@@ -328,7 +344,7 @@ def reduce(root, arms=ARMS, filename="main.csv"):
         }
         if os.getenv("GLM_REFIT4") == "1":
             row.update(bs=32, streams_per_source_rank=32, global_streams=BS, shared_first=True)
-        if arm == "eco":
+        if arm.startswith("eco"):
             score = clocks[:, :, :, 19]
             routed = np.where(t > 0, clocks[:, :, :, 7] - clocks[:, :, :, 4], 0)
             accepted, offered = (clocks[:, :, :, k] for k in (17, 18))
@@ -371,9 +387,9 @@ def reduce(root, arms=ARMS, filename="main.csv"):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("action", choices=("prepare", "plan", "report", *ARMS))
+    p.add_argument("action", choices=("prepare", "plan", "report", *(SLOT_BUDGETS if os.getenv("GLM_SLOT_BUDGETS") == "1" else ARMS)))
     p.add_argument("root", type=Path)
-    p.add_argument("--extra", type=int, choices=(4, 8), default=8)
+    p.add_argument("--extra", type=int, choices=(1, 4, 8, 12), default=8)
     args = p.parse_args()
     root = args.root.resolve()
     if args.action == "prepare":
@@ -381,6 +397,6 @@ if __name__ == "__main__":
     elif args.action == "plan":
         plan(root, args.extra)
     elif args.action == "report":
-        reduce(root)
+        reduce(root, tuple(SLOT_BUDGETS) if os.getenv("GLM_SLOT_BUDGETS") == "1" else ARMS)
     else:
         arm_run(root, args.action)

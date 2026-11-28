@@ -124,6 +124,10 @@ if [[ -n ${GC_MOE_SOURCE_BATCH:-} ]]; then
   export GC_MOE_BLOCK_M_FORCE=0 GC_MOE_ECO_WA=1 GC_MOE_ECO_COSTFN=0
   export GC_MOE_SM90_SPLIT_SHARED=1 GC_MOE_SM90_SPLIT_SHARED_M=32 GC_MOE_ECO_FINE_AUCTION=0
   if [[ $GC_MOE_MATRIX_ARM == eco ]]; then export GC_MOE_ECO_FINE_AUCTION=1; fi
+  if [[ ${SM90_SLOT_MATRIX:-0} == 1 ]]; then
+    GC_MOE_EPLB_EXTRA_PER_RANK=$("$GC_ENV/bin/python" -c 'import os; from source_batch import SLOT_BUDGETS; print(SLOT_BUDGETS[os.environ["SM90_SLOT_ARM"]])')
+    export GC_MOE_EPLB_EXTRA_PER_RANK
+  fi
 fi
 if [[ -n ${GC_BS256_TRACE_DIR:-} ]]; then
   [[ $variant == --study-main20 && $GC_MOE_MATRIX_BS == 256 && $GC_MOE_MATRIX_ARM =~ ^(rr|eco)$ ]] || exit 2

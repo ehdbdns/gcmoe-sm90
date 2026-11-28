@@ -86,16 +86,20 @@ def full(root, output, historical):
     output.mkdir(parents=True, exist_ok=False)
     scores = {}
     past = []
-    for arm in ARMS:
+    from glm53_matrix import SLOT_BUDGETS
+    slot_budgets = not historical and (root / "scheduled-arms.json").is_file()
+    for arm in (SLOT_BUDGETS if slot_budgets else ARMS):
         result = json.loads((root / arm / "result.json").read_text())
         expected_slots = 32 if arm == "vanilla" else (40 if historical else 36)
+        if slot_budgets:
+            expected_slots = 32 + SLOT_BUDGETS[arm]
         setup = sorted(result["setup"], key=lambda r: r["rank"])
         if len(setup) != 8 or any(s["slots"] != expected_slots or s["block_m"] != 16 for s in setup):
             raise ValueError(f"invalid {arm} geometry")
         if any(s["full_replays"] != 1000 for s in result["measure"]):
             raise ValueError("incomplete measured window")
         weights = OLD if historical else NEW
-        if arm == "eco" and any(s["eco_unit"] != [16, *weights, 1, 6, 0] for s in setup):
+        if arm.startswith("eco") and any(s["eco_unit"] != [16, *weights, 1, 6, 0] for s in setup):
             raise ValueError("installed historical/experimental ECO price differs")
         ranks, clock_rows = [], []
         for rank in range(8):
@@ -115,14 +119,14 @@ def full(root, output, historical):
         duration = np.where(x[..., 0] > 0, c[..., 7] - c[..., 4], 0)
         if np.any(x[..., 0].sum(-1) != 2048) or np.any(duration[x[..., 0] > 0] <= 0):
             raise ValueError("invalid rank work or routed span")
-        if arm == "eco":
+        if arm.startswith("eco"):
             np.testing.assert_array_equal(c[..., 19], x @ [1, *weights])
         # Publish compact sufficient inputs for independent fits, without model or request payloads.
         np.savez_compressed(output / f"{arm}.npz", tokens=x[..., 0].astype(np.uint16),
                             m_blocks=x[..., 1].astype(np.uint16), active=x[..., 2].astype(np.uint16),
                             routed_ns=duration)
         scores[arm] = dict(old_mae_pp=mae(x, duration, OLD), candidate_mae_pp=mae(x, duration, NEW),
-                           calls=75000, **phase_summary(c, arm == "eco"))
+                           calls=75000, **phase_summary(c, arm.startswith("eco")))
         if historical:
             past.append((x, duration))
     if historical:

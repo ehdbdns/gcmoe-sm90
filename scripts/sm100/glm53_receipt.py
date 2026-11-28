@@ -37,7 +37,15 @@ def collect(root, out, rc):
         "complete_arms": [],
         "files": [],
     }
-    for item in ("main.csv", "reference-main.csv", "placement.npy", "revision", "arch-proof.json", "deepgemm-proof.json",
+    arms = ("vanilla", "rr", "eco")
+    if (root / "scheduled-arms.json").exists():
+        arms = json.loads((root / "scheduled-arms.json").read_text())
+        if arms != ["vanilla", "rr", "eco8", "eco12"]:
+            raise ValueError("invalid GLM slot-budget schedule")
+        receipt["scheduled_arms"] = arms
+        for path in root.glob("placement-extra*.npy"):
+            shutil.copy2(path, out / path.name)
+    for item in ("scheduled-arms.json", "main.csv", "reference-main.csv", "placement.npy", "revision", "arch-proof.json", "deepgemm-proof.json",
                  "resume.json", "resume-attempts.txt", "gpu-admission.csv", "launch-comparison.json"):
         if (root / item).is_file():
             shutil.copy2(root / item, out / item)
@@ -48,7 +56,7 @@ def collect(root, out, rc):
         previous = json.loads((root / "resume.json").read_text()).get("rr_source")
         if previous:
             first_errors(Path(previous) / "eco-extra8-try0.log", out / "previous-eco-errors.txt")
-    for arm in ("vanilla", "rr", "eco"):
+    for arm in arms:
         src = root / arm
         if (src / "result.json").exists():
             receipt["complete_arms"].append(arm)

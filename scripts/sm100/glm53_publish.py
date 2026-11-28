@@ -52,6 +52,7 @@ def publish(folder):
     if not re.fullmatch(r"formal\.[a-zA-Z0-9_-]+", folder.name):
         raise ValueError("pass the formal.<run-id> directory produced by the receipt packager")
     receipt = json.loads((folder / "receipt.json").read_text())
+    planned = len(receipt["scheduled_arms"]) if "scheduled_arms" in receipt else 3
     target = f"{PARENT}/{folder.name}"
     entries = []
     for f in sorted(folder.rglob("*")):
@@ -77,7 +78,7 @@ def publish(folder):
         tree = request("POST", "git/trees", {"base_tree": base, "tree": [
             {"path": target, "mode": "040000", "type": "tree", "sha": subtree}]})["sha"]
         commit = request("POST", "git/commits", {
-            "message": f"[SM100] GLM-5.3 BS256 {len(receipt['complete_arms'])}/3 arms (exit {receipt['exit_code']})",
+            "message": f"[SM100] GLM-5.3 BS256 {len(receipt['complete_arms'])}/{planned} arms (exit {receipt['exit_code']})",
             "tree": tree, "parents": [head]})["sha"]
         try:
             request("PATCH", "git/refs/heads/main", {"sha": commit, "force": False})

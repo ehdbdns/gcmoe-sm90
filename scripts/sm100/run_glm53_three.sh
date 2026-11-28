@@ -158,6 +158,7 @@ export DG_JIT_CACHE_DIR="$VLLM_CACHE_ROOT/deep_gemm"
 export HF_HUB_OFFLINE=1 TORCHINDUCTOR_CACHE_DIR="$root/inductor" PYTHONHASHSEED=0
 export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1
 arms=(vanilla rr eco)
+if [[ ${GLM_SLOT_BUDGETS:-0} == 1 ]]; then arms=(vanilla rr eco8 eco12); fi
 if [[ ${GLM_ECO_ONLY:-0} == 1 ]]; then
   "$py" scripts/sm100/glm53_resume.py "${GLM_RESUME_FROM:?missing completed RR results}" "$root" --eco-only
   arms=(eco)
@@ -255,6 +256,10 @@ pos=0
 retry=0
 while (( pos < ${#arms[@]} )); do
   arm=${arms[pos]}
+  if [[ ${GLM_SLOT_BUDGETS:-0} == 1 ]]; then
+    extra=$("$py" -c 'import sys; from glm53_matrix import SLOT_BUDGETS; print(SLOT_BUDGETS[sys.argv[1]])' "$arm")
+    if [[ $arm != vanilla ]]; then "$py" scripts/sm100/glm53_matrix.py plan "$root" --extra "$extra"; fi
+  fi
   echo "$(date -Is) $arm checkpoint readahead"
   "$base" - "$GLM_MODEL" <<'WARM'
 import errno, json, os, sys
@@ -292,7 +297,7 @@ WARM
     echo "$(date -Is) arm=$arm extra=$actual_extra retry=$retry exit=$code" >> "$root/resume-attempts.txt"
   fi
   if (( code == 0 )); then
-    if [[ $arm == vanilla ]]; then "$py" scripts/sm100/glm53_matrix.py plan "$root" --extra "$extra"; fi
+    if [[ $arm == vanilla && ${GLM_SLOT_BUDGETS:-0} != 1 ]]; then "$py" scripts/sm100/glm53_matrix.py plan "$root" --extra "$extra"; fi
     pos=$((pos + 1))
     retry=0
     continue
