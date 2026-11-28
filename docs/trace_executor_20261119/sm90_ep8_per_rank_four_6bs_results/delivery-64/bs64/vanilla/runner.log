@@ -1,0 +1,22 @@
+Capture workspace: /tmp/gcmoe-aligned-cZrbVQtm
+index, name, driver_version, memory.used [MiB], memory.total [MiB]
+0, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+1, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+2, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+3, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+4, NVIDIA H20, 580.105.08, 331 MiB, 97871 MiB
+5, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+6, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+7, NVIDIA H20, 580.105.08, 4 MiB, 97871 MiB
+2.13.0+cu130 13.0 0.31.0
+[warm] 48 shards queued for page cache
+[warm] 48 shards read into page cache
+[ROLE4] vLLM shared GEMM neutralised (zero stub); gc_moe role 4 owns it
+[data] 64 prompts (8/rank x 8), len 257..2017
+[budget] decode_budget=2119 (1+1000warm+1000measure+118slack) prefill_tokens=55141 chunk=2048 kv_margin=256
+Traceback (most recent call last):
+  File "/mnt/fuse/sm90-ep8-per-rank-SmxFr1ik/code/scripts/trace_layer/../real_decode_100_100.py", line 1439, in <module>
+    main()
+  File "/mnt/fuse/sm90-ep8-per-rank-SmxFr1ik/code/scripts/trace_layer/../real_decode_100_100.py", line 840, in main
+    raise ValueError(f"BS{nseq}: prompt selection differs from the archived cohort")
+ValueError: BS64: prompt selection differs from the archived cohort
