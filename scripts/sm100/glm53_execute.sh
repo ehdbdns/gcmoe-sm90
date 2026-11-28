@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# One private directory per launch. Packaging and publishing can be retried separately.
+set -euo pipefail
+umask 077
+repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+job=$(realpath "${1:?pass the formal.XXXXXXXX path created during bootstrap}")
+results="$job/results"
+dest="$job/receipt/$(basename "$job")"
+test -r "$repo/SOURCE_REVISION"
+mkdir "$results"
+# Serialize this task even while preparing on CPU, including across login accounts.
+lock=/tmp/gcmoe-glm53-bs256-execution.lock
+if [[ ! -e $lock ]]; then (umask 022; set -C; : > "$lock") 2>/dev/null || test -e "$lock"; fi
+exec 8<"$lock"
+rc=0
+(
+  set -euo pipefail
+  flock -n 8 || { echo "An existing GLM BS256 executor is active on this node."; exit 75; }
+  active=$(pgrep -af '^([^ ]*/)?bash[[:space:]]+([^ ]*/)?run_glm53_three[.]sh([[:space:]]|$)' || true)
+  if [[ -n $active ]]; then
+    echo "An earlier formal launcher is active: $active"
+    exit 75
+  fi
+  # Keep credentials out of the CUDA worker processes.
+  unset GH_TOKEN GITHUB_TOKEN
+  bash "$repo/scripts/sm100/run_glm53_three.sh" "$results"
+) 2>&1 | tee "$results/run.log" || rc=$?
+if [[ ! -f $results/revision ]]; then cp "$repo/SOURCE_REVISION" "$results/revision"; fi
+python3 "$repo/scripts/sm100/glm53_receipt.py" "$results" "$dest" "$rc"
+echo "Private run exit=$rc, receipt=$dest"
+python3 "$repo/scripts/sm100/glm53_publish.py" "$dest"
+exit "$rc"

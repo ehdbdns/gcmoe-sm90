@@ -18,7 +18,7 @@ def collect(root, out, rc):
         "complete_arms": [],
         "files": [],
     }
-    for item in ("main.csv", "placement.npy", "revision"):
+    for item in ("main.csv", "placement.npy", "revision", "arch-proof.json"):
         if (root / item).is_file():
             shutil.copy2(root / item, out / item)
     for arm in ("vanilla", "rr", "eco"):
@@ -32,7 +32,10 @@ def collect(root, out, rc):
                 continue
             rel = f.relative_to(root)
             with f.open("rb") as stream:
-                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+                h = hashlib.sha256()
+                for block in iter(lambda: stream.read(1 << 20), b""):
+                    h.update(block)
+                digest = h.hexdigest()
             row = {"path": str(rel), "bytes": f.stat().st_size, "sha256": digest}
             if f.name == "result.json" or f.name.endswith((".perfetto.json", ".ranks.json")):
                 dst = out / rel

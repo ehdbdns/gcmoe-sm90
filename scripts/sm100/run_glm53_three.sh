@@ -1,17 +1,38 @@
 #!/usr/bin/env bash
 # One GLM cohort. Paths under the caller's private archive only.
 set -euo pipefail
-repo=$(git rev-parse --show-toplevel)
+repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 root=$(realpath "${1:?pass an existing empty private run directory}")
 if [[ -e $root/revision ]]; then echo "use an empty run directory" >&2; exit 2; fi
 cd "$repo"
-git rev-parse HEAD > "$root/revision"
+if [[ -f $repo/SOURCE_REVISION ]]; then
+  cat "$repo/SOURCE_REVISION" > "$root/revision"
+else
+  git rev-parse HEAD > "$root/revision"
+fi
 base=${GLM_RUNTIME_PYTHON:-/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/bin/python}
 export GLM_MODEL=/mnt/hf3fs/3fs/models/GLM-5.3-FP4Moe-FP8ue8m0
 mask=${CUDA_VISIBLE_DEVICES-${SM100_GPU_UUIDS-}}
 if [[ ${CUDA_VISIBLE_DEVICES+x} && -z $mask ]]; then echo "empty allocation mask" >&2; exit 2; fi
 export CUDA_VISIBLE_DEVICES=''
-test -x "$base"
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+if [[ ! -x $base && -z ${GLM_RUNTIME_PYTHON:-} ]]; then
+  for prev in "$(dirname "$(dirname "$root")")"/formal.*/results/base/bin/python; do
+    [[ -x $prev ]] || continue
+    if "$prev" -c 'import torch,vllm; assert vllm.__version__=="0.31.0" and torch.__version__.split("+")[0]=="2.13.0" and torch.version.cuda=="13.0"' >/dev/null 2>&1; then
+      base=$prev
+      break
+    fi
+  done
+  if [[ ! -x $base ]]; then
+    echo "[prepare] installing pinned runtime in private storage"
+    python3.12 -m venv "$root/base"
+    base="$root/base/bin/python"
+    "$base" -m pip install --only-binary=vllm,torch 'vllm==0.31.0' 'torch==2.13.0' 'safetensors==0.8.0'
+  fi
+fi
+"$base" -c 'import torch,vllm,safetensors; assert vllm.__version__=="0.31.0" and torch.__version__.split("+")[0]=="2.13.0" and torch.version.cuda=="13.0" and safetensors.__version__=="0.8.0", (vllm.__version__, torch.__version__, torch.version.cuda, safetensors.__version__)'
+echo "[prepare] verified runtime $base"
 (cd "$GLM_MODEL" && sha256sum -c <<'DIGEST'
 82bd28e0ac294868b134211748cbe27a166621928231607a5510fced5a86cb2b  config.json
 fbf6cbce2835c7002fcf62a0e9bcf57016323d25083f4f9d011ac30ccc1aac0c  model.safetensors.index.json
@@ -142,6 +163,8 @@ acquire() {
     sleep 60
   done
 }
+# Assemble before reserving GPUs. This file contains a single native image and no PTX fallback.
+"$GC_MOE_PTXAS" -arch=sm_103f "$repo/scripts/sm100/glm53_probe.ptx" -o "$root/sm103f.cubin"
 for arm in vanilla rr eco; do
   echo "$(date -Is) $arm checkpoint readahead"
   "$base" - "$GLM_MODEL" <<'WARM'
@@ -164,6 +187,9 @@ print(f"queued {queued}/{len(files)} shards; vLLM EP weight filter enabled")
 WARM
   acquire
   export CUDA_VISIBLE_DEVICES="$grant"
+  if [[ $arm == vanilla ]]; then
+    "$py" -u "$repo/scripts/sm100/glm53_probe.py" "$root"
+  fi
   echo "$(date -Is) starting $arm $grant"
   "$py" -u scripts/sm100/glm53_matrix.py "$arm" "$root"
   export CUDA_VISIBLE_DEVICES=''

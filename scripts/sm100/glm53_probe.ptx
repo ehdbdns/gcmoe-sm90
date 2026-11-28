@@ -1,0 +1,12 @@
+.version 8.8
+.target sm_103f
+.address_size 64
+
+.visible .entry glm_arch_probe(.param .u64 output) {
+    .reg .b64 %ptr;
+    .reg .b32 %value;
+    ld.param.u64 %ptr, [output];
+    mov.u32 %value, 0x103;
+    st.global.u32 [%ptr], %value;
+    ret;
+}
