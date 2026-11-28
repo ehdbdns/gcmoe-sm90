@@ -1,0 +1,100 @@
+(Worker_TP2_EP2 pid=593145) ERROR 11-28 20:02:38 [multiproc_executor.py:948]     with Popen(*popenargs, **kwargs) as process:
+(Worker_TP2_EP2 pid=593145) ERROR 11-28 20:02:38 [multiproc_executor.py:948]          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP2_EP2 pid=593145) ERROR 11-28 20:02:38 [multiproc_executor.py:948]   File "/usr/lib64/python3.12/subprocess.py", line 1026, in __init__
+(Worker_TP2_EP2 pid=593145) ERROR 11-28 20:02:38 [multiproc_executor.py:948]     self._execute_child(args, executable, preexec_fn, close_fds,
+(Worker_TP2_EP2 pid=593145) ERROR 11-28 20:02:38 [multiproc_executor.py:948]   File "/usr/lib64/python3.12/subprocess.py", line 1955, in _execute_child
+(Worker_TP2_EP2 pid=593145) ERROR 11-28 20:02:38 [multiproc_executor.py:948]     raise child_exception_type(errno_num, err_msg, err_filename)
+(Worker_TP2_EP2 pid=593145) ERROR 11-28 20:02:38 [multiproc_executor.py:948] FileNotFoundError: [Errno 2] No such file or directory: 'ninja'
+(MainProcess pid=565519) INFO 11-28 20:02:38 [multiproc_executor.py:474] [shutdown] Executor: waiting for worker exit count=8
+2026-11-28 20:02:38,946 - INFO - core.py:564 - flashinfer.jit: Building JIT module fp4_quantization_103; this can take several minutes on first use.
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948] WorkerProc failed to start.
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948] Traceback (most recent call last):
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 915, in worker_main
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     worker = WorkerProc(*args, **kwargs)
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 682, in __init__
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     self.worker.load_model()
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 545, in load_model
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     self.model_runner.load_model(load_dummy_weights=load_dummy_weights)
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu/model_runner.py", line 379, in load_model
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     self.model = model_loader.load_model(
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]                  ^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     return func(*args, **kwargs)
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/model_executor/model_loader/base_loader.py", line 91, in load_model
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     process_weights_after_loading(model, model_config, target_device)
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/model_executor/model_loader/utils.py", line 170, in process_weights_after_loading
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     quant_method.process_weights_after_loading(module)
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/model_executor/layers/quantization/mxfp4.py", line 804, in process_weights_after_loading
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     self._setup_kernel(layer, w13, w2, w13_scale, w2_scale, w13_bias, w2_bias)
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/model_executor/layers/quantization/mxfp4.py", line 728, in _setup_kernel
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     convert_weight_to_mxfp4_moe_kernel_format(
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py", line 1525, in convert_weight_to_mxfp4_moe_kernel_format
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     nvfp4_block_scale_interleave(w13_s.reshape(E * N_s, K_s))
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/flashinfer/quantization/fp4_quantization.py", line 1227, in block_scale_interleave
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     return get_fp4_quantization_module(device_arch).block_scale_interleave_sm100(
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/flashinfer/quantization/fp4_quantization.py", line 261, in get_fp4_quantization_module
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     module = backend_modules[backend]().build_and_load()
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/flashinfer/jit/core.py", line 335, in build_and_load
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     self.build()
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/flashinfer/jit/core.py", line 569, in build
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     run_ninja(self.build_dir, self.ninja_path, verbose)
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/flashinfer/jit/cpp_ext.py", line 406, in run_ninja
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     subprocess.run(
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/usr/lib64/python3.12/subprocess.py", line 548, in run
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     with Popen(*popenargs, **kwargs) as process:
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/usr/lib64/python3.12/subprocess.py", line 1026, in __init__
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     self._execute_child(args, executable, preexec_fn, close_fds,
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]   File "/usr/lib64/python3.12/subprocess.py", line 1955, in _execute_child
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948]     raise child_exception_type(errno_num, err_msg, err_filename)
+(Worker_TP1_EP1 pid=593143) ERROR 11-28 20:02:39 [multiproc_executor.py:948] FileNotFoundError: [Errno 2] No such file or directory: 'ninja'
+[GLM GC weights] layer 40 / 77
+(MainProcess pid=565519) WARNING 11-28 20:02:43 [multiproc_executor.py:486] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=6
+[rank0]:[W1128 20:02:44.474509240 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see [URL] (function operator())
+(MainProcess pid=565519) WARNING 11-28 20:02:47 [multiproc_executor.py:496] [shutdown] Executor: workers still running after SIGTERM; sending SIGKILL count=2
+Traceback (most recent call last):
+  File "/data0/home/admin/workspace/repo-exec-v2/scripts/sm100/glm53_matrix.py", line 318, in <module>
+    arm_run(root, args.action)
+  File "/data0/home/admin/workspace/repo-exec-v2/scripts/sm100/glm53_matrix.py", line 128, in arm_run
+    llm = LLM(
+          ^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/entrypoints/llm.py", line 344, in __init__
+    self.llm_engine = LLMEngine.from_engine_args(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 185, in from_engine_args
+    return cls(
+           ^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 111, in __init__
+    self.engine_core = EngineCoreClient.make_client(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 133, in make_client
+    return InprocClient(vllm_config, executor_class, log_stats)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 363, in __init__
+    self.engine_core = EngineCore(
+                       ^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 140, in __init__
+    self.model_executor = executor_class(vllm_config)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 116, in __init__
+    super().__init__(vllm_config)
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/abstract.py", line 113, in __init__
+    self._init_executor()
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 214, in _init_executor
+    self.workers = WorkerProc.wait_for_ready(unready_workers)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data0/home/admin/workspace/glm53-work/glm53-runtime-qgmxfwva/venv/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py", line 810, in wait_for_ready
+    raise e from None
+Exception: WorkerProc initialization failed due to an exception in a background process. See stack trace for root cause.
+/usr/lib64/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
