@@ -81,11 +81,12 @@ def prepare(root, model):
         (root / f"kv-{phase}").mkdir()
 
 
-def plan(root):
+def plan(root, extra=8):
     import torch
     from gc_moe.eco.meta_sm90 import reorder_single_copy_first
     from gc_moe.eplb.deepinfer_periodic.policy import rebalance_experts_global
 
+    slots = 32 + extra
     counts = [load(root, "vanilla", "stats", r, "counts") for r in range(8)]
     logical = torch.from_numpy(np.concatenate(counts, axis=-1))
     if not torch.all(logical.sum(-1) == BS * 8):
@@ -94,7 +95,7 @@ def plan(root):
     torch.set_num_threads(4)
     rows = []
     for j in range(75):
-        placed, _, _ = rebalance_experts_global(logical[:, j : j + 1], 320, 40)
+        placed, _, _ = rebalance_experts_global(logical[:, j : j + 1], 8 * slots, slots)
         rows.append(reorder_single_copy_first(placed[0].numpy(), 8)[0])
     np.save(root / "placement.npy", np.stack(rows))
 
@@ -114,6 +115,14 @@ def arm_run(root, arm):
         torch.cuda.get_device_capability(r)[0] != 10 for r in range(8)
     ):
         raise ValueError("need exactly eight allocated Blackwell GPUs")
+    if os.getenv("GLM_RESUME_FROM") and arm == "vanilla":
+        raise ValueError("resume runs only RR and ECO")
+    if os.getenv("GLM_RESUME_FROM"):
+        native = json.loads((root / "vanilla/result.json").read_text())
+        expected = [str(x["gpu"]).lower().removeprefix("gpu-") for x in native["setup"]]
+        actual = [str(torch.cuda.get_device_properties(r).uuid).lower().removeprefix("gpu-") for r in range(8)]
+        if actual != expected:
+            raise ValueError(f"GPU rank order differs from the completed vanilla arm: {actual}")
     os.environ.update(
         GLM_ARM=arm,
         GLM_RUN=str(root),
@@ -231,6 +240,9 @@ def reduce(root):
         counts = np.stack([load(root, arm, "measure", r, "counts") for r in range(8)], axis=2)
         clocks = np.stack([load(root, arm, "measure", r, "clocks") for r in range(8)], axis=2)
         bm_values = {x["block_m"] for x in data["setup"]}
+        width = 32 if arm == "vanilla" else plan_rows.shape[1] // 8
+        if counts.shape != (1000, 75, 8, width) or any(s["slots"] != width for s in data["setup"]):
+            raise ValueError(f"{arm}: measured slots differ from installed placement")
         if len(bm_values) != 1 or np.any(counts < 0):
             raise ValueError("invalid physical counts or block M")
         bm = bm_values.pop()
@@ -239,7 +251,7 @@ def reduce(root):
         else:
             for j, row in enumerate(plan_rows):
                 totals = np.zeros((256, 1000), np.int32)
-                np.add.at(totals, row, counts[:, j].reshape(1000, 320).T)
+                np.add.at(totals, row, counts[:, j].reshape(1000, plan_rows.shape[1]).T)
                 if not np.array_equal(totals.T, ref_counts[:, j]):
                     raise ValueError(f"{arm} decoder layer {j + 3} logical dispatch differs")
         t = counts.sum(-1)
@@ -254,6 +266,7 @@ def reduce(root):
         row = {
             "arm": arm,
             "bs": BS,
+            "extra_slots_per_rank": width - 32,
             "bm": bm,
             "full_native_match": bool(paired),
             "moe_us": span.max(-1).mean() / 1000,
@@ -306,12 +319,13 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("action", choices=("prepare", "plan", "report", *ARMS))
     p.add_argument("root", type=Path)
+    p.add_argument("--extra", type=int, choices=(4, 8), default=8)
     args = p.parse_args()
     root = args.root.resolve()
     if args.action == "prepare":
         prepare(root, Path(os.environ["GLM_MODEL"]))
     elif args.action == "plan":
-        plan(root)
+        plan(root, args.extra)
     elif args.action == "report":
         reduce(root)
     else:

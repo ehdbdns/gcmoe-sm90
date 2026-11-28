@@ -68,13 +68,7 @@ class GlmWeights(ExpertCheckpoint):
         sf = torch.cat([gate[1], up[1]]).T.contiguous().T
         return (gate_up, sf), down
 
-    def load_gc(self, layer, local_logical_ids):
-        """Physical slot order is supplied by the caller for native, RR or ECO."""
-        from gc_moe import transform_weights_for_gc_moe
-        ids = list(local_logical_ids)
-        if not ids:
-            raise ValueError("empty physical placement")
-        # Only one raw CPU expert is live while building the GPU slot bank.
+    def _pack_routed(self, layer, ids, transform):
         for slot, logical in enumerate(ids):
             pair = self.expert_pair(layer, int(logical))
             if slot == 0:
@@ -84,8 +78,25 @@ class GlmWeights(ExpertCheckpoint):
             for (w, sf), (dst_w, dst_sf) in zip(pair, bank):
                 dst_w[slot].copy_(w)
                 dst_sf[slot].copy_(sf)
-        routed = transform_weights_for_gc_moe(*bank)
-        del bank
+        return transform(*bank)
+
+    def load_gc(self, layer, local_logical_ids):
+        """Use the upstream transform per four slots, writing the final graph bank once."""
+        from gc_moe import transform_weights_for_gc_moe
+
+        ids = list(local_logical_ids)
+        if not ids:
+            raise ValueError("empty physical placement")
+        for start in range(0, len(ids), 4):
+            packed = self._pack_routed(layer, ids[start:start + 4], transform_weights_for_gc_moe)
+            if start == 0:
+                routed = tuple(tuple(torch.empty_strided(
+                    (len(ids), *t.shape[1:]), (t[0].numel(), *t.stride()[1:]),
+                    dtype=t.dtype, device=t.device) for t in pair) for pair in packed)
+            for outputs, chunk in zip(routed, packed):
+                for dst, src in zip(outputs, chunk):
+                    dst.narrow(0, start, src.shape[0]).copy_(src)
+            del packed
         shared = self.expert_pair(layer, None)
         return routed, transform_weights_for_gc_moe(*[(w.cuda(), sf.cuda()) for w, sf in shared])
 

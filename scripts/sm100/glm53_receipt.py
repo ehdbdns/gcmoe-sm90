@@ -18,7 +18,8 @@ def collect(root, out, rc):
         "complete_arms": [],
         "files": [],
     }
-    for item in ("main.csv", "placement.npy", "revision", "arch-proof.json", "deepgemm-proof.json"):
+    for item in ("main.csv", "placement.npy", "revision", "arch-proof.json", "deepgemm-proof.json",
+                 "resume.json", "resume-attempts.txt", "gpu-admission.csv"):
         if (root / item).is_file():
             shutil.copy2(root / item, out / item)
     for arm in ("vanilla", "rr", "eco"):

@@ -128,12 +128,18 @@ fi
 "$py" -c 'import gc_moe; from gc_moe.eco.meta_sm100 import build_eco_meta_sm100; from gc_moe.eco.measurement import snapshot'
 export GC_MOE_SM100_TRACE=2 GC_MOE_ECO_PLAN_DISPATCH=1 GC_MOE_SM100_TRACE_EVENTS=65536
 unset GC_MOE_ECO_UNIT_CFG GC_MOE_ECO_OBJECTIVE GC_MOE_ECO_BLOCK_M GC_MOE_ECO_HELPER GC_MOE_DISPATCH_SMS
-unset GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY SM90_SIX_ARM SM90_EIGHT_ARM
+unset GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY SM90_SIX_ARM SM90_EIGHT_ARM SM90_AUCTION_PAIR
 export GC_MOE_ECO_CACHE_DIR="$root/eco-cache" TRITON_CACHE_DIR="$root/triton" VLLM_CACHE_ROOT="$root/vllm-cache"
 export DG_JIT_CACHE_DIR="$VLLM_CACHE_ROOT/deep_gemm"
 export HF_HUB_OFFLINE=1 TORCHINDUCTOR_CACHE_DIR="$root/inductor" PYTHONHASHSEED=0
 export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1
-"$py" scripts/sm100/glm53_matrix.py prepare "$root"
+arms=(vanilla rr eco)
+if [[ -n ${GLM_RESUME_FROM:-} ]]; then
+  "$py" scripts/sm100/glm53_resume.py "$GLM_RESUME_FROM" "$root"
+  arms=(rr eco)
+else
+  "$py" scripts/sm100/glm53_matrix.py prepare "$root"
+fi
 # Resolve only the assigned mask; a dedicated 8-device grant may expose all eight.
 if [[ -n $mask ]]; then
   # CUDA ordinals can differ from nvidia-smi indices. Resolve the original
@@ -169,30 +175,48 @@ mapfile -t ids < <(awk -F', ' '{print $2}' <<< "$list")
 mapfile -t devs < <(awk -F', ' '{print "/dev/nvidia"$1}' <<< "$list")
 [[ ${#ids[@]} == 8 && $(printf '%s\n' "${ids[@]}" | sort -u | wc -l) == 8 ]]
 grant=$(IFS=,; echo "${ids[*]}")
+if [[ -n ${GLM_RESUME_FROM:-} ]]; then
+  grant=$("$py" - "$root/resume.json" "$grant" <<'GPU_ORDER'
+import json, sys
+native = ["GPU-" + uuid.removeprefix("GPU-") for uuid in json.load(open(sys.argv[1]))["original_gpus_in_rank_order"]]
+if sorted(native) != sorted(sys.argv[2].split(",")):
+    raise SystemExit("request the same eight GPU UUIDs as the completed vanilla reference")
+print(",".join(native))
+GPU_ORDER
+  )
+fi
 command -v fuser >/dev/null
 lock=/tmp/gcmoe-sm100-gpu-group.lock
 if [[ ! -e $lock ]]; then (umask 022; set -C; : > "$lock") 2>/dev/null || test -e "$lock"; fi
 exec 9<"$lock"
+idle_snapshot() {
+  local procs rows handles="" busy=0
+  procs=$(nvidia-smi -i "$grant" --query-compute-apps=pid --format=csv,noheader,nounits) || busy=1
+  [[ -z $procs ]] || busy=1
+  rows=$(nvidia-smi -i "$grant" --query-gpu=uuid,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits) || busy=1
+  # Host PID namespaces can hide compute clients. Memory.used catches resident
+  # jobs even when no kernels happen to be running at the moment of admission.
+  if ! awk -F ', *' '$2 ~ /^0$/ && $3 ~ /^[0-9]+$/ && $3 <= 1024 && $4+0 > 0 {idle++}
+                      END {exit !(NR==8 && idle==8)}' <<< "$rows"; then busy=1; fi
+  if handles=$(fuser "${devs[@]}" 2>/dev/null); then busy=1; fi
+  { date -Is; printf '%s\n' "$rows"; echo "compute_pids=[$procs] handles=[$handles] busy=$busy"; } >> "$root/gpu-admission.csv"
+  (( busy == 0 ))
+}
 acquire() {
   while true; do
-    if ! flock -n 9; then
-      echo "$(date -Is) waiting for shared group lock $lock"
-      sleep 60
-      continue
+    if flock -n 9; then
+      if idle_snapshot && sleep 5 && idle_snapshot; then return; fi
+      flock -u 9
     fi
-    local procs util handles="" busy=0
-    procs=$(nvidia-smi -i "$grant" --query-compute-apps=pid --format=csv,noheader,nounits) || busy=1
-    util=$(nvidia-smi -i "$grant" --query-gpu=utilization.gpu --format=csv,noheader,nounits) || busy=1
-    [[ -z $procs ]] || busy=1
-    [[ $(awk '$1=="0"{n++} END{print n+0}' <<< "$util") == 8 ]] || busy=1
-    if handles=$(fuser "${devs[@]}" 2>/dev/null); then busy=1; fi
-    if ((busy == 0)); then return; fi
-    flock -u 9
-    echo "$(date -Is) waiting on eight GPUs: compute_pids=[$procs] utilization=[$util] device_handles=[$handles]"
+    echo "$(date -Is) waiting for eight idle allocated GPUs (see gpu-admission.csv)"
     sleep 60
   done
 }
-for arm in vanilla rr eco; do
+extra=8
+pos=0
+retry=0
+while (( pos < ${#arms[@]} )); do
+  arm=${arms[pos]}
   echo "$(date -Is) $arm checkpoint readahead"
   "$base" - "$GLM_MODEL" <<'WARM'
 import errno, json, os, sys
@@ -218,10 +242,42 @@ WARM
     DG_JIT_PRINT_COMPILER_COMMAND=1 "$py" -u "$repo/scripts/sm100/glm53_probe.py" "$root"
   fi
   echo "$(date -Is) starting $arm $grant"
-  "$py" -u scripts/sm100/glm53_matrix.py "$arm" "$root"
+  code=0
+  log="$root/$arm-extra$extra-try$retry.log"
+  "$py" -u scripts/sm100/glm53_matrix.py "$arm" "$root" 2>&1 | tee "$log" || code=$?
   export CUDA_VISIBLE_DEVICES=''
   flock -u 9
   echo "$(date -Is) released $arm"
-  if [[ $arm == vanilla ]]; then "$py" scripts/sm100/glm53_matrix.py plan "$root"; fi
+  if [[ -n ${GLM_RESUME_FROM:-} ]]; then
+    echo "$(date -Is) arm=$arm extra=$extra retry=$retry exit=$code" >> "$root/resume-attempts.txt"
+  fi
+  if (( code == 0 )); then
+    if [[ $arm == vanilla ]]; then "$py" scripts/sm100/glm53_matrix.py plan "$root"; fi
+    pos=$((pos + 1))
+    retry=0
+    continue
+  fi
+  if [[ -z ${GLM_RESUME_FROM:-} ]] || ! grep -Eq 'torch\.(cuda\.)?OutOfMemoryError: CUDA out of memory|CUDA out of memory\. Tried to allocate' "$log"; then
+    exit "$code"
+  fi
+  # Two ranks in the receipt named another PID with ~198 GiB. Under
+  # contention wait and retry the same arm, never trade capacity for coexistence.
+  if grep -E 'out of memory.*Process [0-9]+ has [0-9.]+ [GM]iB memory in use' "$log" >/dev/null || ! idle_snapshot; then
+    if (( retry >= 1 )); then echo "Repeated contention; arrange an exclusive grant."; exit "$code"; fi
+    if [[ -d $root/$arm ]]; then mv "$root/$arm" "$root/failed-$arm-extra$extra-try$retry"; fi
+    retry=$((retry + 1))
+    continue
+  fi
+  if (( extra == 4 )); then exit "$code"; fi
+  # Keep both consumers on one placement. Preserve any previous results in
+  # this new run before deriving the smaller plan from the original statistics.
+  for prior in rr eco; do
+    if [[ -d $root/$prior ]]; then mv "$root/$prior" "$root/$prior-extra8"; fi
+  done
+  mv "$root/placement.npy" "$root/placement-extra8.npy"
+  extra=4
+  "$py" scripts/sm100/glm53_matrix.py plan "$root" --extra "$extra"
+  pos=0
+  retry=0
 done
 "$py" scripts/sm100/glm53_matrix.py report "$root"

@@ -61,7 +61,10 @@ class Decode:
 
         self.group = get_tp_group().device_group
         self.rank = dist.get_rank(self.group)
-        self.slots = 32 if ARM == "vanilla" else 40
+        self.plan = None if ARM == "vanilla" else np.load(ROOT / "placement.npy", allow_pickle=False)
+        self.slots = 32 if self.plan is None else self.plan.shape[1] // 8
+        if self.plan is not None and self.plan.shape not in ((75, 320), (75, 288)):
+            raise ValueError("invalid GLM EPLB capacity")
         p = self.slots * 8
         if dist.get_world_size(self.group) != 8 or torch.cuda.get_device_capability()[0] != 10:
             raise ValueError("expected eight Blackwell ranks")
@@ -75,7 +78,6 @@ class Decode:
         self.bank, self.maps, self.samples = {}, {}, {}
         row, inv, ct = slot_tables(np.arange(p) % 256)
         self.initial_layout = row.copy()
-        self.plan = None if ARM == "vanilla" else np.load(ROOT / "placement.npy", allow_pickle=False)
         load_start = time.monotonic()
         for layer in LAYERS:
             mlp = model.model.layers[layer].mlp

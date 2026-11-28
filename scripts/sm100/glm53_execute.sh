@@ -4,6 +4,15 @@ set -euo pipefail
 umask 077
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 job=$(realpath "${1:?pass the formal.XXXXXXXX path created during bootstrap}")
+if [[ $# == 3 && $2 == --resume ]]; then
+  GLM_RESUME_FROM=$(realpath -e "$3")
+  export GLM_RESUME_FROM
+  test -s "$GLM_RESUME_FROM/vanilla/result.json"
+elif [[ $# == 1 ]]; then
+  unset GLM_RESUME_FROM
+else
+  echo "usage: glm53_execute.sh NEW_JOB [--resume BASELINE_RESULTS]" >&2; exit 2
+fi
 results="$job/results"
 dest="$job/receipt/$(basename "$job")"
 test -r "$repo/SOURCE_REVISION"
