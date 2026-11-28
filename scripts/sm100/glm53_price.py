@@ -22,18 +22,19 @@ def mae(x, duration, weights):
     return float(np.abs(share_errors(x, duration, weights)).mean())
 
 
-def fit(x, duration):
+def fit(x, duration, fixed_active=None):
     from scipy.optimize import least_squares
 
     observed = duration / duration.sum(-1, keepdims=True)
     def residual(w):
-        score = x @ np.array([1., *w])
+        score = x @ np.array([1., w[0], w[1] if fixed_active is None else fixed_active])
         return (100 * (score / score.sum(-1, keepdims=True) - observed)).ravel()
 
-    result = least_squares(residual, OLD, bounds=(0, np.inf), xtol=1e-12, ftol=1e-12, gtol=1e-12)
+    start = OLD if fixed_active is None else OLD[:1]
+    result = least_squares(residual, start, bounds=(0, np.inf), xtol=1e-12, ftol=1e-12, gtol=1e-12)
     if not result.success:
         raise ValueError(result.message)
-    return result.x
+    return result.x if fixed_active is None else np.array([result.x[0], fixed_active])
 
 
 def samples(root):
@@ -135,6 +136,11 @@ def full(root, output, historical):
                 historical_refit=mae(x[:, 800:], y[:, 800:], held_weights),
                 frozen_candidate=mae(x[:, 800:], y[:, 800:], NEW),
                 original=mae(x[:, 800:], y[:, 800:], OLD)))
+        tests = {}
+        for active in (0, 1):
+            w = fit(x[:, :800], y[:, :800], fixed_active=active)
+            tests[str(active)] = dict(trained_wb=float(w[0]), held_mae_pp=mae(x[:, 800:], y[:, 800:], w))
+        scores["historical_refit"]["fixed_active_on_same_time_holdout"] = tests
     (output / "scores.json").write_text(json.dumps(scores, indent=2) + "\n")
     return scores
 

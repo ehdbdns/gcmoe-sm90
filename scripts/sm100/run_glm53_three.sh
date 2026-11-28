@@ -138,7 +138,20 @@ unset GC_MOE_ECO_UNIT_CFG GC_MOE_ECO_OBJECTIVE GC_MOE_ECO_BLOCK_M GC_MOE_ECO_HEL
 unset GC_MOE_PREFIX_DIAG GC_MOE_VANILLA_STATS_REPLAY SM90_SIX_ARM SM90_EIGHT_ARM SM90_AUCTION_PAIR
 if [[ ${GLM_REFIT4:-0} == 1 ]]; then
   export GC_MOE_SM100_SHARED_FIRST=1 GC_MOE_ECO_UNIT_CFG=66,74,1,6,0
-  "$py" scripts/sm100/glm53_price.py historical "${GLM_PRICE_REFERENCE:?}" --output "$root/historical-price"
+  # CPU-only archive analysis. Keep its dependencies out of the CUDA interpreters.
+  fit_py=''
+  for candidate in "$py" "$base" python3; do
+    if "$candidate" -c 'import hashlib; from scipy.optimize import least_squares; assert hasattr(hashlib, "file_digest")' >/dev/null 2>&1; then
+      fit_py=$candidate
+      break
+    fi
+  done
+  if [[ -z $fit_py ]]; then
+    "$base" -m venv "$root/cpu-fit"
+    fit_py="$root/cpu-fit/bin/python"
+    "$fit_py" -m pip install --only-binary=:all: 'numpy==2.2.6' 'scipy==1.15.3'
+  fi
+  "$fit_py" scripts/sm100/glm53_price.py historical "${GLM_PRICE_REFERENCE:?}" --output "$root/historical-price"
 fi
 export GC_MOE_ECO_CACHE_DIR="$root/eco-cache" TRITON_CACHE_DIR="$root/triton" VLLM_CACHE_ROOT="$root/vllm-cache"
 export DG_JIT_CACHE_DIR="$VLLM_CACHE_ROOT/deep_gemm"
