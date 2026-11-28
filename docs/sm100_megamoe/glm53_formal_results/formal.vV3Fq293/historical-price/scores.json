@@ -1,0 +1,61 @@
+{
+  "vanilla": {
+    "old_mae_pp": 0.14518101153013907,
+    "candidate_mae_pp": 0.18961889116637176,
+    "calls": 75000,
+    "moe_us": 143.8973248,
+    "slow_rank_to_routed_us": 19.231504213333334,
+    "slow_rank_routed_us": 102.42629589333333,
+    "slow_rank_tail_us": 22.239524693333333,
+    "compute_minus_dispatch_us": 0.6433810666666667,
+    "first_shared_mma_minus_first_role_us": 3.8061927466666665,
+    "first_shared_mma_minus_compute_us": 2.5379534933333336,
+    "first_shared_mma_minus_dispatch_us": 3.18133456
+  },
+  "rr": {
+    "old_mae_pp": 0.09915796796900055,
+    "candidate_mae_pp": 0.1135233675074929,
+    "calls": 75000,
+    "moe_us": 159.29066581333333,
+    "slow_rank_to_routed_us": 23.570614613333333,
+    "slow_rank_routed_us": 119.70165162666667,
+    "slow_rank_tail_us": 16.018399573333333,
+    "compute_minus_dispatch_us": 0.69899088,
+    "first_shared_mma_minus_first_role_us": 3.85546304,
+    "first_shared_mma_minus_compute_us": 2.5268352,
+    "first_shared_mma_minus_dispatch_us": 3.22582608
+  },
+  "eco": {
+    "old_mae_pp": 0.11498576744431431,
+    "candidate_mae_pp": 0.15625328157267226,
+    "calls": 75000,
+    "moe_us": 142.08920362666666,
+    "slow_rank_to_routed_us": 25.737838933333332,
+    "slow_rank_routed_us": 102.80644394666666,
+    "slow_rank_tail_us": 13.544920746666667,
+    "compute_minus_dispatch_us": 0.29067802666666664,
+    "first_shared_mma_minus_first_role_us": 4.33492208,
+    "first_shared_mma_minus_compute_us": 3.3271179733333334,
+    "first_shared_mma_minus_dispatch_us": 3.617796,
+    "first_shared_mma_before_dispatch_pct": 0.015,
+    "first_shared_mma_before_plan_pct": 0.037,
+    "dispatch_before_plan_pct": 72.72983333333333,
+    "shared_l1_dispatch_plan_overlap_us": 9.529267146666667
+  },
+  "historical_refit": {
+    "full_weights": [
+      4581.214184980604,
+      1610.6549169338148
+    ],
+    "fit_calls": 225000,
+    "train_steps_1_800_weights": [
+      4101.9140877836235,
+      1460.6221949878477
+    ],
+    "holdout_steps_801_1000_mae_pp": {
+      "historical_refit": 0.1152501095795307,
+      "frozen_candidate": 0.16117334171452669,
+      "original": 0.1242383630124545
+    }
+  }
+}
