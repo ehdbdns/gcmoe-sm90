@@ -9,6 +9,25 @@ import shutil
 from pathlib import Path
 
 
+def first_errors(log, output):
+    # Teardown on the other seven ranks often fills the last hundred lines.
+    if not log.is_file():
+        return
+    issue = re.compile(r"Traceback \(most recent call last\)|\b(?:RuntimeError|ValueError|CUDAError|"
+                       r"OutOfMemoryError|AcceleratorError):|CUDA error:|illegal (?:memory|instruction)|"
+                       r"GC .*timeout|ECO plan assertion|device-side assert|SIGTERM|SIGKILL", re.I)
+    lines = []
+    with log.open(errors="replace") as stream:
+        for n, line in enumerate(stream, 1):
+            if issue.search(line):
+                clean = re.sub(r"\S+://\S+|(?:gh[pousr]_|github_pat_)\w+", "[redacted]", line.strip())
+                lines.append(f"{n}: {clean[:1200]}")
+                if len(lines) == 80:
+                    break
+    if lines:
+        output.write_text("\n".join(lines) + "\n")
+
+
 def collect(root, out, rc):
     out.mkdir(parents=True)
     receipt = {
@@ -18,10 +37,14 @@ def collect(root, out, rc):
         "complete_arms": [],
         "files": [],
     }
-    for item in ("main.csv", "placement.npy", "revision", "arch-proof.json", "deepgemm-proof.json",
+    for item in ("main.csv", "reference-main.csv", "placement.npy", "revision", "arch-proof.json", "deepgemm-proof.json",
                  "resume.json", "resume-attempts.txt", "gpu-admission.csv"):
         if (root / item).is_file():
             shutil.copy2(root / item, out / item)
+    if (root / "resume.json").is_file():
+        previous = json.loads((root / "resume.json").read_text()).get("rr_source")
+        if previous:
+            first_errors(Path(previous) / "eco-extra8-try0.log", out / "previous-eco-errors.txt")
     for arm in ("vanilla", "rr", "eco"):
         src = root / arm
         if (src / "result.json").exists():
@@ -54,6 +77,7 @@ def collect(root, out, rc):
                         dst.unlink()
             receipt["files"].append(row)
     if rc:
+        first_errors(root / "eco-extra8-try0.log", out / "eco-errors.txt")
         path = root / "run.log"
         if path.exists():
             with path.open("rb") as f:

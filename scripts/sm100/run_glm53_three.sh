@@ -134,7 +134,10 @@ export DG_JIT_CACHE_DIR="$VLLM_CACHE_ROOT/deep_gemm"
 export HF_HUB_OFFLINE=1 TORCHINDUCTOR_CACHE_DIR="$root/inductor" PYTHONHASHSEED=0
 export VLLM_USE_V2_MODEL_RUNNER=1 VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1
 arms=(vanilla rr eco)
-if [[ -n ${GLM_RESUME_FROM:-} ]]; then
+if [[ ${GLM_ECO_ONLY:-0} == 1 ]]; then
+  "$py" scripts/sm100/glm53_resume.py "${GLM_RESUME_FROM:?missing completed RR results}" "$root" --eco-only
+  arms=(eco)
+elif [[ -n ${GLM_RESUME_FROM:-} ]]; then
   "$py" scripts/sm100/glm53_resume.py "$GLM_RESUME_FROM" "$root"
   arms=(rr eco)
 else
@@ -257,7 +260,7 @@ WARM
     retry=0
     continue
   fi
-  if [[ -z ${GLM_RESUME_FROM:-} ]] || ! grep -Eq 'torch\.(cuda\.)?OutOfMemoryError: CUDA out of memory|CUDA out of memory\. Tried to allocate' "$log"; then
+  if [[ ${GLM_ECO_ONLY:-0} == 1 || -z ${GLM_RESUME_FROM:-} ]] || ! grep -Eq 'torch\.(cuda\.)?OutOfMemoryError: CUDA out of memory|CUDA out of memory\. Tried to allocate' "$log"; then
     exit "$code"
   fi
   # Two ranks in the receipt named another PID with ~198 GiB. Under

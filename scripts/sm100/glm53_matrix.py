@@ -117,6 +117,8 @@ def arm_run(root, arm):
         raise ValueError("need exactly eight allocated Blackwell GPUs")
     if os.getenv("GLM_RESUME_FROM") and arm == "vanilla":
         raise ValueError("resume runs only RR and ECO")
+    if os.getenv("GLM_ECO_ONLY") == "1" and arm != "eco":
+        raise ValueError("only ECO may start for the completed RR cohort")
     if os.getenv("GLM_RESUME_FROM"):
         native = json.loads((root / "vanilla/result.json").read_text())
         expected = [str(x["gpu"]).lower().removeprefix("gpu-") for x in native["setup"]]
@@ -216,11 +218,11 @@ def arm_run(root, arm):
     (folder / "result.json").write_text(json.dumps(result, indent=2))
 
 
-def reduce(root):
+def reduce(root, arms=ARMS, filename="main.csv"):
     plan_rows = np.load(root / "placement.npy")
     native = json.loads((root / "vanilla/result.json").read_text())
     summaries = []
-    for arm in ARMS:
+    for arm in arms:
         data = json.loads((root / arm / "result.json").read_text())
         paired = data["prompt_sha256"] == native["prompt_sha256"]
         for phase in ("stats", "measure"):
@@ -309,10 +311,11 @@ def reduce(root):
                 if row["full_native_match"] and ref["full_native_match"]
                 else None
             )
-    with (root / "main.csv").open("w") as f:
+    with (root / filename).open("w") as f:
         writer = csv.DictWriter(f, list(dict.fromkeys(k for row in summaries for k in row)))
         writer.writeheader()
         writer.writerows(summaries)
+    return summaries
 
 
 if __name__ == "__main__":

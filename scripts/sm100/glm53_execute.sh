@@ -4,14 +4,19 @@ set -euo pipefail
 umask 077
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 job=$(realpath "${1:?pass the formal.XXXXXXXX path created during bootstrap}")
-if [[ $# == 3 && $2 == --resume ]]; then
+unset GLM_ECO_ONLY
+if [[ $# == 3 && ( $2 == --resume || $2 == --eco-only ) ]]; then
   GLM_RESUME_FROM=$(realpath -e "$3")
   export GLM_RESUME_FROM
   test -s "$GLM_RESUME_FROM/vanilla/result.json"
+  if [[ $2 == --eco-only ]]; then
+    test -s "$GLM_RESUME_FROM/rr/result.json"
+    export GLM_ECO_ONLY=1
+  fi
 elif [[ $# == 1 ]]; then
   unset GLM_RESUME_FROM
 else
-  echo "usage: glm53_execute.sh NEW_JOB [--resume BASELINE_RESULTS]" >&2; exit 2
+  echo "usage: glm53_execute.sh NEW_JOB [--resume BASELINE_RESULTS | --eco-only COMPLETED_RR_RESULTS]" >&2; exit 2
 fi
 results="$job/results"
 dest="$job/receipt/$(basename "$job")"

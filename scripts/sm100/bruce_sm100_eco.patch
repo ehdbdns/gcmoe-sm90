@@ -3868,7 +3868,7 @@ index 47aca25..b9796fd 100644
          graph = self.graphs.get(key)
          if graph is None:
 diff --git a/gc_moe/scheduler/gc_moe.py b/gc_moe/scheduler/gc_moe.py
-index aac703c..f3dbb87 100644
+index aac703c..2df772d 100644
 --- a/gc_moe/scheduler/gc_moe.py
 +++ b/gc_moe/scheduler/gc_moe.py
 @@ -14,15 +14,22 @@ import cutlass.cute as cute
@@ -4017,7 +4017,24 @@ index aac703c..f3dbb87 100644
      cute.arch.sync_warp()
      lane_m_blocks = Uint32(0)
      for wave in cutlass.range_constexpr(
-@@ -280,6 +366,8 @@ def schedule_tasks(task: cute.Pointer, full: cute.Pointer, empty: cute.Pointer,
+@@ -267,6 +353,16 @@ def schedule_tasks(task: cute.Pointer, full: cute.Pointer, empty: cute.Pointer,
+     # successful L2 claim until the L1 queue is exhausted.
+     num_clusters = compute_sms // 2
+     first_l2_m_blocks = (num_clusters + l2_clusters - 1) // l2_clusters
++    if cutlass.const_expr(eco):
++        # An empty or short single-copy prefix cannot prime all first-wave
++        # L2 dependencies. Load quotas before choosing how many L1s to issue.
++        # When L1 has more tiles than L2, later waves also need the full total.
++        if eco_num_fixed < Uint32(local_experts) and (
++                routed_m_blocks < Uint32(first_l2_m_blocks) or l1_clusters > l2_clusters):
++            routed_m_blocks = eco_load_replicas(
++                signals, rank_idx, eco_epoch, eco_num_fixed, expert_counts, Int32(lane),
++                local_experts, block_m, eco_base, eco_trace, block)
++            eco_plan_loaded = Uint32(1)
+     first_l2_warmup = (first_l2_m_blocks * l1_clusters +
+                        num_clusters - 1) // num_clusters
+     interleave_diff = max(l1_clusters - l2_clusters, 0)
+@@ -280,6 +376,8 @@ def schedule_tasks(task: cute.Pointer, full: cute.Pointer, empty: cute.Pointer,
          l1_warmup = min(total_l1_waves,
                          max(Uint32(first_l2_warmup), interleave_warmup))
      l1_done = Uint32(0xffffffff)
@@ -4026,7 +4043,7 @@ index aac703c..f3dbb87 100644
      scheduling = True
      while scheduling:
          wait_task_slot(empty, iteration)
-@@ -288,6 +376,12 @@ def schedule_tasks(task: cute.Pointer, full: cute.Pointer, empty: cute.Pointer,
+@@ -288,6 +386,12 @@ def schedule_tasks(task: cute.Pointer, full: cute.Pointer, empty: cute.Pointer,
              if l1_warmup != l1_done and l1_warmup > 0:
                  l1_warmup -= Uint32(1)
                  task_idx = claim_task(l1_count_ptr, Int32(lane))
@@ -4039,7 +4056,7 @@ index aac703c..f3dbb87 100644
                  if task_idx >= routed_m_blocks * l1_clusters:
                      l1_warmup = l1_done
                  else:
-@@ -303,8 +397,24 @@ def schedule_tasks(task: cute.Pointer, full: cute.Pointer, empty: cute.Pointer,
+@@ -303,8 +407,24 @@ def schedule_tasks(task: cute.Pointer, full: cute.Pointer, empty: cute.Pointer,
                                        Uint32(2 * intermediate), Uint32(hidden))
                      iteration = Uint32(iteration + Uint32(1))
                      fetching = False
@@ -4064,7 +4081,7 @@ index aac703c..f3dbb87 100644
                  if task_idx >= routed_m_blocks * l2_clusters:
                      scheduling = False
                      fetching = False
-@@ -326,6 +436,16 @@ def schedule_tasks(task: cute.Pointer, full: cute.Pointer, empty: cute.Pointer,
+@@ -326,6 +446,16 @@ def schedule_tasks(task: cute.Pointer, full: cute.Pointer, empty: cute.Pointer,
                                        Uint32(hidden), Uint32(intermediate))
                      iteration = Uint32(iteration + Uint32(1))
                      fetching = False
