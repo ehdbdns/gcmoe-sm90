@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
-from fixed_workload import digest, publishes_checkpoint
+from fixed_workload import digest, publishes_boundary
 from stream_checkpoint import checkpoint, json_hash, named_caches, runner_boundary, tensor_hash
 
 
@@ -35,7 +35,7 @@ def source_history(buf, modules, phase):
     dist.all_reduce(mapped, group=buf.group)
     if not torch.equal(mapped, history):
         raise ValueError(f"{phase}: physical rows differ from source routes by logical expert")
-    if phase == "stats" and rank == 0 and publishes_checkpoint():
+    if phase == "stats" and rank == 0 and publishes_boundary():
         path = Path(os.environ["GC_MOE_FIXED_DIR"]) / "stats-demand.npz"
         with path.open("xb") as f:
             np.savez_compressed(f, logical=history.cpu().numpy())
@@ -106,7 +106,10 @@ def prepare_matrix(worker, buf, modules, ref):
     if rank == 0:
         import json
 
-        path = Path(os.environ["GC_MOE_FIXED_DIR"]) / (os.getenv("SM90_EIGHT_ARM", os.environ["GC_MOE_MATRIX_ARM"]) + "-layout.json")
+        label = os.getenv("SM90_EIGHT_ARM", os.environ["GC_MOE_MATRIX_ARM"])
+        if os.getenv("SM90_AUCTION_PAIR") == "1" and os.environ["GC_MOE_ECO_FINE_AUCTION"] == "1":
+            label = "eco_small"
+        path = Path(os.environ["GC_MOE_FIXED_DIR"]) / (label + "-layout.json")
         with path.open("x") as f:
             json.dump(layout, f)
     plan_price = None
@@ -136,7 +139,7 @@ def prepare_matrix(worker, buf, modules, ref):
     snap = checkpoint(
         os.environ["GC_MOE_STRICT_STATE_DIR"],
         rank,
-        publishes_checkpoint(),
+        publishes_boundary(),
         named_caches(worker.model_runner),
         controls,
     )

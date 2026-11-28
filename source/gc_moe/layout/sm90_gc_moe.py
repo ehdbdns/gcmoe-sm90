@@ -56,6 +56,7 @@ class SM90GCBufferLayout:
     long_cost: bool = field(init=False)
     eplb_window: int = field(init=False)
     matrix: bool = field(init=False)
+    auction_granularity_audit: bool = field(init=False)
 
     def __post_init__(self):
         ranks, experts, capacity, topk = self.ranks, self.experts, self.capacity, self.topk
@@ -85,6 +86,8 @@ class SM90GCBufferLayout:
                            and os.getenv('SM90_MEASURE_BLOCK_RELEASE') == '1')
         matrix = bool(os.environ.get('GC_MOE_MATRIX_ARM'))
         object.__setattr__(self, 'matrix', matrix)
+        object.__setattr__(self, 'auction_granularity_audit', matrix and self.eco and
+                           os.getenv('SM90_AUCTION_PAIR') == '1')
         collect_history = (
             matrix or (os.environ.get('GC_MOE_EPLB') == '1' and os.environ.get('GC_MOE_EPLB_NO_REARRANGE') != '1'
                        and os.environ.get('GC_MOE_SLOT_PLACEMENT') != 'random'))
@@ -173,6 +176,9 @@ class SM90GCBufferLayout:
             reserve('placement_history', (window * layers, local + 1), 'int32', 4)
         if self.matrix and self.eco:
             reserve('auction_counts', (1000 * layers, 7), 'int32', 4)
+            if self.auction_granularity_audit:
+                reserve('auction_small', (1000 * layers,), 'int32', 4)
+                reserve('auction_ns', (1000 * layers,), 'int32', 4)
         # ── ECO (EPLB placement + online plan) ───────────────────────────
         # Only allocated when `eco` is on, so the plain path keeps its exact
         # byte layout. Sizes use PHYSICAL slots (physical = ranks*local).

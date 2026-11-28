@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from fixed_workload import RouteTape, publishes_checkpoint, requires_layer_aligned_warmup, route_ordinals
+from fixed_workload import RouteTape, publishes_boundary, publishes_checkpoint, requires_layer_aligned_warmup, route_ordinals
 
 
 class LongRouteTape(RouteTape):
@@ -121,7 +121,7 @@ def register_long_rpc(worker_class, get_buffer, modules):
                 folder.mkdir(exist_ok=True)
                 runner = self.model_runner
                 self._long_initial["prefill_snapshot"] = checkpoint(
-                    folder, rank, publishes_checkpoint(), named_caches(runner), runner_boundary(runner, ref)
+                    folder, rank, publishes_boundary(), named_caches(runner), runner_boundary(runner, ref)
                 )
             buf._stats_first_epoch = int(buf.header[0].item())
         elif phase == "measure":
@@ -154,6 +154,9 @@ def register_long_rpc(worker_class, get_buffer, modules):
         buf.replay_stream_mode.fill_(1)
         if buf.layout.matrix and buf.eco:
             buf.auction_counts.fill_(-1)
+            if buf.layout.auction_granularity_audit:
+                buf.auction_small.fill_(-1)
+                buf.auction_ns.fill_(-1)
         buf.long_clocks.zero_()
         buf.long_clocks[:, :2].fill_(-1)  # unsigned 64-bit minimum identity
         self._long_first = int(buf.header[0].item())
@@ -240,6 +243,9 @@ def register_long_rpc(worker_class, get_buffer, modules):
                 del self._boundary_clocks
             if buf.layout.matrix and buf.eco:
                 extra['auction'] = buf.auction_counts.index_select(0, idx).cpu().numpy()
+                if buf.layout.auction_granularity_audit:
+                    for key in ('auction_small', 'auction_ns'):
+                        extra[key] = getattr(buf, key).index_select(0, idx).cpu().numpy()
             with path.open("xb") as f:
                 np.savez_compressed(
                     f, clocks=clocks, counts=counts, epochs=tape.epochs.cpu().numpy(), native=samples, **extra

@@ -25,6 +25,11 @@ def scalar_method(name):
 
 class ScalarPlan:
     matrix = True
+    fine_auction = False
+    auction_granularity_audit = True
+    _eco_transfer_cost = scalar_method('_eco_transfer_cost')
+    _eco_small_bid = scalar_method('_eco_small_bid')
+    _eco_commit_bid = scalar_method('_eco_commit_bid')
     threads = 1
     max_m = 64
     eco_wb, eco_wa, eco_tok_w = 26, 0, 1
@@ -103,14 +108,20 @@ class ScalarPlan:
         else:
             self._eco_do_warm(previous[0] + previous[1], slab, 1)
         self._eco_emit_quota(slab)
-        for _ in range(ref.nr if warm else ref.nr_cold):
+        rounds = ref.nr if warm else ref.nr_cold
+        self.small_moves = 0
+        for i in range(rounds):
             self._eco_rank_time(slab, 'quota', 'T')
-            moves = self._eco_do_auction_round(None, slab)
+            fine = self.fine_auction and warm and i + 1 == rounds
+            packed = self._eco_do_auction_round(None, slab, int(fine))
+            moves = packed & 65535
+            self.small_moves += packed >> 16
             counts_word = slab['candidates'][0]
             assert 0 <= moves <= slab['nof'][0] <= counts_word >> 16 <= (counts_word & 65535) <= ref.P
             if moves == 0:
                 break
-            self._eco_emit_quota(slab)
+            if not fine:
+                self._eco_emit_quota(slab)
         published = dict(eco_quota=[0] * ref.P, eco_quota_start=[0] * ref.P,
                          state=[0] * (ref.P + ref.E))
         prefix = [0] * ref.E
@@ -121,7 +132,13 @@ class ScalarPlan:
         for e in range(ref.E):
             self._eco_publish_count_state(published, slab, e, 1)
         assert prefix == counts
-        assert published['state'] == published['eco_quota'] + counts
+        self.warm_quota = published['state'][:ref.P]
+        if not self.fine_auction:
+            assert self.warm_quota == published['eco_quota']
+        for e, slots in enumerate(self.copies):
+            assert sum(self.warm_quota[s] for s in slots) == counts[e]
+            assert sum(self.warm_quota[s] % ref.bm != 0 for s in slots) <= 1
+            assert sum((published['eco_quota'][s] + ref.bm - 1) // ref.bm for s in slots) == units[e]
         return published['eco_quota']
 
 
@@ -180,7 +197,36 @@ def test_replica_quota():
                     prev = (actual, counts)
 
 
+def test_small_token_auction():
+    # Unit 64 cannot land on rank 1. A bid of 16 balances the pair without
+    # allocating a third block. The next warm call must receive canonical quotas.
+    ref = UnitPlanner([0, 1, 0, 2], 2, 3, block_m=64, wb=26, wa=2, rounds=1)
+    device = ScalarPlan(ref, 2)
+    device.fine_auction = True
+    counts = [104, 32, 20]
+    canonical = [64, 32, 40, 20]
+    assert device.quotas(ref, counts, (canonical, counts)) == [48, 32, 56, 20]
+    assert device.small_moves == 1 and device.warm_quota == canonical
+    assert device.quotas(ref, counts, (device.warm_quota, counts)) == [48, 32, 56, 20]
+
+    rng = np.random.default_rng(20261128)
+    phy = np.tile(np.arange(12), 8)
+    rng.shuffle(phy)
+    ref = UnitPlanner(phy, 8, 12, block_m=64, wb=26, wa=2, rounds=1)
+    device = ScalarPlan(ref, 8)
+    device.fine_auction = True
+    prev, accepted = None, 0
+    for i in range(100):
+        counts = rng.integers(0, 2049, size=12).tolist()
+        counts[i % 12] = (0, 1, 63, 64, 65)[i % 5]
+        device.quotas(ref, counts, prev)
+        prev = device.warm_quota, counts
+        accepted += device.small_moves
+    assert accepted > 0
+
+
 if __name__ == '__main__':
+    test_small_token_auction()
     test_fine_auction_prices()
     test_replica_quota()
     test_auctions()

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Full-model four-arm groups on the shared H20 node.
 set -eo pipefail
+unset SM90_AUCTION_PAIR SM90_AUCTION_REPLAY GC_MOE_ECO_FINE_AUCTION
 unset SM90_SHARED_PLAN_OVERLAP SM90_SHARED_FIRST_WA1 SM90_WA1_PROFILE_DIR SM90_FINE_WA1_REFERENCE GC_MOE_EP8_LINEAR SM90_LINEAR_WA_PAIR SM90_SIX_ARM SM90_IR_REFERENCE
 if [[ ${1:-} == --fine-bs512-1024 ]]; then
   shift
@@ -9,12 +10,14 @@ else
   if [[ ${1:-} == --linear-ep8 ]]; then shift; fi
   export GC_MOE_EP8_LINEAR=1 GC_PREFILL_MARGIN=256
   batches=(32 64 128 256 512 1024)
-  if [[ ${1:-} == --ir-reference ]]; then
+  if [[ ${1:-} == --auction-bs256 ]]; then
+    shift; batches=(256); export SM90_AUCTION_PAIR=1
+  elif [[ ${1:-} == --ir-reference ]]; then
     [[ ${2:-} =~ ^(32|64|128|256|512|1024)$ ]] || exit 2
     batches=("$2"); export SM90_IR_REFERENCE=1; shift 2
   fi
 fi
-[[ $# == 1 && $1 != --* ]] || { echo "usage: run_full_model_four.sh [--linear-ep8|--fine-bs512-1024|--ir-reference BS] JOB_DIRECTORY" >&2; exit 2; }
+[[ $# == 1 && $1 != --* ]] || { echo "usage: run_full_model_four.sh [--linear-ep8|--fine-bs512-1024|--ir-reference BS|--auction-bs256] JOB_DIRECTORY" >&2; exit 2; }
 cd "$(git rev-parse --show-toplevel)"
 job=$(realpath -m "$1")
 mkdir -p "$job"
@@ -26,6 +29,12 @@ if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then
   touch "$job/ir-reference"
 else
   test ! -e "$job/ir-reference"
+fi
+if [[ ${SM90_AUCTION_PAIR:-0} == 1 ]]; then
+  if [[ -e $job/measurement.sha ]]; then test -e "$job/auction-pair"; fi
+  touch "$job/auction-pair"
+else
+  test ! -e "$job/auction-pair"
 fi
 sha=$(git rev-parse HEAD)
 if [[ -f "$job/measurement.sha" ]]; then
@@ -97,7 +106,7 @@ for bs in "${batches[@]}"; do
   fi
 done
 if (( failed )); then exit "$failed"; fi
-if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then exit 0; fi
+if [[ ${SM90_IR_REFERENCE:-0} == 1 || ${SM90_AUCTION_PAIR:-0} == 1 ]]; then exit 0; fi
 python3 - "$job" "${batches[@]}" <<'PY'
 import csv, pathlib, sys
 job = pathlib.Path(sys.argv[1])

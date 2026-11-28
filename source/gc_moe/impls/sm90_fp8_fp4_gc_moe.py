@@ -262,6 +262,11 @@ class SM90GCMoERoleKernel:
         self.eco_tokens_only = (_osbo.environ.get('GC_MOE_ECO_TOKENS_ONLY', '0')
                                 == '1')
         self.eco_costfn = config.eco_cost_mode != 0
+        self.fine_auction = bool(role == 5 and getattr(config, "eco_fine_auction", False))
+        self.auction_granularity_audit = layout.auction_granularity_audit
+        if self.fine_auction and (self.eco_costfn or self.eco_blocks_only
+                                  or self.eco_tokens_only or self.max_m != 64):
+            raise ValueError("fine auction requires the linear token + block + active price and M64")
         self.eco_valid_cost = config.eco_cost_mode == 2
         if self.eco_valid_cost:
             geometry = (self.max_m, self.hidden, self.intermediate, schedule.threads[1])
@@ -482,9 +487,8 @@ class SM90GCMoERoleKernel:
     def _eco_copy(self, base: Uint64, e: Uint32, k):
         """copies[e][k] as an int16 half-word (spec §6.3: SM90 has no Uint16).
 
-        `k` is always a compile-time copy index (a literal or a
-        `range_constexpr` loop variable), so the half-word selection folds at
-        code-read time. SM90's DSL has no Uint16, hence the u32 read.
+        Constant copy indices fold the half-word selection at compile time.
+        The small-bid scan also uses runtime indices up to the active count.
         """
         word = self._eco_meta_word(base, Uint32(16) + e * Uint32(16)
                                    + Uint32(k // 2))
@@ -796,7 +800,7 @@ class SM90GCMoERoleKernel:
                      epoch: Uint32):
         """Congruent inverse of the previous plan, then delta adjust (L131-173).
 
-        The previous quotas live in `eco_state[0:P]` and the previous counts in
+        The previous canonical quotas live in `eco_state[0:P]` and the previous counts in
         `eco_state[P:P+E]`, both written at the end of the previous call. One
         thread per replicated expert; the unit arrays are registers.
         """
@@ -960,7 +964,78 @@ class SM90GCMoERoleKernel:
         self._eco_set(slab, self.eco_of_off, idx * Uint32(8) + Uint32(field), value)
 
     @cute.jit
-    def _eco_do_auction_round(self, base: Uint64, slab: cute.Pointer):
+    def _eco_transfer_cost(self, qa: Uint32, qb: Uint32, amount: Uint32):
+        m = Uint32(self.max_m)
+        removed = (qa + m - Uint32(1)) // m - (qa - amount + m - Uint32(1)) // m
+        added = (qb + amount + m - Uint32(1)) // m - (qb + m - Uint32(1)) // m
+        shed = amount + Uint32(self.eco_wb) * removed + Uint32(self.eco_wa) * Uint32(qa == amount)
+        inc = amount + Uint32(self.eco_wb) * added + Uint32(self.eco_wa) * Uint32(qb == Uint32(0))
+        return shed, inc, added <= removed
+
+    @cute.jit
+    def _eco_small_bid(self, base: Uint64, slab: cute.Pointer, e: Uint32, src: Uint32,
+                       load: Uint32, total: Uint32, hit: Uint32, dst: Uint32, value: Uint32,
+                       inc: Uint32, shed: Uint32, kind: Uint32):
+        # Start with the old whole-unit bid. Compare the peak of the two ranks,
+        # then destination load and slot. An exact tie keeps the whole unit.
+        width = Uint32(self.physical // self.ranks)
+        qa = self._eco_s(slab, self.eco_quota_off, src)
+        whole = self._eco_s(slab, self.eco_rem_off, e) if kind == Uint32(1) else Uint32(self.max_m)
+        if (Int32(value) - Int32(self.eco_slack)) * Int32(self.ranks) > Int32(total):
+            hit = Uint32(0)
+        peak = max(load - shed, value)
+        nc = self._eco_ncopies(base, e)
+        for j in cutlass.range(nc):
+            other = self._eco_slot_of(base, e, j)
+            if other // width != src // width:
+                qb = self._eco_s(slab, self.eco_quota_off, other)
+                recv = self._eco_s(slab, self.eco_T_off, other // width)
+                for level in cutlass.range_constexpr(3):
+                    amount = Uint32(8 << level)
+                    if amount <= qa and amount != whole:
+                        relief, charge, fits = self._eco_transfer_cost(qa, qb, amount)
+                        v = recv + charge
+                        score = max(load - relief, v)
+                        if (fits and v < load and
+                                (Int32(v) - Int32(self.eco_slack)) * Int32(self.ranks) <= Int32(total)):
+                            if (hit == Uint32(0) or score < peak or
+                                    (score == peak and (v < value or (v == value and other < dst)))):
+                                hit, dst, value, inc, shed, kind, peak = (
+                                    Uint32(1), other, v, charge, relief, amount, score)
+        return hit, dst, value, inc, shed, kind
+
+    @cute.jit
+    def _eco_commit_bid(self, slab: cute.Pointer, src: Uint32, dst: Uint32, kind: Uint32, total: Uint32):
+        # Several winners may touch a rank or slot. Reprice against committed
+        # quotas in deterministic accept order before changing either ledger.
+        width = Uint32(self.physical // self.ranks)
+        e = self._eco_s(slab, self.eco_phy_off, src)
+        amount = kind
+        if kind <= Uint32(1):
+            amount = self._eco_s(slab, self.eco_rem_off, e) if kind == Uint32(1) else Uint32(self.max_m)
+        qa = self._eco_s(slab, self.eco_quota_off, src)
+        qb = self._eco_s(slab, self.eco_quota_off, dst)
+        committed = Uint32(0)
+        if amount <= qa and amount > Uint32(0):
+            relief, charge, fits = self._eco_transfer_cost(qa, qb, amount)
+            load = self._eco_s(slab, self.eco_T_off, src // width)
+            v = self._eco_s(slab, self.eco_T_off, dst // width) + charge
+            if (fits and v < load and load * Uint32(self.ranks) > total and
+                    (Int32(v) - Int32(self.eco_slack)) * Int32(self.ranks) <= Int32(total)):
+                self._eco_set(slab, self.eco_quota_off, src, qa - amount)
+                self._eco_set(slab, self.eco_quota_off, dst, qb + amount)
+                self._eco_set(slab, self.eco_T_off, src // width, load - relief)
+                self._eco_set(slab, self.eco_T_off, dst // width, v)
+                if kind <= Uint32(1):
+                    self._eco_move(slab, src, dst, kind)
+                committed = Uint32(1)
+                if cutlass.const_expr(self.auction_granularity_audit):
+                    if kind > Uint32(1):
+                        committed = committed + Uint32(1 << 16)
+        return committed
+
+    @cute.jit
+    def _eco_do_auction_round(self, base: Uint64, slab: cute.Pointer, fine_round: Uint32):
         """One auction round; returns the number of accepted moves (L182-265).
 
         This is `unit_ref._auction_round` with hop2 = False. EP8/EP16 have a
@@ -970,7 +1045,7 @@ class SM90GCMoERoleKernel:
 
         Offer layout (8 words): 0 receiver, 1 -t_source, 2 value,
         3 source slot, 4 limit (= t_source), 5 destination slot,
-        6 receiver increase, 7 partial bit.
+        6 receiver increase, 7 unit kind (0 full, 1 canonical tail, or 8/16/32 rows).
         """
         tid, _, _ = cute.arch.thread_idx()
         P, E, R = self.physical, self.eco_logical, self.ranks
@@ -1018,6 +1093,10 @@ class SM90GCMoERoleKernel:
                                     bv = v
                                     bs = s1
                                     bi = in1
+                if cutlass.const_expr(self.fine_auction):
+                    if fine_round != Uint32(0):
+                        hit, bs, bv, bi, shed, ip = self._eco_small_bid(
+                            base, slab, e, s0, tmax, tot, hit, bs, bv, bi, shed, ip)
                 if cutlass.const_expr(self.matrix):
                     # P=448: the low 16 bits count eligible donors, high bits count
                     # donors with any destination strictly below the source after adding a unit.
@@ -1193,11 +1272,22 @@ class SM90GCMoERoleKernel:
             for rcv in cutlass.range_constexpr(R):
                 b = self._eco_s(slab, self.eco_gof_off, Uint32(rcv))
                 nacc = self._eco_s(slab, self.eco_acc_off, Uint32(rcv))
+                committed = Uint32(0)
                 for i in cutlass.range(nacc):
                     oi = self._eco_s(slab, self.eco_grp_off, b + i)
-                    self._eco_move(slab, self._eco_of(slab, oi, 3),
-                                   self._eco_of(slab, oi, 5),
-                                   self._eco_of(slab, oi, 7))
+                    src = self._eco_of(slab, oi, 3)
+                    dst = self._eco_of(slab, oi, 5)
+                    kind = self._eco_of(slab, oi, 7)
+                    if cutlass.const_expr(self.fine_auction):
+                        if fine_round != Uint32(0):
+                            committed = committed + self._eco_commit_bid(slab, src, dst, kind, tot)
+                        else:
+                            self._eco_move(slab, src, dst, kind)
+                    else:
+                        self._eco_move(slab, src, dst, kind)
+                if cutlass.const_expr(self.fine_auction):
+                    if fine_round != Uint32(0):
+                        self._eco_set(slab, self.eco_acc_off, Uint32(rcv), committed)
         cute.arch.sync_threads()
         if tid == 0:
             n = Uint32(0)
@@ -1412,18 +1502,29 @@ class SM90GCMoERoleKernel:
                 st_global_u64(tr + Uint64(31), Uint64(rounds))
 
         # ---- 7. auction rounds (stops early when nothing is accepted) -----
+        auction_start = Uint64(0)
+        if cutlass.const_expr(self.auction_granularity_audit):
+            if tid == 0:
+                auction_start = read_globaltimer()
         self._eco_emit_quota(slab)
         # [ECO-MEAS] `eco_no_auction` is a compile-time gate: the whole block
         # disappears from the cubin, so it measures the auction itself and
         # nothing else (cold/warm still run above).
         actual_rounds, offers, accepted = Uint32(0), Uint32(0), Uint32(0)
         donors, feasible, empty_rounds, rejected_rounds = Uint32(0), Uint32(0), Uint32(0), Uint32(0)
+        small = Uint32(0)
         if not cutlass.const_expr(self.eco_no_auction):
             more = Uint32(1)
             for _it in cutlass.range(rounds):
                 if more != Uint32(0):
                     self._eco_rank_time(slab, self.eco_quota_off, self.eco_T_off)
-                    moves = self._eco_do_auction_round(base, slab)
+                    fine_round = Uint32(0)
+                    if cutlass.const_expr(self.fine_auction):
+                        fine_round = Uint32(warm and _it + Uint32(1) == rounds)
+                    moves = self._eco_do_auction_round(base, slab, fine_round)
+                    if cutlass.const_expr(self.auction_granularity_audit and self.fine_auction):
+                        small = small + (moves >> Uint32(16))
+                        moves = moves & Uint32(65535)
                     if cutlass.const_expr(self.matrix):
                         actual_rounds = actual_rounds + Uint32(1)
                         submitted = self._eco_s(slab, self.eco_nof_off, Uint32(0))
@@ -1436,7 +1537,7 @@ class SM90GCMoERoleKernel:
                         accepted = accepted + moves
                     if moves == Uint32(0):
                         more = Uint32(0)
-                    else:
+                    elif fine_round == Uint32(0):
                         self._eco_emit_quota(slab)
         if cutlass.const_expr(self.matrix):
             if tid == 0:
@@ -1445,6 +1546,12 @@ class SM90GCMoERoleKernel:
                 counters[0], counters[1], counters[2] = actual_rounds, offers, accepted
                 counters[3], counters[4] = donors, feasible
                 counters[5], counters[6] = empty_rounds, rejected_rounds
+                if cutlass.const_expr(self.auction_granularity_audit):
+                    small_counts = self._field(base, 'auction_small', Uint32)
+                    row = epoch % Uint32(1000 * self.n_layers)
+                    small_counts[row] = small
+                    auction_ns = self._field(base, 'auction_ns', Uint32)
+                    auction_ns[row] = Uint32(read_globaltimer() - auction_start)
         if tid == 0:
             self._eco_trace(base, 19)  # [ECO-MEAS] auction rounds done
             self._eco_tl_write(base, epoch, 6, read_globaltimer())     # auction_done
@@ -2104,7 +2211,14 @@ class SM90GCMoERoleKernel:
                     start = start + self._eco_s(slab, self.eco_quota_off, c)
         self._field(base, 'eco_quota', Uint32)[s] = q
         self._field(base, 'eco_quota_start', Uint32)[s] = start
-        self._eco_state_ptr(base, epoch)[s] = q
+        warm_q = q
+        if cutlass.const_expr(self.fine_auction):
+            # _eco_do_warm inverts whole units plus one canonical tail per
+            # logical expert. The dispatch quotas above may have multiple tails.
+            warm_q = self._eco_s(slab, self.eco_y_off, s) * Uint32(self.max_m)
+            if self._eco_s(slab, self.eco_part_off, e) == s:
+                warm_q = warm_q + self._eco_s(slab, self.eco_rem_off, e)
+        self._eco_state_ptr(base, epoch)[s] = warm_q
 
     @cute.jit
     def _eco_publish_count_state(self, base: Uint64, slab: cute.Pointer,

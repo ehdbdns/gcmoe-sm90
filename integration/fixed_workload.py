@@ -12,7 +12,19 @@ def requires_layer_aligned_warmup():
             or os.getenv("SM90_LINEAR_WA_PAIR") == "1")
 
 
+def auction_pair_baseline():
+    return os.getenv("SM90_AUCTION_PAIR") == "1" and os.environ["GC_MOE_ECO_FINE_AUCTION"] == "0"
+
+
+def publishes_boundary():
+    # Both auction arms restore these same KV images outside the timed windows,
+    # even when the route and feedback banks already exist from an earlier run.
+    return auction_pair_baseline() or publishes_checkpoint()
+
+
 def publishes_checkpoint():
+    if os.getenv("SM90_AUCTION_PAIR") == "1":
+        return auction_pair_baseline() and os.environ["SM90_AUCTION_REPLAY"] == "0"
     if os.getenv("SM90_SIX_ARM") == "1":
         return os.environ["SM90_EIGHT_ARM"] == "0"
     if os.getenv("SM90_EIGHT_ARM"):

@@ -86,8 +86,20 @@ PY
     cp "$ref/placement.json" "$GC_MOE_FIXED_DIR/placement.json"
   fi
   if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then [[ $four == 1 && ${GC_MOE_EP8_LINEAR:-0} == 1 ]] || exit 2; arms=(vanilla rr); fi
+  if [[ ${SM90_AUCTION_PAIR:-0} == 1 ]]; then
+    [[ $four == 1 && ${GC_MOE_EP8_LINEAR:-0} == 1 && $bs == 256 ]] || exit 2
+    arms=(eco eco_small)
+    "$py" scripts/sm90/auction_pair.py stage "$GC_MOE_FIXED_DIR" "$group"
+    export SM90_AUCTION_REPLAY
+    SM90_AUCTION_REPLAY=$(cat "$group/reference-mode.txt")
+    export GC_MOE_SM90_SPLIT_SHARED=1 GC_MOE_SM90_SPLIT_SHARED_M=32
+  fi
   for arm in "${arms[@]}"; do
     export GC_MOE_MATRIX_ARM="$arm"
+    if [[ ${SM90_AUCTION_PAIR:-0} == 1 ]]; then
+      export GC_MOE_MATRIX_ARM=eco GC_MOE_ECO_FINE_AUCTION=0
+      if [[ $arm == eco_small ]]; then export GC_MOE_ECO_FINE_AUCTION=1; fi
+    fi
     dst="$group/$arm"
     mkdir "$dst"
     log="$dst/runner.log"
@@ -118,7 +130,8 @@ PY
     grep -Fxq exit_code=0 "$dst/status.txt"
     test "$(cat "$dst/execution.sha")" = "$sha"
     cp "$GC_MOE_FIXED_DIR/$arm-layout.json" "$dst/installed-layout.json"
-    if [[ $arm == vanilla ]]; then
+    if [[ $arm == vanilla || ( ${SM90_AUCTION_PAIR:-0} == 1 && $arm == eco ) ]]; then
+      if [[ $arm == eco ]]; then cp "$GC_MOE_FIXED_DIR/placement.json" "$group/"; fi
       mkdir "$group/checkpoint"
       mkdir "$group/checkpoint/prefill"
       cp "$GC_MOE_STRICT_STATE_DIR"/prefill/rank{0..7}.json "$group/checkpoint/prefill/"
@@ -130,6 +143,8 @@ PY
   (cd "$GC_MOE_FIXED_DIR" && sha256sum stats-rank*.pt measure-rank*.pt stats-demand.npz tokens.json placement.json *-layout.json) > "$group/workload.sha256"
   if [[ ${SM90_IR_REFERENCE:-0} == 1 ]]; then
     test -s "$group/rr/installed-layout.json"
+  elif [[ ${SM90_AUCTION_PAIR:-0} == 1 ]]; then
+    "$py" scripts/sm90/auction_pair.py report "$out"
   elif [[ $wa_pair == 1 ]]; then
     "$py" scripts/trace_layer/linear_wa_report.py "$out"
   elif [[ ${GC_COST_HOST_PROBE:-0} == 1 ]]; then

@@ -1,4 +1,6 @@
-# 【SM90】BS256 prefill 自对照诊断
+# SM90 执行者对接
+
+当前任务为 H20 EP8、BS256 的粗粒度 ECO 与细粒度 ECO 两臂。[执行任务书](SM90_BS256_FINE_AUCTION.md)
 
 ## SM90 共享用卡
 
@@ -6,7 +8,7 @@
 
 SM90 为共享机器。每次只申请本任务指定的八张卡。启动任何 GPU 预检、编译探测或实验前，先核对八卡 UUID 和预约状态，确认整组空闲并取得整组使用权，再复查占用并启动。任一卡已有作业、已被他人预约或状态无法确认时，在 CPU 侧等待并重查。等待期间让出整组卡，保留他人进程。任务结束、失败或中止时及时释放本任务的 GPU 进程和预约。
 
-本轮只跑两次 vanilla prefill 并检查层 19/20 的模块输入输出，回执写入 REPLY_SM90_PREFIX_BLOCK_AA.md。[【SM90】执行任务书](SM90_PREFIX_BLOCK_AA.md)
+历史 prefill 自对照任务采集了层 19/20 的模块输入输出，回执位置为 REPLY_SM90_PREFIX_BLOCK_AA.md。[【SM90】执行任务书](SM90_PREFIX_BLOCK_AA.md)
 
 下文保留此前的单轮采样流程。该流程使用首次有效 CTA 领取打点提交 `cffe4835270f0d0bcc048b502a0b5716eac910b1` 及包含本任务书的后续提交，依次执行步骤 1 至 5。该轮验收禁止使用 `prof_phases.py`、`FINAL_V2` 或任何旧 run。
 

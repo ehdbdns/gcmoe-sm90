@@ -1749,7 +1749,7 @@ def rearrange_now() -> bool:
     if buf.rank_idx == 0:
         import json
         from pathlib import Path
-        from fixed_workload import recording_reference
+        from fixed_workload import auction_pair_baseline, recording_reference
         if fixed_dir:
             layout_path = Path(fixed_dir) / 'placement.json'
         if fixed_dir and not matrix and not recording_reference() and _eco_enabled():
@@ -1758,7 +1758,8 @@ def rearrange_now() -> bool:
             new_plan, inverse, _ = rebalance_experts_global(hist, buf.physical, per_rank)
             publish_wa_layout = (os.getenv('SM90_LINEAR_WA_PAIR') == '1'
                                  and os.getenv('GC_MOE_MATRIX_ARM') == 'eco_linear')
-            if fixed_dir and (not matrix or os.environ['GC_MOE_MATRIX_ARM'] == 'rr' or publish_wa_layout):
+            if fixed_dir and (not matrix or os.environ['GC_MOE_MATRIX_ARM'] == 'rr'
+                              or publish_wa_layout or auction_pair_baseline()):
                 layout = new_plan.tolist()
                 if os.getenv("SM90_EIGHT_ARM") and layout_path.exists():
                     if layout != json.loads(layout_path.read_text()):

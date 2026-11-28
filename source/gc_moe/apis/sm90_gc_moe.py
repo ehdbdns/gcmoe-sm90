@@ -13,6 +13,13 @@ def _cost_mode():
     return int(mode)
 
 
+def _fine_auction():
+    value = os.getenv("GC_MOE_ECO_FINE_AUCTION", "0")
+    if value not in ("0", "1"):
+        raise ValueError("GC_MOE_ECO_FINE_AUCTION must be 0 or 1")
+    return value == "1"
+
+
 def _split_shared_m():
     value = os.getenv("GC_MOE_SM90_SPLIT_SHARED_M", "32")
     if value not in ("32", "64"):
@@ -64,6 +71,7 @@ class ValidatedCall:
     plan_dispatch: bool = field(default_factory=lambda: os.getenv("GC_MOE_SM90_PLAN_DISPATCH", "1") == "1")
     split_shared_m: int = field(default_factory=_split_shared_m)
     split_shared: bool = field(default_factory=_split_shared)
+    eco_fine_auction: bool = field(default_factory=_fine_auction)
 
 
 def validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,
