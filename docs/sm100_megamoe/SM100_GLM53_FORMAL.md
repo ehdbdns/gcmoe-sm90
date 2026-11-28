@@ -1,6 +1,6 @@
 # SM100 新执行者任务书 · GLM-5.3 EP8 三臂
 
-你接手的是节点 `e01-cn-il24rbk1805` 上的正式实验。上次回执 `516235d` 为 **0/3**。旧执行者在下载代码时退出，三臂均未启动。模型和权重已在这台机器上校验过。你只需要这份任务书、该节点的 Bash 登录权限、指定八卡的使用授权以及可向本仓库提交回执的 GitHub 身份。可以从空目录和新的 Linux 账号开始。
+你接手的是节点 `e01-cn-il24rbk1805` 上的正式实验。最新回执 `032eb64` 为 **0/3**。八张卡都执行了 `sm_103f` 机器码并返回 `0x103`。原生臂在权重加载后的 DeepGEMM UE8M0 尺度转换处编译失败，RR 和 ECO 尚未启动。直接使用下方新版执行包，从原生臂开始整组测量。你只需要这份任务书、该节点的 Bash 登录权限、指定八卡的使用授权以及可向本仓库提交回执的 GitHub 身份。可以从空目录和新的 Linux 账号开始。
 
 ## 本次交付
 
@@ -26,13 +26,13 @@ pgrep -af '^([^ ]*/)?bash[[:space:]]+([^ ]*/)?(glm53_execute|run_glm53_three)[.]
 ls -d /data0/home/admin/workspace/glm53-work/formal.*/results/{main.csv,*/result.json} 2>/dev/null || true
 ~~~
 
-回执中的旧目录 `formal.jQxs5nOk` 是空的。若上面出现新进程，先看该进程所属任务的 `results/run.log`，让已启动的任务继续。如果发现已有正式臂的 `result.json`，先按末节交回已有记录。仅有空目录时直接继续。不要终止其他人的进程。
+上一轮的三个失败目录均无完成臂，最后一次是 `formal.20261128193913`，可保留作诊断。若上面出现新进程，先看该进程所属任务的 `results/run.log`，让已启动的任务继续。如果发现已有正式臂的 `result.json`，先按末节交回已有记录。没有存活的同任务进程或新增的完成臂时直接继续。不要终止其他人的进程。
 
 ## 从空目录启动
 
 1. 在有持久终端的 Bash 中执行下面两段，可以用节点已有的 tmux 会话，或先运行 `tmux new -s glm53-ep8`。断开连接后，用 `tmux attach -t glm53-ep8` 回到原任务。代码从现场已验证可用的 GitHub Contents API 下载。执行包约 0.4 MiB，含 GC 上游源、补丁、运行及回传脚本，下载一次即齐备。
 2. 默认私有盘为 `/data0/home/当前用户名/workspace/glm53-work`。新账号的目录位置若不同，先把 `GLM_WORK_ROOT` 设为自己可写且空间充足的私有卷。两份 KV 快照逻辑大小合计最多约 768 GiB，实际磁盘占用取决于稀疏文件支持和非零数据量。先用 `df -h` 查看该卷。
-3. 默认复用上轮的 vLLM 0.31.0、torch 2.13.0 / CUDA 13.0 环境。该环境对新账号不可访问时，脚本先找自己的同版环境，再使用 `python3.12 -m venv` 安装到本次目录。已有同版私有环境可通过 `GLM_RUNTIME_PYTHON` 指向其 `bin/python`。现场确认的 CUDA 工具在 `/usr/local/cuda/bin`。Python 镜像优先沿用本站配置，未设置时命令使用上轮验证过的清华镜像。
+3. 默认复用上轮的 vLLM 0.31.0、torch 2.13.0 / CUDA 13.0 环境。该环境对新账号不可访问时，脚本先找自己的同版环境，再使用 `python3.12 -m venv` 安装到本次目录。已有同版私有环境可通过 `GLM_RUNTIME_PYTHON` 指向其 `bin/python`。系统已补齐 Python 3.12 开发头文件。脚本复用已校验的 `dsl-wheels-4.8.1` 缓存，自动为 DeepGEMM 指定 `/usr/local/cuda/bin/nvcc`（13.0.48）和同版 CUDA 头文件，GC 的 CuTe PTX 单独使用支持 PTX 9.1 的汇编器（本站 venv 为 13.5.37）。Python 镜像优先沿用本站配置，未设置时命令使用上轮验证过的清华镜像。
 
 第一段定义本次 GitHub 登录方式。可使用现场已有的 `GH_TOKEN`、`GITHUB_TOKEN`、GitHub CLI 登录或 Git credential helper。所在账号需要本仓库 Contents 读写权限。新账号若使用 GitHub CLI，可先运行 `gh auth login --hostname github.com --web`。凭据只在本机使用。
 
@@ -75,20 +75,20 @@ api=https://api.github.com/repos/ehdbdns/gcmoe-sm90/contents/docs/sm100_megamoe/
 printf 'Authorization: Bearer %s\n' "$GH_TOKEN" |
   curl -fsS --connect-timeout 10 --max-time 90 --retry 3 -H @- \
     -H 'Accept: application/vnd.github+json' \
-    "$api?ref=444969ae13dd438c12ef571fc0cb9708f0d2cb38" -o bundle.json
+    "$api?ref=42b3b558026c8175134354d7f7dd2c698bf88fbb" -o bundle.json
 stage=verify
 python3 - <<'PY'
 import base64, hashlib, json, pathlib
 obj = json.loads(pathlib.Path("bundle.json").read_text())
-if obj.get("encoding") != "base64" or obj.get("sha") != "8e08c43d45044fef2034c0f75d2aa3a4e198fb2b":
+if obj.get("encoding") != "base64" or obj.get("sha") != "613848a88b97b28cd0681e281af0e866f8049a66":
     raise SystemExit("incorrect Contents API response")
 payload = base64.b64decode(obj["content"])
-if hashlib.sha256(payload).hexdigest() != "43d9ff691e59ba28900d61b3cbe9702946312d41eaaa8786a252311cf0eba33b":
+if hashlib.sha256(payload).hexdigest() != "a4b1af984dfe2c477df3bbfa73760a4e4028e916b0d3fd6355e03e3490dd26f0":
     raise SystemExit("incorrect execution bundle SHA256")
 pathlib.Path("executor.tar.gz").write_bytes(payload)
 PY
 tar xzf executor.tar.gz -C repo
-printf '%s\n' 0daa8328d6d53211869b0de5a683054ca2be2c4a > repo/SOURCE_REVISION
+printf '%s\n' 5e273c064a3dd98af2fd67e1c6f5b22fd8b55a93 > repo/SOURCE_REVISION
 stage=execution-or-return
 bash repo/scripts/sm100/glm53_execute.sh "$job"
 )
@@ -97,7 +97,7 @@ bash repo/scripts/sm100/glm53_execute.sh "$job"
 ## 启动后如何判断进度
 
 - 在另一个终端用 `tail -F <本次私有目录>/results/run.log`。准备阶段检查 checkpoint 摘要、准备 DSL 4.8.1 并预读分片。正式脚本在每臂开始前取共享锁，检查八卡进程、利用率和设备占用。任一卡忙则释放锁，每 60 秒复查。每臂退出即释放八卡，EPLB 放置在 CPU 上计算。
-- 节点的 `nvidia-smi` 报 8.9，CUDA Driver 和 torch 对相同 UUID 均报 10.3。**裁定由设备执行结果决定。** 首臂取得八张空闲卡后，脚本在每张卡执行只含 `sm_103f` 原生机器码的探针，要求八卡逐一返回预期值。通过后立即加载模型，证据写在 `arch-proof.json`。若有设备失败，交回具体 UUID、CUDA 错误和已通过的设备；无需另起 GPU 作业判卡。
+- 此节点八张卡上轮已实证能运行 SM103f。首臂取得八卡后，程序用这次选中的汇编器生成的 cubin 核验设备，在第一张获准卡上调用 vLLM 的实际权重尺度转换入口（K=6144，128×128 分块），核对 3072 个打包结果。这个小任务用本次进程的工具链和私有 JIT 缓存。通过后直接进入原生臂的整模加载。回执中 `arch-proof.json` 记设备结果，`deepgemm-proof.json` 记工具路径和尺度转换结果。若失败，运行日志保留实际编译命令；把本次失败回执交回即可。
 - 权重加载优化已启用。每臂对 282 个 HF 分片申请页缓存预读，vLLM 采用 safetensors 延迟 mmap 和 EP 本地专家过滤；GC 复用分片句柄。重排时从已加载的 packed 权重做设备间搬运。每臂 `result.json` 记录各 rank 读取的专家 ID、vLLM 与 GC 加载时间。
 - 你负责执行以及留下原始证据。只允许处理可确认不改变语义的编译兼容问题，附原始错误、最小补丁及其使用的臂；涉及公共代码的补丁需整组保持一致。遇到 OOM、路由或数值差异、运行时错误，保留第一个失败，交回构建者。保持 BS、统计及测量步数、放置、量化、trace 和采样层配置。
 
