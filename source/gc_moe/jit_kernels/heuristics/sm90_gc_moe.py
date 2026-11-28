@@ -114,7 +114,9 @@ def _get_sm90_role_config(config, dispatch_sms: int, compute_sms: int):
         else:
             dispatch_grid = dispatch_sms * resident
 
-    split_shared = bool(config.shared_experts and tile_m in (32, 64))
+    # Without the split, role 4 inherits the routed M, grid and memory budget,
+    # as in the upstream H20 legacy schedule, and executes both shared phases.
+    split_shared = bool(config.shared_experts and config.split_shared and tile_m in (32, 64))
     shared_grid = 0
     shared_tile_m = 32
     shared_l2_grid = 0

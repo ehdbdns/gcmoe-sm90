@@ -18,7 +18,7 @@ def main():
     conf = ValidatedCall(ranks=8, experts=384, capacity=2048, topk=6, hidden=5120,
                          intermediate=2304, tokens=256, bound=2048, clamp=10.,
                          fast_math=True, shared_experts=1, physical=448,
-                         eco_logical_experts=384, split_shared_m=32)
+                         eco_logical_experts=384, split_shared_m=32, split_shared=True)
     context = SimpleNamespace(dispatch_sms=6, compute_sms=72)
     layout_args = (8, 384, 2048, 6, 5120, 2304, 1, 448, True, True)
     forced = dict(GC_MOE_MB_CLAIM='1', GC_MOE_BLOCK_M_FORCE='64')
@@ -76,6 +76,17 @@ def main():
             for tokens in (0, 32, 128, 255, 257):
                 assert get_sm90_role_config(replace(candidate, tokens=tokens), context).shared_tile_m == 32
             assert not get_sm90_role_config(replace(candidate, shared_experts=0), context).split_shared
+            unsplit = replace(original, split_shared=False)
+            unsplit_specs = _role_specs(unsplit, stream, get_sm90_role_config(unsplit, context), True)
+            assert [s[0] for _, s in unsplit_specs] == [role for role in old if role != 8]
+            for kernel, launch in unsplit_specs:
+                if launch[0] == 4:
+                    assert (kernel.max_m, kernel.shared_phase_start, kernel.shared_phase_end) == (64, 0, 2)
+                    assert launch == (4, 199680, 256, 72, ())
+                else:
+                    assert launch == old[launch[0]]
+        with patch.dict(os.environ, GC_MOE_SM90_SPLIT_SHARED='0'):
+            assert not ValidatedCall(8, 384, 512, 6, 5120, 2304, 256, 512, 10., True).split_shared
         with patch.dict(os.environ, GC_MOE_SM90_SPLIT_SHARED_M='64'):
             assert ValidatedCall(8, 384, 512, 6, 5120, 2304, 256, 512, 10., True).split_shared_m == 64
         with patch.dict(os.environ, {'GC_MOE_BLOCK_M_FORCE': '0'}):

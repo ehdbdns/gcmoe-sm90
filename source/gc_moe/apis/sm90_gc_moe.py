@@ -20,6 +20,13 @@ def _split_shared_m():
     return int(value)
 
 
+def _split_shared():
+    value = os.getenv("GC_MOE_SM90_SPLIT_SHARED", "1")
+    if value not in ("0", "1"):
+        raise ValueError("GC_MOE_SM90_SPLIT_SHARED must be 0 or 1")
+    return value == "1"
+
+
 @dataclass(frozen=True)
 class ValidatedCall:
     ranks: int
@@ -56,6 +63,7 @@ class ValidatedCall:
     eco_cost_mode: int = field(default_factory=_cost_mode)
     plan_dispatch: bool = field(default_factory=lambda: os.getenv("GC_MOE_SM90_PLAN_DISPATCH", "1") == "1")
     split_shared_m: int = field(default_factory=_split_shared_m)
+    split_shared: bool = field(default_factory=_split_shared)
 
 
 def validate_call(y, w1, w2, buffer, stats, recipe, activation, clamp,

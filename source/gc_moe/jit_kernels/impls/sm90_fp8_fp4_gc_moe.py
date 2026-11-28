@@ -116,7 +116,7 @@ def _role_specs(config, layout, schedule, has_stats):
         print(f"[ep8] M={schedule.tile_m} roles={roles} launch_order=original", flush=True)
     if os.getenv("SM90_SIX_ARM") == "1":
         print(f"[six] GC M={schedule.tile_m} roles={roles}", flush=True)
-        if config.tokens == 256:
+        if config.tokens == 256 and (config.split_shared or not shared):
             print(f"[shared-decode] tokens={config.tokens} routed_m={schedule.tile_m} "
                   f"shared_m={shared.tile_m if shared else 0} l1_grid={schedule.shared_grid} "
                   f"l2_grid={schedule.shared_l2_grid} roles={roles}", flush=True)
@@ -194,6 +194,13 @@ def _role_specs(config, layout, schedule, has_stats):
         if launch_after:
             launch += (launch_after,)
         specs.append((kernel, launch))
+    if os.getenv("SM90_SIX_ARM") == "1" and config.tokens == 256 and shared and not config.split_shared:
+        built = {s[0]: (k, s) for k, s in specs}
+        kernel, launch = built[4]
+        print(f"[shared-unsplit] tokens={config.tokens} shared_m={kernel.max_m} "
+              f"grid={launch[3]} threads={launch[2]} smem={launch[1]} "
+              f"phases={tuple(range(kernel.shared_phase_start, kernel.shared_phase_end))} "
+              f"routed_wait={built[2][1][4]} roles={roles}", flush=True)
     return tuple(specs)
 
 
